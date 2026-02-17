@@ -1,13 +1,11 @@
 import streamlit as st
 import google.generativeai as genai
-import pandas as pd
 import datetime
 import base64
 import os
 import json
 from PIL import Image
 from io import BytesIO
-
 
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -84,15 +82,54 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- PERSISTENCE LAYER ---
+DB_FILE = "service_data.json"
+
+def load_data():
+    """Loads data from the local JSON file."""
+    default_data = {
+        "jobs": [],
+        "techs": [],
+        "locations": [],
+        "briefing": "Data required to generate briefing."
+    }
+    
+    if not os.path.exists(DB_FILE):
+        return default_data
+        
+    try:
+        with open(DB_FILE, "r") as f:
+            data = json.load(f)
+            # Ensure all keys exist
+            for k, v in default_data.items():
+                if k not in data:
+                    data[k] = v
+            return data
+    except (json.JSONDecodeError, IOError):
+        return default_data
+
+def save_state():
+    """Saves the current session state (relevant parts) to JSON."""
+    data = {
+        "jobs": st.session_state.jobs,
+        "techs": st.session_state.techs,
+        "locations": st.session_state.locations,
+        "briefing": st.session_state.briefing
+    }
+    try:
+        with open(DB_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except IOError as e:
+        st.error(f"Failed to save data: {e}")
+
 # --- SESSION STATE INITIALIZATION ---
-if 'jobs' not in st.session_state:
-    st.session_state.jobs = []
-if 'techs' not in st.session_state:
-    st.session_state.techs = []
-if 'locations' not in st.session_state:
-    st.session_state.locations = []
-if 'briefing' not in st.session_state:
-    st.session_state.briefing = "Data required to generate briefing."
+# Load persistent data immediately
+db_data = load_data()
+st.session_state.jobs = db_data['jobs']
+st.session_state.techs = db_data['techs']
+st.session_state.locations = db_data['locations']
+st.session_state.briefing = db_data['briefing']
+
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = [
         {"role": "model", "parts": ["Hello! I have access to your database. Ask me about active jobs, tech locations, or history."]}
@@ -244,6 +281,7 @@ def add_job_dialog():
                 'reports': []
             }
             st.session_state.jobs.insert(0, new_job)
+            save_state()  # Save changes
             st.rerun()
 
 @st.dialog("Job Details & Report", width="large")
@@ -269,6 +307,7 @@ def job_details_dialog(job_id):
                                   key=f"status_{job_id}")
         if new_status != job['status']:
             st.session_state.jobs[job_index]['status'] = new_status
+            save_state() # Save changes
             st.rerun()
 
     tab1, tab2 = st.tabs(["📋 Details & History", "📸 Daily Report"])
@@ -326,6 +365,7 @@ def job_details_dialog(job_id):
                     'photos': photos_list
                 }
                 st.session_state.jobs[job_index]['reports'].append(new_report)
+                save_state() # Save changes
                 st.success("Report Submitted!")
                 st.rerun()
 
@@ -374,6 +414,7 @@ def render_admin_panel():
                         'id': f"t{datetime.datetime.now().timestamp()}",
                         'name': t_name, 'email': t_email, 'initials': initials, 'color': color
                     })
+                    save_state() # Save changes
                     st.rerun()
         
         st.markdown("---")
@@ -381,6 +422,7 @@ def render_admin_panel():
             st.markdown(f"**{t['name']}** ({t['email']})")
             if st.button("Remove", key=f"rm_t_{t['id']}"):
                 st.session_state.techs.remove(t)
+                save_state() # Save changes
                 st.rerun()
 
     # Location Management
@@ -395,6 +437,7 @@ def render_admin_panel():
                         'id': f"l{datetime.datetime.now().timestamp()}",
                         'name': l_name, 'address': l_addr
                     })
+                    save_state() # Save changes
                     st.rerun()
         
         st.markdown("---")
@@ -402,6 +445,7 @@ def render_admin_panel():
             st.markdown(f"**{l['name']}** - {l['address']}")
             if st.button("Remove", key=f"rm_l_{l['id']}"):
                 st.session_state.locations.remove(l)
+                save_state() # Save changes
                 st.rerun()
 
 def render_chatbot():
@@ -501,6 +545,7 @@ def main():
             if st.button("Generate AI Briefing"):
                 with st.spinner("Analyzing schedule..."):
                     st.session_state.briefing = generate_morning_briefing()
+                    save_state() # Save new briefing
                     st.rerun()
             
             # Stats
@@ -567,5 +612,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
