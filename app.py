@@ -6,6 +6,7 @@ import os
 import json
 import smtplib
 import urllib.parse
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from PIL import Image
@@ -83,6 +84,24 @@ st.markdown("""
         background-color: #b91c1c !important;
         color: white !important;
     }
+    
+    /* Login Screen Container */
+    .login-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 70vh;
+        text-align: center;
+    }
+    .login-box {
+        background-color: #18181b;
+        border: 1px solid #27272a;
+        padding: 40px;
+        border-radius: 12px;
+        max-width: 400px;
+        width: 100%;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -96,7 +115,8 @@ def load_data():
         "jobs": [],
         "techs": [],
         "locations": [],
-        "briefing": "Data required to generate briefing."
+        "briefing": "Data required to generate briefing.",
+        "adminEmails": []
     }
     
     if not os.path.exists(DB_FILE):
@@ -119,13 +139,12 @@ def save_state():
         "jobs": st.session_state.jobs,
         "techs": st.session_state.techs,
         "locations": st.session_state.locations,
-        "briefing": st.session_state.briefing
+        "briefing": st.session_state.briefing,
+        "adminEmails": st.session_state.adminEmails
     }
     try:
         with open(DB_FILE, "w") as f:
             json.dump(data, f, indent=2)
-        # Give user visual feedback that data is safe
-        st.toast("💾 Data saved successfully!", icon="✅")
     except IOError as e:
         st.error(f"Failed to save data: {e}")
 
@@ -136,6 +155,7 @@ st.session_state.jobs = db_data['jobs']
 st.session_state.techs = db_data['techs']
 st.session_state.locations = db_data['locations']
 st.session_state.briefing = db_data['briefing']
+st.session_state.adminEmails = db_data['adminEmails']
 
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = [
@@ -144,6 +164,110 @@ if 'chat_history' not in st.session_state:
 
 # Tech Colors for UI
 TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12', '#292524']
+
+# --- AUTHENTICATION ---
+
+def authenticate():
+    """Handles Google OAuth2 Flow. Returns user_info dict if logged in, else None."""
+    
+    # 1. If already logged in, return user info
+    if "user_info" in st.session_state:
+        return st.session_state.user_info
+
+    # 2. Setup OAuth Config
+    # Retrieve from secrets or env
+    client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
+    redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI")
+
+    if not (client_id and client_secret and redirect_uri):
+        st.error("🔒 Google OAuth is not configured. Please add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to `.streamlit/secrets.toml`.")
+        return None
+
+    # 3. Check for Auth Code from Google Redirect
+    try:
+        query_params = st.query_params
+        code = query_params.get("code")
+    except:
+        # Fallback for older Streamlit versions
+        query_params = st.experimental_get_query_params()
+        code = query_params.get("code", [None])[0]
+
+    if code:
+        try:
+            # Exchange code for token
+            token_url = "https://oauth2.googleapis.com/token"
+            data = {
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code"
+            }
+            r = requests.post(token_url, data=data)
+            r.raise_for_status()
+            tokens = r.json()
+            access_token = tokens["access_token"]
+            
+            # Get User Info
+            user_r = requests.get("https://www.googleapis.com/oauth2/v1/userinfo", 
+                                  headers={"Authorization": f"Bearer {access_token}"})
+            user_r.raise_for_status()
+            user_info = user_r.json()
+            
+            # Set Session
+            st.session_state.user_info = user_info
+            
+            # Clear Query Params to clean URL
+            st.query_params.clear()
+            st.rerun()
+            
+        except Exception as e:
+            st.error(f"Authentication Failed: {e}")
+            return None
+
+    # 4. Show Login Button
+    auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "offline",
+        "prompt": "consent"
+    }
+    
+    login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
+    
+    st.markdown(f"""
+        <div class="login-container">
+            <div class="login-box">
+                <h1 style="color:white; margin-bottom: 10px;">ServiceCommand</h1>
+                <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
+                <a href="{login_url}" target="_self" style="
+                    display: inline-block;
+                    background-color: #DB4437; 
+                    color: white; 
+                    padding: 12px 24px; 
+                    text-decoration: none; 
+                    border-radius: 6px; 
+                    font-weight: bold;
+                    font-family: sans-serif;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                ">
+                    Sign in with Google
+                </a>
+                <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">Use your company email account.</p>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    return None
+
+def logout():
+    if "user_info" in st.session_state:
+        del st.session_state.user_info
+    st.rerun()
 
 # --- HELPER FUNCTIONS ---
 
@@ -527,6 +651,35 @@ def render_admin_panel():
 
     st.divider()
 
+    # --- ADMIN ACCESS MANAGEMENT ---
+    st.subheader("🛡️ Admin Access")
+    st.caption("Users listed here have full access to settings and can create jobs.")
+    
+    with st.form("add_admin_form"):
+        col_ad1, col_ad2 = st.columns([3, 1])
+        new_admin = col_ad1.text_input("New Admin Email", placeholder="user@company.com")
+        if col_ad2.form_submit_button("Add Admin"):
+            if new_admin and new_admin not in st.session_state.adminEmails:
+                st.session_state.adminEmails.append(new_admin)
+                save_state()
+                st.success(f"Added {new_admin}")
+                st.rerun()
+            elif new_admin in st.session_state.adminEmails:
+                st.warning("Email already exists.")
+
+    for email in st.session_state.adminEmails:
+        c_e1, c_e2 = st.columns([4, 1])
+        c_e1.write(f"• {email}")
+        if c_e2.button("Remove", key=f"rm_admin_{email}"):
+            if len(st.session_state.adminEmails) > 1:
+                st.session_state.adminEmails.remove(email)
+                save_state()
+                st.rerun()
+            else:
+                st.error("Cannot remove the last admin.")
+
+    st.divider()
+
     # --- EMAIL CONFIGURATION SECTION ---
     st.subheader("📧 Email Configuration")
     with st.expander("Configure SMTP Settings", expanded=False):
@@ -676,6 +829,35 @@ def render_chatbot():
 # --- MAIN APP FLOW ---
 
 def main():
+    # 1. Authenticate User
+    user = authenticate()
+    if not user:
+        return  # Stop rendering if not logged in
+
+    user_email = user.get("email")
+    user_name = user.get("name")
+    
+    # 2. Determine Role (Admin or Tech)
+    # Bootstrapping: If no admins exist in DB, first login becomes Admin
+    if not st.session_state.adminEmails:
+        st.session_state.adminEmails.append(user_email)
+        save_state()
+        st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")
+
+    is_admin = user_email in st.session_state.adminEmails
+
+    # Sidebar Info
+    with st.sidebar:
+        st.markdown("---")
+        st.write(f"Logged in as: **{user_name}**")
+        if is_admin:
+            st.success("🛡️ Admin Access")
+        else:
+            st.info("👷 Technician View")
+        
+        if st.button("Logout", key="logout_btn"):
+            logout()
+
     # Top Bar
     c1, c2, c3 = st.columns([4, 4, 2])
     with c1:
@@ -683,8 +865,10 @@ def main():
     with c2:
         search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs...")
     with c3:
-        if st.button("➕ New Job", use_container_width=True):
-            add_job_dialog()
+        # Restricted Access: Only Admins can create jobs
+        if is_admin:
+            if st.button("➕ New Job", use_container_width=True):
+                add_job_dialog()
 
     # Filter Jobs based on search
     filtered_jobs = st.session_state.jobs
@@ -692,7 +876,11 @@ def main():
         filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
 
     # Navigation Tabs
-    tabs = st.tabs(["🌅 Morning Briefing", "👷 Tech Board", "🧰 Service Calls", "🏗️ Projects", "📦 Archive", "🛡️ Admin"])
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
+    if is_admin:
+        tabs_list.append("🛡️ Admin")
+    
+    tabs = st.tabs(tabs_list)
 
     # 1. Morning Briefing
     with tabs[0]:
@@ -764,9 +952,10 @@ def main():
         for job in archived:
             render_job_card(job, key_suffix="archive")
 
-    # 6. Admin
-    with tabs[5]:
-        render_admin_panel()
+    # 6. Admin (Only if Admin)
+    if is_admin:
+        with tabs[5]:
+            render_admin_panel()
 
     # Sidebar Chatbot
     render_chatbot()
