@@ -1,11 +1,23 @@
 import streamlit as st
 import google.generativeai as genai
+import pandas as pd
 import datetime
 import base64
 import os
 import json
 from PIL import Image
 from io import BytesIO
+
+# --- SHARED DATA LOGIC ---
+SHEET_ID = '1d3KSQjUYYBJQrxm5a6100hwiH4uBdyyiS65kcGLsPkc' 
+URL = f'https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv'
+
+def load_shared_data():
+    try:
+        return pd.read_csv(URL)
+    except Exception as e:
+        st.error("Could not connect to the shared sheet.")
+        return pd.DataFrame()
 
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -565,3 +577,23 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# --- THE APP INTERFACE ---
+tab1, tab2 = st.tabs(["💬 AI Assistant", "📋 Shared Job Board"])
+
+with tab1:
+    st.header("Ask Gemini")
+    # Paste your existing Chatbot code (st.chat_input, etc.) here
+    
+with tab2:
+    st.header("Team Job Board")
+    st.write("This data is shared across all 7 devices.")
+    
+    # Show the data from the Google Sheet
+    shared_df = load_shared_data()
+    st.dataframe(shared_df, use_container_width=True)
+    
+    # Button for techs to jump to the sheet to add/edit info
+    st.link_button("➕ Add/Edit Jobs in Google Sheets", 
+                   f"https://docs.google.com/spreadsheets/d/{SHEET_ID}")
+
