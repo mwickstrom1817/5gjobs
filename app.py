@@ -5,6 +5,7 @@ import base64
 import os
 import json
 import smtplib
+import urllib.parse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from PIL import Image
@@ -207,8 +208,27 @@ def get_available_model(api_key):
         # If list_models fails (e.g. API key doesn't have list permission), fallback
         return genai.GenerativeModel('gemini-pro')
 
+def create_mailto_link(job, tech, location):
+    """Generates a mailto link for client-side email sending."""
+    subject = f"Assignment: {job['title']}"
+    body = f"""Hello {tech['name']},
+
+New Assignment:
+{job['title']} ({job['priority']})
+
+Location:
+{location['name']}
+{location['address']}
+
+Details:
+{job['description']}
+"""
+    # Use quote_via=quote to ensure spaces are encoded correctly for mail clients
+    qs = urllib.parse.urlencode({'subject': subject, 'body': body}, quote_via=urllib.parse.quote)
+    return f"mailto:{tech['email']}?{qs}"
+
 def send_assignment_email(job, tech, location):
-    """Sends an email notification to the assigned technician."""
+    """Sends an email notification via SMTP, returning True if successful."""
     # Attempt to get SMTP credentials from secrets or env
     smtp_server = os.getenv("SMTP_SERVER") or (st.secrets["SMTP_SERVER"] if "SMTP_SERVER" in st.secrets else None)
     smtp_port = os.getenv("SMTP_PORT") or (st.secrets["SMTP_PORT"] if "SMTP_PORT" in st.secrets else 587)
@@ -237,17 +257,13 @@ def send_assignment_email(job, tech, location):
     --------------------------------------------------
     {job['description']}
 
-    Please check the ServiceCommand dashboard for full details and to report status.
+    Please check the ServiceCommand dashboard for full details.
     """
 
-    # If no credentials, simulate email
+    # If no credentials, we return False to trigger fallback UI
     if not (smtp_server and sender_email and sender_password):
-        # Log to console for debugging
-        print(f"SIMULATED EMAIL TO: {tech['email']}")
-        print(f"SUBJECT: {subject}")
-        print(body)
-        st.toast(f"📧 Notification sent to {tech['name']} ({tech['email']})", icon="📨")
-        return
+        print(f"SMTP not configured. Skipping auto-email for: {tech['email']}")
+        return False
 
     msg = MIMEMultipart()
     msg['From'] = sender_email
@@ -262,9 +278,11 @@ def send_assignment_email(job, tech, location):
         server.send_message(msg)
         server.quit()
         st.toast(f"📧 Email successfully sent to {tech['name']}", icon="✅")
+        return True
     except Exception as e:
         st.error(f"Failed to send email: {str(e)}")
         print(f"Email Error: {str(e)}")
+        return False
 
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
@@ -345,16 +363,26 @@ def add_job_dialog():
             st.session_state.jobs.insert(0, new_job)
             
             # Send Email Notification
+            email_status_msg = ""
             selected_tech_id = tech_map[tech_name]
+            
             if selected_tech_id:
                 tech = get_tech(selected_tech_id)
                 loc = get_location(loc_map[loc_name])
                 if tech and loc:
-                    send_assignment_email(new_job, tech, loc)
+                    success = send_assignment_email(new_job, tech, loc)
+                    if not success:
+                        email_status_msg = "SMTP not configured. Use the 'Email' button in Job Details to notify manually."
 
             # Invalidate briefing so it regenerates with new data
             st.session_state.briefing = "Data required to generate briefing."
             save_state()  # Save changes
+            
+            if email_status_msg:
+                st.toast(email_status_msg, icon="ℹ️")
+            else:
+                st.toast("Job created successfully!", icon="✅")
+                
             st.rerun()
 
 @st.dialog("Job Details & Report", width="large")
@@ -374,6 +402,12 @@ def job_details_dialog(job_id):
     with c1:
         st.subheader(f"{job['title']}")
         st.caption(f"📍 {loc['name'] if loc else 'Unknown'} | 👤 {tech['name'] if tech else 'Unassigned'}")
+        
+        # MAILTO LINK BUTTON: Provides manual alternative if SMTP is missing
+        if tech and loc:
+            mailto_url = create_mailto_link(job, tech, loc)
+            st.link_button("📧 Email Assignment to Tech", mailto_url)
+
     with c2:
         new_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"], 
                                   index=["Pending", "In Progress", "Completed"].index(job['status']),
