@@ -185,13 +185,18 @@ def authenticate():
         return None
 
     # 3. Check for Auth Code from Google Redirect
+    # Compatibility with different Streamlit versions for query params
+    code = None
     try:
-        query_params = st.query_params
-        code = query_params.get("code")
+        if "code" in st.query_params:
+            code = st.query_params["code"]
     except:
         # Fallback for older Streamlit versions
-        query_params = st.experimental_get_query_params()
-        code = query_params.get("code", [None])[0]
+        try:
+            query_params = st.experimental_get_query_params()
+            code = query_params.get("code", [None])[0]
+        except:
+            pass
 
     if code:
         try:
@@ -219,11 +224,18 @@ def authenticate():
             st.session_state.user_info = user_info
             
             # Clear Query Params to clean URL
-            st.query_params.clear()
+            try:
+                st.query_params.clear()
+            except:
+                st.experimental_set_query_params()
+                
             st.rerun()
             
         except Exception as e:
             st.error(f"Authentication Failed: {e}")
+            # Optional: Print response text for debugging 403s during token exchange
+            if 'r' in locals() and r:
+                print(f"Token Exchange Error: {r.text}")
             return None
 
     # 4. Show Login Button
@@ -233,8 +245,8 @@ def authenticate():
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "openid email profile",
-        "access_type": "offline",
-        "prompt": "consent"
+        "access_type": "online", # Use online to avoid refresh token complexity unless needed
+        "prompt": "select_account" # Force account selection to avoid auto-selecting wrong account
     }
     
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
@@ -244,7 +256,7 @@ def authenticate():
             <div class="login-box">
                 <h1 style="color:white; margin-bottom: 10px;">ServiceCommand</h1>
                 <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
-                <a href="{login_url}" target="_self" style="
+                <a href="{login_url}" target="_self" rel="noopener noreferrer" style="
                     display: inline-block;
                     background-color: #DB4437; 
                     color: white; 
@@ -257,7 +269,10 @@ def authenticate():
                 ">
                     Sign in with Google
                 </a>
-                <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">Use your company email account.</p>
+                <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
+                    Ensure <code>{redirect_uri}</code> is added to <br/>
+                    "Authorized redirect URIs" in Google Cloud Console.
+                </p>
             </div>
         </div>
     """, unsafe_allow_html=True)
