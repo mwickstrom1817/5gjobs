@@ -281,6 +281,8 @@ def add_job_dialog():
                 'reports': []
             }
             st.session_state.jobs.insert(0, new_job)
+            # Invalidate briefing so it regenerates with new data
+            st.session_state.briefing = "Data required to generate briefing."
             save_state()  # Save changes
             st.rerun()
 
@@ -307,6 +309,8 @@ def job_details_dialog(job_id):
                                   key=f"status_{job_id}")
         if new_status != job['status']:
             st.session_state.jobs[job_index]['status'] = new_status
+            # Invalidate briefing on status change (e.g. active count changes)
+            st.session_state.briefing = "Data required to generate briefing."
             save_state() # Save changes
             st.rerun()
 
@@ -553,13 +557,15 @@ def main():
         col_main, col_feed = st.columns([2, 1])
         with col_main:
             st.subheader("Daily Operational Briefing")
-            st.container(border=True).markdown(st.session_state.briefing)
             
-            if st.button("Generate AI Briefing"):
-                with st.spinner("Analyzing schedule..."):
+            # Automatically generate briefing if it matches default placeholder AND we have jobs
+            if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
+                with st.spinner("🤖 AI is preparing your morning briefing..."):
                     st.session_state.briefing = generate_morning_briefing()
                     save_state() # Save new briefing
                     st.rerun()
+
+            st.container(border=True).markdown(st.session_state.briefing)
             
             # Stats
             s1, s2, s3 = st.columns(3)
