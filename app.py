@@ -229,11 +229,18 @@ Details:
 
 def send_assignment_email(job, tech, location):
     """Sends an email notification via SMTP, returning True if successful."""
-    # Attempt to get SMTP credentials from secrets or env
-    smtp_server = os.getenv("SMTP_SERVER") or (st.secrets["SMTP_SERVER"] if "SMTP_SERVER" in st.secrets else None)
-    smtp_port = os.getenv("SMTP_PORT") or (st.secrets["SMTP_PORT"] if "SMTP_PORT" in st.secrets else 587)
-    sender_email = os.getenv("SMTP_EMAIL") or (st.secrets["SMTP_EMAIL"] if "SMTP_EMAIL" in st.secrets else None)
-    sender_password = os.getenv("SMTP_PASSWORD") or (st.secrets["SMTP_PASSWORD"] if "SMTP_PASSWORD" in st.secrets else None)
+    # Helper to resolve config priority: Session > Secrets > Env
+    def get_config_val(key, default=None):
+        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
+            return st.session_state.smtp_settings[key]
+        if key in st.secrets:
+            return st.secrets[key]
+        return os.getenv(key) or default
+
+    smtp_server = get_config_val("SMTP_SERVER")
+    smtp_port = get_config_val("SMTP_PORT", 587)
+    sender_email = get_config_val("SMTP_EMAIL")
+    sender_password = get_config_val("SMTP_PASSWORD")
 
     # Prepare email content
     subject = f"New Job Assignment: {job['title']}"
@@ -517,6 +524,36 @@ def render_admin_panel():
     with c_db2:
         if st.button("💾 Force Save State"):
             save_state()
+
+    st.divider()
+
+    # --- EMAIL CONFIGURATION SECTION ---
+    st.subheader("📧 Email Configuration")
+    with st.expander("Configure SMTP Settings", expanded=False):
+        st.info("Settings entered here apply to the current session only. For permanent setup, add to `.streamlit/secrets.toml`.")
+        
+        # Helper to get current value for display
+        session_config = st.session_state.get('smtp_settings', {})
+        def get_val(key, default=""):
+            if session_config.get(key): return session_config.get(key)
+            if key in st.secrets: return st.secrets[key]
+            return os.getenv(key) or default
+
+        with st.form("smtp_config_form"):
+            c_smtp1, c_smtp2 = st.columns(2)
+            new_server = c_smtp1.text_input("SMTP Server", value=get_val("SMTP_SERVER"))
+            new_port = c_smtp2.text_input("SMTP Port", value=get_val("SMTP_PORT", "587"))
+            new_email = st.text_input("Sender Email", value=get_val("SMTP_EMAIL"))
+            new_pass = st.text_input("Sender Password", type="password", value=get_val("SMTP_PASSWORD"))
+            
+            if st.form_submit_button("Save Email Settings"):
+                st.session_state.smtp_settings = {
+                    "SMTP_SERVER": new_server,
+                    "SMTP_PORT": new_port,
+                    "SMTP_EMAIL": new_email,
+                    "SMTP_PASSWORD": new_pass
+                }
+                st.success("Email settings updated for this session!")
 
     st.divider()
 
