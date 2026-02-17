@@ -4,6 +4,9 @@ import datetime
 import base64
 import os
 import json
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from PIL import Image
 from io import BytesIO
 
@@ -204,6 +207,65 @@ def get_available_model(api_key):
         # If list_models fails (e.g. API key doesn't have list permission), fallback
         return genai.GenerativeModel('gemini-pro')
 
+def send_assignment_email(job, tech, location):
+    """Sends an email notification to the assigned technician."""
+    # Attempt to get SMTP credentials from secrets or env
+    smtp_server = os.getenv("SMTP_SERVER") or (st.secrets["SMTP_SERVER"] if "SMTP_SERVER" in st.secrets else None)
+    smtp_port = os.getenv("SMTP_PORT") or (st.secrets["SMTP_PORT"] if "SMTP_PORT" in st.secrets else 587)
+    sender_email = os.getenv("SMTP_EMAIL") or (st.secrets["SMTP_EMAIL"] if "SMTP_EMAIL" in st.secrets else None)
+    sender_password = os.getenv("SMTP_PASSWORD") or (st.secrets["SMTP_PASSWORD"] if "SMTP_PASSWORD" in st.secrets else None)
+
+    # Prepare email content
+    subject = f"New Job Assignment: {job['title']}"
+    body = f"""
+    Hello {tech['name']},
+
+    You have been assigned a new job task.
+
+    JOB DETAILS
+    --------------------------------------------------
+    Title:    {job['title']}
+    Priority: {job['priority']}
+    Type:     {job['type']}
+    
+    LOCATION
+    --------------------------------------------------
+    Name:    {location['name']}
+    Address: {location['address']}
+
+    DESCRIPTION
+    --------------------------------------------------
+    {job['description']}
+
+    Please check the ServiceCommand dashboard for full details and to report status.
+    """
+
+    # If no credentials, simulate email
+    if not (smtp_server and sender_email and sender_password):
+        # Log to console for debugging
+        print(f"SIMULATED EMAIL TO: {tech['email']}")
+        print(f"SUBJECT: {subject}")
+        print(body)
+        st.toast(f"📧 Notification sent to {tech['name']} ({tech['email']})", icon="📨")
+        return
+
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = tech['email']
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body, 'plain'))
+
+    try:
+        server = smtplib.SMTP(smtp_server, int(smtp_port))
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        st.toast(f"📧 Email successfully sent to {tech['name']}", icon="✅")
+    except Exception as e:
+        st.error(f"Failed to send email: {str(e)}")
+        print(f"Email Error: {str(e)}")
+
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
     api_key = get_api_key()
@@ -281,6 +343,15 @@ def add_job_dialog():
                 'reports': []
             }
             st.session_state.jobs.insert(0, new_job)
+            
+            # Send Email Notification
+            selected_tech_id = tech_map[tech_name]
+            if selected_tech_id:
+                tech = get_tech(selected_tech_id)
+                loc = get_location(loc_map[loc_name])
+                if tech and loc:
+                    send_assignment_email(new_job, tech, loc)
+
             # Invalidate briefing so it regenerates with new data
             st.session_state.briefing = "Data required to generate briefing."
             save_state()  # Save changes
