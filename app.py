@@ -83,7 +83,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- PERSISTENCE LAYER ---
-DB_FILE = "service_data.json"
+# Use absolute path to ensure we know exactly where the file is
+DB_FILE = os.path.join(os.getcwd(), "service_data.json")
 
 def load_data():
     """Loads data from the local JSON file."""
@@ -119,11 +120,13 @@ def save_state():
     try:
         with open(DB_FILE, "w") as f:
             json.dump(data, f, indent=2)
+        # Give user visual feedback that data is safe
+        st.toast("💾 Data saved successfully!", icon="✅")
     except IOError as e:
         st.error(f"Failed to save data: {e}")
 
 # --- SESSION STATE INITIALIZATION ---
-# Load persistent data immediately
+# Load persistent data immediately on every rerun to sync state
 db_data = load_data()
 st.session_state.jobs = db_data['jobs']
 st.session_state.techs = db_data['techs']
@@ -172,7 +175,6 @@ def get_available_model(api_key):
         valid_models = [m for m in all_models if 'generateContent' in m.supported_generation_methods]
         
         # Preference logic: Try to find latest Flash -> Pro -> generic Gemini
-        # We check the 'name' property (e.g., 'models/gemini-1.5-flash-001')
         
         # 1. Prefer 1.5 Flash
         best_model = next((m for m in valid_models if 'gemini-1.5-flash' in m.name), None)
@@ -194,10 +196,8 @@ def get_available_model(api_key):
             best_model = valid_models[0]
             
         if best_model:
-            # st.toast(f"Using AI Model: {best_model.name}") # Optional: Debugging
             return genai.GenerativeModel(best_model.name)
             
-        # If absolutely nothing found via list, fallback to string (might fail but worth a shot)
         return genai.GenerativeModel('gemini-pro')
 
     except Exception as e:
@@ -398,6 +398,19 @@ def render_job_card(job, compact=False, key_suffix=""):
             job_details_dialog(job['id'])
 
 def render_admin_panel():
+    st.subheader("Database Management")
+    st.info(f"📁 **Data File Location:** `{DB_FILE}`")
+    
+    c_db1, c_db2 = st.columns(2)
+    with c_db1:
+        if st.button("🔄 Reload Data from Disk"):
+            st.rerun()
+    with c_db2:
+        if st.button("💾 Force Save State"):
+            save_state()
+
+    st.divider()
+
     c1, c2 = st.columns(2)
     
     # Tech Management
