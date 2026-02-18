@@ -18,7 +18,6 @@ try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
-    from reportlab.lib.utils import ImageReader
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
@@ -33,93 +32,93 @@ st.set_page_config(
 
 # Custom CSS to match the React App's Zinc/Red/Black theme
 st.markdown("""
-    <style>
-    /* Main Background */
-    .stApp {
-        background-color: #09090b;
-        color: #e4e4e7;
-    }
-    
-    /* Inputs */
-    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div, .stNumberInput > div > div > input, .stMultiSelect > div > div > div {
-        background-color: #000000;
-        color: white;
-        border-color: #27272a;
-    }
+   <style>
+   /* Main Background */
+   .stApp {
+       background-color: #09090b;
+       color: #e4e4e7;
+   }
+   
+   /* Inputs */
+   .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div, .stNumberInput > div > div > input, .stMultiSelect > div > div > div {
+       background-color: #000000;
+       color: white;
+       border-color: #27272a;
+   }
 
-    /* Time Input */
-    input[type="time"] {
-        background-color: #000000;
-        color: white;
-    }
+   /* Time Input */
+   input[type="time"] {
+       background-color: #000000;
+       color: white;
+   }
 
-    /* Sidebar */
-    [data-testid="stSidebar"] {
-        background-color: #18181b;
-        border-right: 1px solid #27272a;
-    }
+   /* Sidebar */
+   [data-testid="stSidebar"] {
+       background-color: #18181b;
+       border-right: 1px solid #27272a;
+   }
 
-    /* Buttons */
-    .stButton > button {
-        background-color: #b91c1c;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-weight: bold;
-    }
-    .stButton > button:hover {
-        background-color: #991b1b;
-        color: white;
-        border-color: #7f1d1d;
-    }
+   /* Buttons */
+   .stButton > button {
+       background-color: #b91c1c;
+       color: white;
+       border: none;
+       border-radius: 8px;
+       font-weight: bold;
+   }
+   .stButton > button:hover {
+       background-color: #991b1b;
+       color: white;
+       border-color: #7f1d1d;
+   }
 
-    /* Custom Job Card Style */
-    .job-card {
-        background-color: #18181b;
-        border: 1px solid #27272a;
-        padding: 15px;
-        border-radius: 10px;
-        border-left: 5px solid #52525b;
-        margin-bottom: 10px;
-        transition: transform 0.2s;
-    }
-    .priority-Critical { border-left-color: #ef4444 !important; }
-    .priority-High { border-left-color: #dc2626 !important; }
-    .priority-Medium { border-left-color: #7f1d1d !important; }
-    .priority-Low { border-left-color: #52525b !important; }
+   /* Custom Job Card Style */
+   .job-card {
+       background-color: #18181b;
+       border: 1px solid #27272a;
+       padding: 15px;
+       border-radius: 10px;
+       border-left: 5px solid #52525b;
+       margin-bottom: 10px;
+       transition: transform 0.2s;
+   }
+   .priority-Critical { border-left-color: #ef4444 !important; }
+   .priority-High { border-left-color: #dc2626 !important; }
+   .priority-Medium { border-left-color: #7f1d1d !important; }
+   .priority-Low { border-left-color: #52525b !important; }
 
-    /* Tabs */
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 10px;
-    }
-    .stTabs [data-baseweb="tab"] {
-        background-color: #18181b;
-        border-radius: 4px;
-        color: #a1a1aa;
-    }
-    .stTabs [aria-selected="true"] {
-        background-color: #b91c1c !important;
-        color: white !important;
-    }
-    
-    /* Login Screen Container */
-    .login-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 70vh;
-        text-align: center;
-    }
-    .login-box {
-        background-color: #18181b;
-        border: 1px solid #27272a;
-        padding: 40px;
-        border-radius: 12px;
-        max-width: 400px;
-        width: 100%;
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-    }
-    </style>
+   /* Tabs */
+   .stTabs [data-baseweb="tab-list"] {
+       gap: 10px;
+   }
+   .stTabs [data-baseweb="tab"] {
+       background-color: #18181b;
+       border-radius: 4px;
+       color: #a1a1aa;
+   }
+   .stTabs [aria-selected="true"] {
+       background-color: #b91c1c !important;
+       color: white !important;
+   }
+   
+   /* Login Screen Container */
+   .login-container {
+       display: flex;
+       justify-content: center;
+       align-items: center;
+       height: 70vh;
+       text-align: center;
+   }
+   .login-box {
+       background-color: #18181b;
+       border: 1px solid #27272a;
+       padding: 40px;
+       border-radius: 12px;
+       max-width: 400px;
+       width: 100%;
+       box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+   }
+   </style>
 """, unsafe_allow_html=True)
 
 # --- PERSISTENCE LAYER ---
@@ -269,30 +268,30 @@ def authenticate():
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
     
     st.markdown(f"""
-        <div class="login-container">
-            <div class="login-box">
-                <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
-                <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
-                <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
-                    display: inline-block;
-                    background-color: #DB4437; 
-                    color: white; 
-                    padding: 12px 24px; 
-                    text-decoration: none; 
-                    border-radius: 6px; 
-                    font-weight: bold;
-                    font-family: sans-serif;
-                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-                ">
-                    Sign in with Google
-                </a>
-                <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
-                    Ensure <code>{redirect_uri}</code> is added to <br/>
-                    "Authorized redirect URIs" in Google Cloud Console.
-                </p>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
+       <div class="login-container">
+           <div class="login-box">
+               <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
+               <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
+               <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
+                   display: inline-block;
+                   background-color: #DB4437; 
+                   color: white; 
+                   padding: 12px 24px; 
+                   text-decoration: none; 
+                   border-radius: 6px; 
+                   font-weight: bold;
+                   font-family: sans-serif;
+                   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+               ">
+                   Sign in with Google
+               </a>
+               <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
+                   Ensure <code>{redirect_uri}</code> is added to <br/>
+                   "Authorized redirect URIs" in Google Cloud Console.
+               </p>
+           </div>
+       </div>
+   """, unsafe_allow_html=True)
     
     return None
 
@@ -316,7 +315,7 @@ def image_to_base64(image):
 
 def get_google_maps_url(address):
     """Generates a Google Maps Search URL based on address."""
-    if not address: return "#"
+    if not address: return None
     return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(address)}"
 
 def get_api_key():
@@ -461,82 +460,17 @@ def generate_job_pdf(job, tech, location, report):
     max_width = 80  # approx characters
     words = notes.split()
     current_line = []
-    line_count = 0
     
     for word in words:
         current_line.append(word)
         if len(" ".join(current_line)) > max_width:
             text_object.textLine(" ".join(current_line))
             current_line = []
-            line_count += 1
     if current_line:
         text_object.textLine(" ".join(current_line))
-        line_count += 1
         
     p.drawText(text_object)
     
-    # Update y based on lines of text drawn (approx 14pts per line)
-    y -= (line_count * 14)
-
-    # PHOTOS SECTION
-    photos = report.get('photos', [])
-    if photos:
-        y -= 30
-        
-        # Check if we need a new page for the header
-        if y < 100:
-            p.showPage()
-            y = height - 50
-            
-        p.setFont("Helvetica-Bold", 12)
-        p.drawString(50, y, "PHOTOS")
-        p.line(50, y-5, width-50, y-5)
-        y -= 20
-        
-        from reportlab.lib.utils import ImageReader
-        
-        x_offset = 50
-        max_row_height = 0
-        
-        for i, photo_b64 in enumerate(photos):
-            try:
-                # Decode base64
-                if "," in photo_b64:
-                    _, encoded = photo_b64.split(",", 1)
-                else:
-                    encoded = photo_b64
-                
-                photo_data = base64.b64decode(encoded)
-                img = Image.open(BytesIO(photo_data))
-                
-                # Scale logic
-                target_width = 240
-                img_width, img_height = img.size
-                aspect = img_height / img_width
-                target_height = target_width * aspect
-                
-                # Pagination Check
-                if y - target_height < 50:
-                    p.showPage()
-                    y = height - 50
-                    x_offset = 50
-                    max_row_height = 0
-                
-                p.drawImage(ImageReader(img), x_offset, y - target_height, width=target_width, height=target_height)
-                
-                if target_height > max_row_height:
-                    max_row_height = target_height
-                
-                if x_offset == 50: # First col -> Second col
-                    x_offset = 300
-                else: # Second col -> New row
-                    x_offset = 50
-                    y -= (max_row_height + 20)
-                    max_row_height = 0
-            except Exception as e:
-                print(f"Error adding photo to PDF: {e}")
-                # p.drawString(x_offset, y, "[Error loading image]") # Optional
-
     p.showPage()
     p.save()
     
@@ -561,27 +495,27 @@ def send_assignment_email(job, tech, location):
     # Prepare email content
     subject = f"New Job Assignment: {job['title']}"
     body = f"""
-    Hello {tech['name']},
+   Hello {tech['name']},
 
-    You have been assigned a new job task.
+   You have been assigned a new job task.
 
-    JOB DETAILS
-    --------------------------------------------------
-    Title:    {job['title']}
-    Priority: {job['priority']}
-    Type:     {job['type']}
-    
-    LOCATION
-    --------------------------------------------------
-    Name:    {location['name']}
-    Address: {location['address']}
+   JOB DETAILS
+   --------------------------------------------------
+   Title:    {job['title']}
+   Priority: {job['priority']}
+   Type:     {job['type']}
+   
+   LOCATION
+   --------------------------------------------------
+   Name:    {location['name']}
+   Address: {location['address']}
 
-    DESCRIPTION
-    --------------------------------------------------
-    {job['description']}
+   DESCRIPTION
+   --------------------------------------------------
+   {job['description']}
 
-    Please check the 5G Security Job Board for full details.
-    """
+   Please check the 5G Security Job Board for full details.
+   """
 
     # If no credentials, we return False to trigger fallback UI
     if not (smtp_server and sender_email and sender_password):
@@ -633,15 +567,15 @@ def send_completion_email(job, tech, location, report_data):
     # Prepare email content
     subject = f"✅ Job Completed: {job['title']}"
     body = f"""
-    JOB COMPLETED NOTIFICATION
-    
-    Job:      {job['title']}
-    Tech:     {tech['name'] if tech else 'Unknown'}
-    Location: {location['name'] if location else 'Unknown'}
-    
-    The job has been marked as Completed.
-    Please see the attached PDF report for full details.
-    """
+   JOB COMPLETED NOTIFICATION
+   
+   Job:      {job['title']}
+   Tech:     {tech['name'] if tech else 'Unknown'}
+   Location: {location['name'] if location else 'Unknown'}
+   
+   The job has been marked as Completed.
+   Please see the attached PDF report for full details.
+   """
 
     if not (smtp_server and sender_email and sender_password):
         print("SMTP not configured. Skipping admin completion email.")
@@ -689,18 +623,19 @@ def generate_morning_briefing():
     
     prompt = f"""
       You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
-      
-      Data:
-      - Active Jobs: {len(active_jobs)}
-      - Critical: {len(critical_jobs)}
-      - Techs: {', '.join([t['name'] for t in st.session_state.techs])}
-      
-      Critical Issues:
-      {chr(10).join([f"- {j['title']} ({j['priority']})" for j in critical_jobs])}
+      You are the Operations Manager for 5G Security, a company that specializes in Cameras, access control, alarm systems, infrastructure cabling. Generate a concise "Morning Briefing" for the dashboard.
+     
+     Data:
+     - Active Jobs: {len(active_jobs)}
+     - Critical: {len(critical_jobs)}
+     - Techs: {', '.join([t['name'] for t in st.session_state.techs])}
+     
+     Critical Issues:
+     {chr(10).join([f"- {j['title']} ({j['priority']})" for j in critical_jobs])}
 
-      Format: 1. Security Focus (Motivation), 2. Critical Focus, 3. Safety Tip.
-      Max 150 words. No markdown headers (#), use Bold instead.
-    """
+     Format: 1. Security Focus (Motivation), 2. Critical Focus, 3. Safety Tip.
+     Max 150 words. No markdown headers (#), use Bold instead.
+   """
     
     try:
         response = model.generate_content(prompt)
@@ -789,14 +724,17 @@ def job_details_dialog(job_id):
     c1, c2 = st.columns([3, 1])
     with c1:
         st.subheader(f"{job['title']}")
+        
+        # Map Link Logic
         if loc:
-            maps_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
-            st.markdown(f"📍 **{loc['name']}**")
-            st.markdown(f"[{loc['address']}]({maps_url}) (Open Map)")
+            map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
+            if map_url:
+                st.markdown(f"📍 **[{loc['name']}]({map_url})**")
+            else:
+                st.markdown(f"📍 **{loc['name']}**")
+            st.caption(loc['address'])
         else:
-            st.caption("📍 Unknown Location")
-            
-        st.caption(f"👤 {tech['name'] if tech else 'Unassigned'}")
+             st.caption(f"📍 Unknown | 👤 {tech['name'] if tech else 'Unassigned'}")
         
         # MAILTO LINK BUTTON: Provides manual alternative if SMTP is missing
         if tech and loc:
@@ -812,7 +750,7 @@ def job_details_dialog(job_id):
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
 
-    tab_history, tab_progress, tab_daily, tab_docs = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report", "📄 Documents"])
+    tab_history, tab_progress, tab_daily = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report"])
 
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
@@ -967,233 +905,364 @@ def job_details_dialog(job_id):
                 st.success("Daily Report Submitted!")
                 st.rerun()
 
-    with tab_docs:
-        st.write("#### 🔐 Project Documentation")
-        st.caption("Store sensitive info like IPs, credentials, and system configs here.")
+# --- UI COMPONENTS ---
 
-        # Ensure 'documents' key exists
-        if 'documents' not in job:
-            job['documents'] = []
 
-        # Display existing docs
-        if job['documents']:
-            for doc in job['documents']:
-                with st.container(border=True):
-                    c_icon, c_content, c_del = st.columns([1, 8, 1])
-                    with c_icon:
-                        if doc['type'] == 'Credential':
-                            st.write("🔑")
-                        elif doc['type'] == 'IP Address':
-                            st.write("🌐")
-                        else:
-                            st.write("📝")
-                    with c_content:
-                        st.markdown(f"**{doc['label']}**")
-                        st.code(doc['value'], language="text")
-                        st.caption(f"Added by {doc.get('author', 'Unknown')} on {doc.get('timestamp', '')[:10]}")
-                    with c_del:
-                        if st.button("🗑️", key=f"del_doc_{doc['id']}"):
-                            job['documents'].remove(doc)
-                            save_state()
-                            st.rerun()
-        else:
-            st.info("No documentation added yet.")
+def render_job_card(job, compact=False, key_suffix=""):
+    tech = get_tech(job['techId'])
+    loc = get_location(job['locationId'])
+    loc_name = loc['name'] if loc else "Unknown"
+    tech_name = tech['name'] if tech else "Unassigned"
+    
+    priority_class = f"priority-{job['priority']}"
+    
+    with st.container():
+        st.markdown(f"""
+        <div class="job-card {priority_class}">
+            <div style="display:flex; justify-content:space-between;">
+                <span style="font-weight:bold; font-size:1.1em;">{job['title']}</span>
+                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px;">{job['priority']}</span>
+            </div>
+            <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_name}</div>
+            <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
+                 <span>👤 {tech_name}</span>
+                 <span>📅 {job['date'][:10]}</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        # Unique key using job ID AND suffix to prevent Streamlit duplicates
+        if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+            job_details_dialog(job['id'])
 
-        st.divider()
-        st.write("**Add New Entry**")
-        with st.form(key=f"doc_form_{job_id}"):
-            d_type = st.selectbox("Type", ["IP Address", "Credential", "Configuration", "Note"])
-            d_label = st.text_input("Label (e.g. 'Router Login', 'NVR IP')")
-            d_value = st.text_area("Value / Content")
+def render_admin_panel():
+    st.subheader("Database Management")
+    st.info(f"📁 **Data File Location:** `{DB_FILE}`")
+    
+    c_db1, c_db2 = st.columns(2)
+    with c_db1:
+        if st.button("🔄 Reload Data from Disk"):
+            st.rerun()
+    with c_db2:
+        if st.button("💾 Force Save State"):
+            save_state()
             
-            if st.form_submit_button("Save Entry"):
-                if d_label and d_value:
-                    new_doc = {
-                        'id': f"d{datetime.datetime.now().timestamp()}",
-                        'type': d_type,
-                        'label': d_label,
-                        'value': d_value,
-                        'timestamp': datetime.datetime.now().isoformat(),
-                        'author': st.session_state.get('user_info', {}).get('name', 'Unknown')
-                    }
-                    
-                    if 'documents' not in st.session_state.jobs[job_index]:
-                         st.session_state.jobs[job_index]['documents'] = []
-                    
-                    st.session_state.jobs[job_index]['documents'].append(new_doc)
-                    save_state()
-                    st.success("Entry added!")
+    st.divider()
+
+    # --- ADMIN ACCESS MANAGEMENT ---
+    st.subheader("🛡️ Admin Access")
+    st.caption("Users listed here have full access to settings and can create jobs.")
+    
+    with st.form("add_admin_form"):
+        col_ad1, col_ad2 = st.columns([3, 1])
+        new_admin = col_ad1.text_input("New Admin Email", placeholder="user@company.com")
+        if col_ad2.form_submit_button("Add Admin"):
+            if new_admin and new_admin not in st.session_state.adminEmails:
+                st.session_state.adminEmails.append(new_admin)
+                save_state()
+                st.success(f"Added {new_admin}")
+                st.rerun()
+            elif new_admin in st.session_state.adminEmails:
+                st.warning("Email already exists.")
+    
+    for email in st.session_state.adminEmails:
+        c_e1, c_e2 = st.columns([4, 1])
+        c_e1.write(f"• {email}")
+        if c_e2.button("Remove", key=f"rm_admin_{email}"):
+            if len(st.session_state.adminEmails) > 1:
+                st.session_state.adminEmails.remove(email)
+                save_state()
+                st.rerun()
+            else:
+                st.error("Cannot remove the last admin.")
+
+    st.divider()
+
+    # --- EMAIL CONFIGURATION SECTION ---
+    st.subheader("📧 Email Configuration")
+    with st.expander("Configure SMTP Settings", expanded=False):
+        st.info("Settings entered here apply to the current session only. For permanent setup, add to `.streamlit/secrets.toml`.")
+        
+        # Helper to get current value for display
+        session_config = st.session_state.get('smtp_settings', {})
+        def get_val(key, default=""):
+            if session_config.get(key): return session_config.get(key)
+            if key in st.secrets: return st.secrets[key]
+            return os.getenv(key) or default
+
+        with st.form("smtp_config_form"):
+            c_smtp1, c_smtp2 = st.columns(2)
+            new_server = c_smtp1.text_input("SMTP Server", value=get_val("SMTP_SERVER"))
+            new_port = c_smtp2.text_input("SMTP Port", value=get_val("SMTP_PORT", "587"))
+            new_email = st.text_input("Sender Email", value=get_val("SMTP_EMAIL"))
+            new_pass = st.text_input("Sender Password", type="password", value=get_val("SMTP_PASSWORD"))
+            
+            if st.form_submit_button("Save Email Settings"):
+                st.session_state.smtp_settings = {
+                    "SMTP_SERVER": new_server,
+                    "SMTP_PORT": new_port,
+                    "SMTP_EMAIL": new_email,
+                    "SMTP_PASSWORD": new_pass
+                }
+                st.success("Email settings updated for this session!")
+
+    st.divider()
+    
+    c1, c2 = st.columns(2)
+    
+    # Tech Management
+    with c1:
+        st.subheader("Manage Technicians")
+        with st.form("add_tech"):
+            t_name = st.text_input("Name")
+            t_email = st.text_input("Email")
+            if st.form_submit_button("Add Technician"):
+                if t_name and t_email:
+                    initials = "".join([n[0] for n in t_name.split()]).upper()[:2]
+                    color = TECH_COLORS[len(st.session_state.techs) % len(TECH_COLORS)]
+                    st.session_state.techs.append({
+                        'id': f"t{datetime.datetime.now().timestamp()}",
+                        'name': t_name, 'email': t_email, 'initials': initials, 'color': color
+                    })
+                    save_state() # Save changes
                     st.rerun()
-                else:
-                    st.error("Label and Value are required.")
+        
+        st.markdown("---")
+        for t in st.session_state.techs:
+            st.markdown(f"**{t['name']}** ({t['email']})")
+            if st.button("Remove", key=f"rm_t_{t['id']}"):
+                st.session_state.techs.remove(t)
+                save_state() # Save changes
+                st.rerun()
 
-# --- UI COMPONENTS & MAIN LOOP ---
+    # Location Management
+    with c2:
+        st.subheader("Manage Locations")
+        with st.form("add_loc"):
+            l_name = st.text_input("Location Name")
+            l_addr = st.text_input("Address")
+            if st.form_submit_button("Add Location"):
+                if l_name:
+                    map_url = get_google_maps_url(l_addr) if l_addr else None
+                    st.session_state.locations.append({
+                        'id': f"l{datetime.datetime.now().timestamp()}",
+                        'name': l_name, 
+                        'address': l_addr,
+                        'mapsUrl': map_url
+                    })
+                    save_state() # Save changes
+                    st.rerun()
+        
+        st.markdown("---")
+        for l in st.session_state.locations:
+            if l.get('mapsUrl'):
+                st.markdown(f"**[{l['name']}]({l['mapsUrl']})** - {l['address']}")
+            else:
+                st.markdown(f"**{l['name']}** - {l['address']}")
 
-# Main Navigation
-user = authenticate()
+            if st.button("Remove", key=f"rm_l_{l['id']}"):
+                st.session_state.locations.remove(l)
+                save_state() # Save changes
+                st.rerun()
 
-if user:
-    # Sidebar
+def render_chatbot():
+    st.sidebar.title("🤖 Tech Assistant")
+    st.sidebar.markdown("Ask about jobs, history, or locations.")
+    
+    # Display History
+    for msg in st.session_state.chat_history:
+        with st.sidebar.chat_message(msg["role"]):
+            st.write(msg["parts"][0])
+    
+    # Chat Input
+    prompt = st.sidebar.chat_input("How can I help?")
+    if prompt:
+        api_key = get_api_key()
+        if not api_key:
+            st.sidebar.error("API Key missing.")
+            return
+
+        # Use dynamic model selector
+        model = get_available_model(api_key)
+        
+        # Add user message
+        st.session_state.chat_history.append({"role": "user", "parts": [prompt]})
+        with st.sidebar.chat_message("user"):
+            st.write(prompt)
+        
+        # Contextualize Data (remove heavy base64 strings before sending to LLM)
+        simple_jobs = []
+        for j in st.session_state.jobs:
+            clean_job = {k:v for k,v in j.items() if k != 'reports'}
+            
+            # Include text content of reports, but strip out photos to save tokens/bandwidth
+            clean_reports = []
+            for r in j.get('reports', []):
+                clean_reports.append({
+                    'timestamp': r.get('timestamp'),
+                    'techId': r.get('techId'),
+                    'content': r.get('content'),
+                    'photo_count': len(r.get('photos', []))
+                })
+            
+            clean_job['reports'] = clean_reports
+            simple_jobs.append(clean_job)
+        
+        system_context = f"""
+       You are a 5G Security Assistant.
+       Current Time: {datetime.datetime.now()}
+       Techs: {json.dumps(st.session_state.techs)}
+       Locations: {json.dumps(st.session_state.locations)}
+       Jobs: {json.dumps(simple_jobs)}
+       
+       Answer based strictly on this data. If searching for history, note that detailed reports are not in this context, only summaries.
+       """
+        
+        full_prompt = f"{system_context}\n\nUser Question: {prompt}"
+        
+        try:
+            with st.sidebar.chat_message("model"):
+                with st.spinner("Thinking..."):
+                    response = model.generate_content(full_prompt)
+                    bot_reply = response.text
+                    st.write(bot_reply)
+                    
+            st.session_state.chat_history.append({"role": "model", "parts": [bot_reply]})
+        except Exception as e:
+            st.sidebar.error(f"AI Error: {str(e)}")
+
+# --- MAIN APP FLOW ---
+
+def main():
+    # 1. Authenticate User
+    user = authenticate()
+    if not user:
+        return  # Stop rendering if not logged in
+        
+    user_email = user.get("email")
+    user_name = user.get("name")
+    
+    # 2. Determine Role (Admin or Tech)
+    # Bootstrapping: If no admins exist in DB, first login becomes Admin
+    if not st.session_state.adminEmails:
+        st.session_state.adminEmails.append(user_email)
+        save_state()
+        st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")
+    
+    is_admin = user_email in st.session_state.adminEmails
+    
+    # Sidebar Info
     with st.sidebar:
-        st.title("5G Security")
-        
-        # Navigation
-        menu = st.radio("Navigation", ["Morning Briefing", "Job Board", "Admin Panel"])
-        
-        st.divider()
-        st.caption("Logged in as:")
-        st.write(f"**{user.get('name')}**")
-        if st.button("Sign Out"):
+        st.markdown("---")
+        st.write(f"Logged in as: **{user_name}**")
+        if is_admin:
+            st.success("🛡️ Admin Access")
+        else:
+            st.info("👷 Technician View")
+            
+        if st.button("Logout", key="logout_btn"):
             logout()
 
-    # --- VIEWS ---
-
-    if menu == "Morning Briefing":
-        st.title("Morning Briefing ☕")
-        
-        if st.session_state.briefing == "Data required to generate briefing.":
-            with st.spinner("Analyzing schedule with Gemini AI..."):
-                briefing_text = generate_morning_briefing()
-                st.session_state.briefing = briefing_text
-                save_state() # Cache it
-        
-        st.markdown(st.session_state.briefing)
-        
-        if st.button("Refresh Briefing"):
-             st.session_state.briefing = "Data required to generate briefing."
-             st.rerun()
-
-    elif menu == "Job Board":
-        st.title("Job Board")
-        
-        col_act, col_add = st.columns([4, 1])
-        with col_add:
-            if st.button("➕ New Job", type="primary", use_container_width=True):
+    # Top Bar
+    c1, c2, c3 = st.columns([4, 4, 2])
+    with c1:
+        st.title("5G Security Job Board")
+    with c2:
+        search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs...")
+    with c3:
+        # Restricted Access: Only Admins can create jobs
+        if is_admin:
+            if st.button("➕ New Job", use_container_width=True):
                 add_job_dialog()
 
-        # Job List
-        active_jobs = [j for j in st.session_state.jobs if j['status'] != 'Completed']
-        
-        # Sort by Priority
-        priority_map = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
-        active_jobs.sort(key=lambda x: priority_map.get(x['priority'], 99))
+    # Filter Jobs based on search
+    filtered_jobs = st.session_state.jobs
+    if search:
+        filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
 
-        if not active_jobs:
-            st.info("No active jobs. Enjoy your coffee! ☕")
-        
-        for job in active_jobs:
-            loc = get_location(job['locationId'])
-            tech = get_tech(job['techId'])
+    # Navigation Tabs
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
+    if is_admin:
+        tabs_list.append("🛡️ Admin")
+    
+    tabs = st.tabs(tabs_list)
+    
+    # 1. Morning Briefing
+    with tabs[0]:
+        col_main, col_feed = st.columns([2, 1])
+        with col_main:
+            st.subheader("Daily Operational Briefing")
             
-            with st.container():
-                # Custom HTML Card (since st.container styling is limited)
-                st.markdown(f"""
-                <div class="job-card priority-{job['priority']}">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h3 style="margin:0; color:white;">{job['title']}</h3>
-                        <span style="background-color: #27272a; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; color: #a1a1aa;">{job['priority']}</span>
-                    </div>
-                    <p style="color: #a1a1aa; font-size: 0.9em; margin: 5px 0;">{loc['name'] if loc else 'Unknown Location'}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                c_act, c_status = st.columns([1, 4])
-                with c_act:
-                    if st.button("Open", key=f"btn_{job['id']}"):
-                        job_details_dialog(job['id'])
-                with c_status:
-                    st.caption(f"Status: {job['status']} | Tech: {tech['name'] if tech else 'Unassigned'}")
-
-    elif menu == "Admin Panel":
-        st.title("Admin Panel 🛡️")
-        
-        t_loc, t_tech, t_adm = st.tabs(["Locations", "Technicians", "Admins"])
-        
-        with t_loc:
-            st.subheader("Manage Locations")
-            
-            with st.form("new_location_form"):
-                st.write("**Add New Location**")
-                nl_name = st.text_input("Location Name")
-                nl_addr = st.text_input("Address")
-                
-                # Preview Map Link
-                if nl_addr:
-                    st.markdown(f"Preview Map Link: [Open Google Maps]({get_google_maps_url(nl_addr)})")
-
-                if st.form_submit_button("Add Location"):
-                    if nl_name and nl_addr:
-                        new_loc = {
-                            'id': f"l{datetime.datetime.now().timestamp()}",
-                            'name': nl_name,
-                            'address': nl_addr,
-                            'mapsUrl': get_google_maps_url(nl_addr)
-                        }
-                        st.session_state.locations.append(new_loc)
-                        save_state()
-                        st.success("Location Added")
-                        st.rerun()
-            
-            st.divider()
-            for loc in st.session_state.locations:
-                with st.container(border=True):
-                    l1, l2 = st.columns([4, 1])
-                    with l1:
-                        st.markdown(f"**{loc['name']}**")
-                        # Display Map Link if available
-                        maps_link = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
-                        st.markdown(f"📍 [{loc['address']}]({maps_link})")
-                    with l2:
-                        if st.button("Delete", key=f"del_loc_{loc['id']}"):
-                            st.session_state.locations.remove(loc)
-                            save_state()
-                            st.rerun()
-
-        with t_tech:
-            st.subheader("Manage Technicians")
-            
-            with st.form("new_tech_form"):
-                nt_name = st.text_input("Name")
-                nt_email = st.text_input("Email")
-                if st.form_submit_button("Add Technician"):
-                    if nt_name and nt_email:
-                        new_tech = {
-                            'id': f"t{datetime.datetime.now().timestamp()}",
-                            'name': nt_name,
-                            'email': nt_email
-                        }
-                        st.session_state.techs.append(new_tech)
-                        save_state()
-                        st.rerun()
-            
-            st.divider()
-            for tech in st.session_state.techs:
-                with st.container(border=True):
-                    c1, c2 = st.columns([4, 1])
-                    with c1:
-                        st.write(f"**{tech['name']}** ({tech['email']})")
-                    with c2:
-                         if st.button("Remove", key=f"del_tech_{tech['id']}"):
-                            st.session_state.techs.remove(tech)
-                            save_state()
-                            st.rerun()
-
-        with t_adm:
-            st.subheader("Manage Admins")
-            na_email = st.text_input("New Admin Email")
-            if st.button("Add Admin"):
-                if na_email and na_email not in st.session_state.adminEmails:
-                    st.session_state.adminEmails.append(na_email)
-                    save_state()
-                    st.success("Admin Added")
+            # Automatically generate briefing if it matches default placeholder AND we have jobs
+            if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
+                with st.spinner("🤖 AI is preparing your morning briefing..."):
+                    st.session_state.briefing = generate_morning_briefing()
+                    save_state() # Save new briefing
                     st.rerun()
             
-            st.divider()
-            for adm in st.session_state.adminEmails:
-                c1, c2 = st.columns([4, 1])
-                with c1: st.write(adm)
-                with c2:
-                    if st.button("Revoke", key=f"rev_{adm}"):
-                        st.session_state.adminEmails.remove(adm)
-                        save_state()
-                        st.rerun()
+            st.container(border=True).markdown(st.session_state.briefing)
+            
+            # Stats
+            s1, s2, s3 = st.columns(3)
+            active = len([j for j in st.session_state.jobs if j['status'] != 'Completed'])
+            crit = len([j for j in st.session_state.jobs if j['priority'] == 'Critical'])
+            s1.metric("Active Jobs", active)
+            s2.metric("Critical", crit)
+            s3.metric("Techs", len(st.session_state.techs))
+
+        with col_feed:
+            st.subheader("Priority Feed")
+            crit_jobs = [j for j in filtered_jobs if j['priority'] in ['Critical', 'High'] and j['status'] != 'Completed']
+            for job in crit_jobs:
+                render_job_card(job, compact=True, key_suffix="feed")
+
+    # 2. Tech Board
+    with tabs[1]:
+        if not st.session_state.techs:
+            st.info("No technicians added. Go to Admin tab.")
+        else:
+            cols = st.columns(len(st.session_state.techs) + 1)
+            # Tech Columns
+            for i, tech in enumerate(st.session_state.techs):
+                with cols[i]:
+                    st.markdown(f"**{tech['initials']}** - {tech['name']}")
+                    tech_jobs = [j for j in filtered_jobs if j['techId'] == tech['id'] and j['status'] != 'Completed']
+                    for job in tech_jobs:
+                        render_job_card(job, compact=True, key_suffix=f"tech_{tech['id']}")
+            # Unassigned
+            with cols[-1]:
+                st.markdown("**Unassigned**")
+                unassigned = [j for j in filtered_jobs if not j['techId'] and j['status'] != 'Completed']
+                for job in unassigned:
+                    render_job_card(job, compact=True, key_suffix="unassigned")
+
+    # 3. Service Calls
+    with tabs[2]:
+        service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
+        if not service_jobs: st.info("No active service calls.")
+        for job in service_jobs:
+            render_job_card(job, key_suffix="service")
+
+    # 4. Projects
+    with tabs[3]:
+        proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
+        if not proj_jobs: st.info("No active projects.")
+        for job in proj_jobs:
+            render_job_card(job, key_suffix="project")
+
+    # 5. Archive
+    with tabs[4]:
+        archived = [j for j in filtered_jobs if j['status'] == 'Completed']
+        if not archived: st.info("No archived jobs.")
+        for job in archived:
+            render_job_card(job, key_suffix="archive")
+
+    # 6. Admin (Only if Admin)
+    if is_admin:
+        with tabs[5]:
+            render_admin_panel()
+
+    # Sidebar Chatbot
+    render_chatbot()
+
+if __name__ == "__main__":
+    main()
