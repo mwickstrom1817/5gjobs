@@ -9,13 +9,23 @@ import urllib.parse
 import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 from PIL import Image
 from io import BytesIO
 
+# Try importing ReportLab for PDF generation
+try:
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
+
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
-    page_title="ServiceCommand",
-    page_icon="🧰",
+    page_title="5G Security Job Board",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -30,10 +40,16 @@ st.markdown("""
     }
     
     /* Inputs */
-    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div {
+    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div, .stNumberInput > div > div > input {
         background-color: #000000;
         color: white;
         border-color: #27272a;
+    }
+
+    /* Time Input */
+    input[type="time"] {
+        background-color: #000000;
+        color: white;
     }
 
     /* Sidebar */
@@ -254,7 +270,7 @@ def authenticate():
     st.markdown(f"""
         <div class="login-container">
             <div class="login-box">
-                <h1 style="color:white; margin-bottom: 10px;">ServiceCommand</h1>
+                <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
                 <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
                 <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
                     display: inline-block;
@@ -366,6 +382,96 @@ Details:
     qs = urllib.parse.urlencode({'subject': subject, 'body': body}, quote_via=urllib.parse.quote)
     return f"mailto:{tech['email']}?{qs}"
 
+# --- PDF GENERATION ---
+def generate_job_pdf(job, tech, location, report):
+    """Generates a PDF bytes object for the completed job."""
+    if not HAS_REPORTLAB:
+        return None
+        
+    buffer = BytesIO()
+    p = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+    
+    # Title
+    p.setFillColor(colors.darkred)
+    p.setFont("Helvetica-Bold", 20)
+    p.drawString(50, height - 50, "5G Security - Job Completion Report")
+    
+    p.setFillColor(colors.black)
+    p.setFont("Helvetica", 10)
+    p.drawString(50, height - 65, f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    
+    # Job Info
+    y = height - 100
+    p.setFont("Helvetica-Bold", 12)
+    p.drawString(50, y, "JOB DETAILS")
+    p.line(50, y-5, width-50, y-5)
+    
+    y -= 25
+    p.setFont("Helvetica", 11)
+    p.drawString(50, y, f"Title: {job['title']}")
+    y -= 15
+    p.drawString(50, y, f"Location: {location['name'] if location else 'Unknown'} - {location['address'] if location else ''}")
+    y -= 15
+    p.drawString(50, y, f"Tech Assigned: {tech['name'] if tech else 'Unassigned'}")
+    y -= 15
+    p.drawString(50, y, f"Status: {job['status']}")
+    
+    # Report Data
+    y -= 40
+    p.setFont("Helvetica-Bold", 12)
+    p.drawString(50, y, "FIELD REPORT DATA")
+    p.line(50, y-5, width-50, y-5)
+    
+    y -= 25
+    p.setFont("Helvetica", 11)
+    
+    data_points = [
+        f"Techs On Site: {report.get('techsOnSite', 'N/A')}",
+        f"Time Arrived: {report.get('timeArrived', 'N/A')}",
+        f"Time Finished: {report.get('timeDeparted', 'N/A')}",
+        f"Hours Worked: {report.get('hoursWorked', 'N/A')}",
+        f"Parts Used: {report.get('partsUsed', 'N/A')}",
+        f"Billable Items: {report.get('billableItems', 'N/A')}"
+    ]
+    
+    for point in data_points:
+        p.drawString(50, y, point)
+        y -= 20
+        
+    # Content/Notes
+    y -= 20
+    p.setFont("Helvetica-Bold", 12)
+    p.drawString(50, y, "TECHNICIAN NOTES")
+    p.line(50, y-5, width-50, y-5)
+    y -= 25
+    p.setFont("Helvetica", 10)
+    
+    notes = report.get('content', '')
+    # Basic wrapping
+    text_object = p.beginText(50, y)
+    text_object.setFont("Helvetica", 10)
+    
+    max_width = 80  # approx characters
+    words = notes.split()
+    current_line = []
+    
+    for word in words:
+        current_line.append(word)
+        if len(" ".join(current_line)) > max_width:
+            text_object.textLine(" ".join(current_line))
+            current_line = []
+    if current_line:
+        text_object.textLine(" ".join(current_line))
+        
+    p.drawText(text_object)
+    
+    p.showPage()
+    p.save()
+    
+    buffer.seek(0)
+    return buffer.getvalue()
+
 def send_assignment_email(job, tech, location):
     """Sends an email notification via SMTP, returning True if successful."""
     # Helper to resolve config priority: Session > Secrets > Env
@@ -403,7 +509,7 @@ def send_assignment_email(job, tech, location):
     --------------------------------------------------
     {job['description']}
 
-    Please check the ServiceCommand dashboard for full details.
+    Please check the 5G Security Job Board for full details.
     """
 
     # If no credentials, we return False to trigger fallback UI
@@ -430,8 +536,8 @@ def send_assignment_email(job, tech, location):
         print(f"Email Error: {str(e)}")
         return False
 
-def send_completion_email(job, tech, location):
-    """Sends an email notification to Admins when a job is completed."""
+def send_completion_email(job, tech, location, report_data):
+    """Sends an email notification to Admins when a job is completed, with PDF attachment."""
     # Helper to resolve config priority: Session > Secrets > Env
     def get_config_val(key, default=None):
         if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
@@ -450,6 +556,9 @@ def send_completion_email(job, tech, location):
     if not recipients:
         return
 
+    # Generate PDF
+    pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+
     # Prepare email content
     subject = f"✅ Job Completed: {job['title']}"
     body = f"""
@@ -460,7 +569,7 @@ def send_completion_email(job, tech, location):
     Location: {location['name'] if location else 'Unknown'}
     
     The job has been marked as Completed.
-    Please check the ServiceCommand dashboard for the final report.
+    Please see the attached PDF report for full details.
     """
 
     if not (smtp_server and sender_email and sender_password):
@@ -478,12 +587,19 @@ def send_completion_email(job, tech, location):
             msg['To'] = recipient
             msg['Subject'] = subject
             msg.attach(MIMEText(body, 'plain'))
+            
+            if pdf_bytes:
+                attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+                attachment.add_header('Content-Disposition', 'attachment', filename=f"Report_{job['id']}.pdf")
+                msg.attach(attachment)
+
             server.send_message(msg)
             
         server.quit()
         st.toast("📧 Completion notification sent to Admins", icon="✅")
     except Exception as e:
         print(f"Email Error: {str(e)}")
+        st.error(f"Failed to send email: {str(e)}")
 
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
@@ -501,7 +617,7 @@ def generate_morning_briefing():
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
     
     prompt = f"""
-      You are the Operations Manager. Generate a concise "Morning Briefing" for the dashboard.
+      You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
       
       Data:
       - Active Jobs: {len(active_jobs)}
@@ -511,7 +627,7 @@ def generate_morning_briefing():
       Critical Issues:
       {chr(10).join([f"- {j['title']} ({j['priority']})" for j in critical_jobs])}
 
-      Format: 1. Coach's Corner (Motivation), 2. Critical Focus, 3. Safety Tip.
+      Format: 1. Security Focus (Motivation), 2. Critical Focus, 3. Safety Tip.
       Max 150 words. No markdown headers (#), use Bold instead.
     """
     
@@ -630,7 +746,18 @@ def job_details_dialog(job_id):
             r_tech = get_tech(r['techId'])
             with st.container(border=True):
                 st.markdown(f"**{r_tech['name'] if r_tech else 'Unknown'}** - {r['timestamp'][:16]}")
+                
+                # Show structured data if available
+                if 'hoursWorked' in r:
+                    h1, h2, h3 = st.columns(3)
+                    h1.caption(f"🕒 Hours: {r.get('hoursWorked')}")
+                    h2.caption(f"⏰ In: {r.get('timeArrived')}")
+                    h3.caption(f"⏰ Out: {r.get('timeDeparted')}")
+                
                 st.write(r['content'])
+                if r.get('partsUsed'):
+                    st.caption(f"🔩 Parts: {r['partsUsed']}")
+
                 if r['photos']:
                     cols = st.columns(4)
                     for i, photo_b64 in enumerate(r['photos']):
@@ -643,8 +770,19 @@ def job_details_dialog(job_id):
             new_status = st.selectbox("Job Status", ["Pending", "In Progress", "Completed"], 
                                       index=["Pending", "In Progress", "Completed"].index(job['status']))
 
-            st.write("#### Daily Report")
-            content = st.text_area("Report Content", placeholder="Describe progress, issues...")
+            st.write("#### Daily Field Report")
+            
+            r_col1, r_col2 = st.columns(2)
+            with r_col1:
+                techs_on_site = st.text_input("Techs On Site", value=tech['name'] if tech else "")
+                time_arrived = st.time_input("Time Arrived", value=datetime.time(8, 0))
+                parts_used = st.text_area("Parts/Materials Used")
+            with r_col2:
+                hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5)
+                time_departed = st.time_input("Time Finished", value=datetime.time(17, 0))
+                billable_items = st.text_area("Billable Items / Extras")
+
+            content = st.text_area("General Notes / Description of Work", placeholder="Detailed summary of work performed...")
             
             st.write("#### Attach Photos")
             col_cam, col_upload = st.columns(2)
@@ -659,46 +797,53 @@ def job_details_dialog(job_id):
             if submitted:
                 changes_made = False
                 
-                # 1. Update Status
+                # Construct Report Data
+                report_payload = {
+                    'id': f"r{datetime.datetime.now().timestamp()}",
+                    'techId': job['techId'] or 'unknown',
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'content': content,
+                    'techsOnSite': techs_on_site,
+                    'timeArrived': str(time_arrived),
+                    'timeDeparted': str(time_departed),
+                    'hoursWorked': str(hours_worked),
+                    'partsUsed': parts_used,
+                    'billableItems': billable_items,
+                    'photos': []
+                }
+
+                # 1. Add Report (if content or hours present)
+                if content or hours_worked > 0:
+                    photos_list = []
+                    # Process Camera
+                    if cam_pic:
+                        img = Image.open(cam_pic)
+                        photos_list.append(image_to_base64(img))
+                    # Process Uploads
+                    if upl_pics:
+                        for up_file in upl_pics:
+                            img = Image.open(up_file)
+                            photos_list.append(image_to_base64(img))
+                    
+                    report_payload['photos'] = photos_list
+                    st.session_state.jobs[job_index]['reports'].append(report_payload)
+                    changes_made = True
+
+                # 2. Update Status
                 if new_status != job['status']:
                     st.session_state.jobs[job_index]['status'] = new_status
                     st.session_state.briefing = "Data required to generate briefing."
                     changes_made = True
                     
                     if new_status == "Completed":
-                        send_completion_email(job, tech, loc)
-                
-                # 2. Add Report
-                if content:
-                    photos_list = []
-                    
-                    # Process Camera
-                    if cam_pic:
-                        img = Image.open(cam_pic)
-                        photos_list.append(image_to_base64(img))
-                    
-                    # Process Uploads
-                    if upl_pics:
-                        for up_file in upl_pics:
-                            img = Image.open(up_file)
-                            photos_list.append(image_to_base64(img))
-
-                    new_report = {
-                        'id': f"r{datetime.datetime.now().timestamp()}",
-                        'techId': job['techId'] or 'unknown',
-                        'timestamp': datetime.datetime.now().isoformat(),
-                        'content': content,
-                        'photos': photos_list
-                    }
-                    st.session_state.jobs[job_index]['reports'].append(new_report)
-                    changes_made = True
+                        send_completion_email(job, tech, loc, report_payload)
                 
                 if changes_made:
                     save_state() # Save changes
                     st.success("Job Updated Successfully!")
                     st.rerun()
                 else:
-                    st.info("No changes detected.")
+                    st.info("No significant changes to save.")
 
 # --- UI COMPONENTS ---
 
@@ -895,7 +1040,7 @@ def render_chatbot():
             simple_jobs.append(clean_job)
 
         system_context = f"""
-        You are a ServiceCommand Assistant.
+        You are a 5G Security Assistant.
         Current Time: {datetime.datetime.now()}
         Techs: {json.dumps(st.session_state.techs)}
         Locations: {json.dumps(st.session_state.locations)}
@@ -952,7 +1097,7 @@ def main():
     # Top Bar
     c1, c2, c3 = st.columns([4, 4, 2])
     with c1:
-        st.title("ServiceCommand")
+        st.title("5G Security Job Board")
     with c2:
         search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs...")
     with c3:
