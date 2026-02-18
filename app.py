@@ -897,7 +897,7 @@ def job_details_dialog(job_id):
                 time_departed = st.time_input("Time Finished", value=datetime.time(17, 0))
                 billable_items = st.text_area("Billable Items / Extras")
 
-            content = st.text_area("General Notes / Summary", placeholder="Detailed summary of work performed today...")
+            content = st.text_area("General Notes / Summary (Be clear and concise)", placeholder="Detailed summary of work performed today...")
             
             # Logic to gather photos from "In-Progress" updates today
             current_date_str = datetime.datetime.now().strftime('%Y-%m-%d')
