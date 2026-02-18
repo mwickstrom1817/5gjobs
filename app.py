@@ -461,7 +461,7 @@ def generate_job_pdf(job, tech, location, report):
     if ai_summary:
         y -= 20
         p.setFont("Helvetica-Bold", 12)
-        p.drawString(50, y, "WORK SUMMARY (AI Generated)")
+        p.drawString(50, y, "WORK SUMMARY")
         p.line(50, y-5, width-50, y-5)
         y -= 20
         p.setFont("Helvetica-Oblique", 10)
