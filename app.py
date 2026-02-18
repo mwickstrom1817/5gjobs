@@ -40,7 +40,7 @@ st.markdown("""
     }
     
     /* Inputs */
-    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div, .stNumberInput > div > div > input {
+    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div, .stNumberInput > div > div > input, .stMultiSelect > div > div > div {
         background-color: #000000;
         color: white;
         border-color: #27272a;
@@ -774,7 +774,12 @@ def job_details_dialog(job_id):
             
             r_col1, r_col2 = st.columns(2)
             with r_col1:
-                techs_on_site = st.text_input("Techs On Site", value=tech['name'] if tech else "")
+                # Techs on Site: Multiselect
+                available_techs = [t['name'] for t in st.session_state.techs]
+                # Default to currently assigned tech if available
+                default_techs = [tech['name']] if tech and tech['name'] in available_techs else []
+                
+                techs_on_site_list = st.multiselect("Techs On Site", options=available_techs, default=default_techs)
                 time_arrived = st.time_input("Time Arrived", value=datetime.time(8, 0))
                 parts_used = st.text_area("Parts/Materials Used")
             with r_col2:
@@ -803,7 +808,7 @@ def job_details_dialog(job_id):
                     'techId': job['techId'] or 'unknown',
                     'timestamp': datetime.datetime.now().isoformat(),
                     'content': content,
-                    'techsOnSite': techs_on_site,
+                    'techsOnSite': ", ".join(techs_on_site_list),
                     'timeArrived': str(time_arrived),
                     'timeDeparted': str(time_departed),
                     'hoursWorked': str(hours_worked),
