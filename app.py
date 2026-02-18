@@ -18,6 +18,7 @@ try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
+    from reportlab.lib.utils import ImageReader
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
@@ -455,17 +456,82 @@ def generate_job_pdf(job, tech, location, report):
     max_width = 80  # approx characters
     words = notes.split()
     current_line = []
+    line_count = 0
     
     for word in words:
         current_line.append(word)
         if len(" ".join(current_line)) > max_width:
             text_object.textLine(" ".join(current_line))
             current_line = []
+            line_count += 1
     if current_line:
         text_object.textLine(" ".join(current_line))
+        line_count += 1
         
     p.drawText(text_object)
     
+    # Update y based on lines of text drawn (approx 14pts per line)
+    y -= (line_count * 14)
+
+    # PHOTOS SECTION
+    photos = report.get('photos', [])
+    if photos:
+        y -= 30
+        
+        # Check if we need a new page for the header
+        if y < 100:
+            p.showPage()
+            y = height - 50
+            
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, "PHOTOS")
+        p.line(50, y-5, width-50, y-5)
+        y -= 20
+        
+        from reportlab.lib.utils import ImageReader
+        
+        x_offset = 50
+        max_row_height = 0
+        
+        for i, photo_b64 in enumerate(photos):
+            try:
+                # Decode base64
+                if "," in photo_b64:
+                    _, encoded = photo_b64.split(",", 1)
+                else:
+                    encoded = photo_b64
+                
+                photo_data = base64.b64decode(encoded)
+                img = Image.open(BytesIO(photo_data))
+                
+                # Scale logic
+                target_width = 240
+                img_width, img_height = img.size
+                aspect = img_height / img_width
+                target_height = target_width * aspect
+                
+                # Pagination Check
+                if y - target_height < 50:
+                    p.showPage()
+                    y = height - 50
+                    x_offset = 50
+                    max_row_height = 0
+                
+                p.drawImage(ImageReader(img), x_offset, y - target_height, width=target_width, height=target_height)
+                
+                if target_height > max_row_height:
+                    max_row_height = target_height
+                
+                if x_offset == 50: # First col -> Second col
+                    x_offset = 300
+                else: # Second col -> New row
+                    x_offset = 50
+                    y -= (max_row_height + 20)
+                    max_row_height = 0
+            except Exception as e:
+                print(f"Error adding photo to PDF: {e}")
+                # p.drawString(x_offset, y, "[Error loading image]") # Optional
+
     p.showPage()
     p.save()
     
@@ -617,7 +683,7 @@ def generate_morning_briefing():
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
     
     prompt = f"""
-      You are the Operations Manager for 5G Security, a company that specializes in Cameras, access control, alarm systems, infrastructure cabling. Generate a concise "Morning Briefing" for the dashboard.
+      You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
       
       Data:
       - Active Jobs: {len(active_jobs)}
