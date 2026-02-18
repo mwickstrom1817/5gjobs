@@ -178,7 +178,7 @@ def authenticate():
     # Retrieve from secrets or env
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
     client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
-    redirect_uri = "GOOGLE_REDIRECT_URI"
+    redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI")
 
     if not (client_id and client_secret and redirect_uri):
         st.error("🔒 Google OAuth is not configured. Please add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to `.streamlit/secrets.toml`.")
@@ -248,7 +248,7 @@ def authenticate():
         "access_type": "online", # Use online to avoid refresh token complexity unless needed
         "prompt": "select_account" # Force account selection to avoid auto-selecting wrong account
     }
-    st.write(f"DEBUG: App is sending this URI: `{st.secrets['GOOGLE_REDIRECT_URI']}`")
+    
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
     
     st.markdown(f"""
@@ -256,7 +256,7 @@ def authenticate():
             <div class="login-box">
                 <h1 style="color:white; margin-bottom: 10px;">ServiceCommand</h1>
                 <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
-                <a href="{login_url}" target="_self" rel="noopener noreferrer" style="
+                <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
                     display: inline-block;
                     background-color: #DB4437; 
                     color: white; 
