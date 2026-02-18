@@ -178,7 +178,7 @@ def authenticate():
     # Retrieve from secrets or env
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
     client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
-    redirect_uri = "https://5gjobs-ka4tbbrheqypdfyotnujpg.streamlit.app/main"
+    redirect_uri = "GOOGLE_REDIRECT_URI"
 
     if not (client_id and client_secret and redirect_uri):
         st.error("🔒 Google OAuth is not configured. Please add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to `.streamlit/secrets.toml`.")
