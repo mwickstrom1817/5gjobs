@@ -800,7 +800,7 @@ def job_details_dialog(job_id):
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
 
-    tab_history, tab_progress, tab_daily = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report"])
+    tab_history, tab_progress, tab_daily, tab_docs = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report", "📄 Documents"])
 
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
@@ -955,7 +955,68 @@ def job_details_dialog(job_id):
                 st.success("Daily Report Submitted!")
                 st.rerun()
 
+    with tab_docs:
+        st.write("#### 🔐 Project Documentation")
+        st.caption("Store sensitive info like IPs, credentials, and system configs here.")
+
+        # Ensure 'documents' key exists
+        if 'documents' not in job:
+            job['documents'] = []
+
+        # Display existing docs
+        if job['documents']:
+            for doc in job['documents']:
+                with st.container(border=True):
+                    c_icon, c_content, c_del = st.columns([1, 8, 1])
+                    with c_icon:
+                        if doc['type'] == 'Credential':
+                            st.write("🔑")
+                        elif doc['type'] == 'IP Address':
+                            st.write("🌐")
+                        else:
+                            st.write("📝")
+                    with c_content:
+                        st.markdown(f"**{doc['label']}**")
+                        st.code(doc['value'], language="text")
+                        st.caption(f"Added by {doc.get('author', 'Unknown')} on {doc.get('timestamp', '')[:10]}")
+                    with c_del:
+                        if st.button("🗑️", key=f"del_doc_{doc['id']}"):
+                            job['documents'].remove(doc)
+                            save_state()
+                            st.rerun()
+        else:
+            st.info("No documentation added yet.")
+
+        st.divider()
+        st.write("**Add New Entry**")
+        with st.form(key=f"doc_form_{job_id}"):
+            d_type = st.selectbox("Type", ["IP Address", "Credential", "Configuration", "Note"])
+            d_label = st.text_input("Label (e.g. 'Router Login', 'NVR IP')")
+            d_value = st.text_area("Value / Content")
+            
+            if st.form_submit_button("Save Entry"):
+                if d_label and d_value:
+                    new_doc = {
+                        'id': f"d{datetime.datetime.now().timestamp()}",
+                        'type': d_type,
+                        'label': d_label,
+                        'value': d_value,
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'author': st.session_state.get('user_info', {}).get('name', 'Unknown')
+                    }
+                    
+                    if 'documents' not in st.session_state.jobs[job_index]:
+                         st.session_state.jobs[job_index]['documents'] = []
+                    
+                    st.session_state.jobs[job_index]['documents'].append(new_doc)
+                    save_state()
+                    st.success("Entry added!")
+                    st.rerun()
+                else:
+                    st.error("Label and Value are required.")
+
 # --- UI COMPONENTS ---
+
 
 
 def render_job_card(job, compact=False, key_suffix=""):
