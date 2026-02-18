@@ -687,10 +687,14 @@ def generate_morning_briefing():
     active_jobs = [j for j in st.session_state.jobs if j['status'] != 'Completed']
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
     
+    current_date = datetime.datetime.now().strftime("%B %d, %Y")
+
     prompt = f"""
       You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
-      5G Security is a company that specializes in cameras and NVR systems, access control, alarm systems, and infrastructure cabling.
+      5G Security is a company that specializes in cameras and NVR systems, access control, alarm systems, and infrastructure cabling. We dont do work on 5G Towers.
      
+     Today's Date: {current_date}
+
      Data:
      - Active Jobs: {len(active_jobs)}
      - Critical: {len(critical_jobs)}
@@ -699,7 +703,14 @@ def generate_morning_briefing():
      Critical Issues:
      {chr(10).join([f"- {j['title']} ({j['priority']})" for j in critical_jobs])}
 
-     Format: 1. Security Focus (Motivation), 2. Critical Focus, 3. Safety Tip.
+     Format: 
+     Start with the header: **Morning Briefing: 5G Security - {current_date}**
+
+     Then:
+     1. Security Focus (Motivation)
+     2. Critical Focus
+     3. Safety Tip.
+
      Max 150 words. No markdown headers (#), use Bold instead.
    """
     
