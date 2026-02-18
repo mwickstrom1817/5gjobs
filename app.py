@@ -368,6 +368,18 @@ def get_available_model(api_key):
         # If list_models fails (e.g. API key doesn't have list permission), fallback
         return genai.GenerativeModel('gemini-pro')
 
+def generate_technician_summary(notes, job_title):
+    """Uses Gemini to summarize the daily work for the PDF Report."""
+    api_key = get_api_key()
+    if not api_key: return None
+    model = get_available_model(api_key)
+    prompt = f"Summarize the following technician notes for job '{job_title}' into a concise, professional paragraph (approx 50 words) suitable for a client report:\n\n{notes}"
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except:
+        return None
+
 def create_mailto_link(job, tech, location):
     """Generates a mailto link for client-side email sending."""
     subject = f"Assignment: {job['title']}"
@@ -443,6 +455,36 @@ def generate_job_pdf(job, tech, location, report):
     for point in data_points:
         p.drawString(50, y, point)
         y -= 20
+
+    # AI Summary
+    ai_summary = report.get('ai_summary')
+    if ai_summary:
+        y -= 20
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, "WORK SUMMARY (AI Generated)")
+        p.line(50, y-5, width-50, y-5)
+        y -= 20
+        p.setFont("Helvetica-Oblique", 10)
+        
+        # Wrapping logic for summary
+        text_object = p.beginText(50, y)
+        max_width = 80  # approx characters
+        words = ai_summary.split()
+        current_line = []
+        line_count = 0
+        
+        for word in words:
+            current_line.append(word)
+            if len(" ".join(current_line)) > max_width:
+                text_object.textLine(" ".join(current_line[:-1]))
+                current_line = [word]
+                line_count += 1
+        if current_line:
+            text_object.textLine(" ".join(current_line))
+            line_count += 1
+            
+        p.drawText(text_object)
+        y -= (line_count * 14) + 10 # Adjust Y based on lines drawn
         
     # Content/Notes
     y -= 20
@@ -890,6 +932,13 @@ def job_details_dialog(job_id):
                     'photos': todays_photos # Photos handled in other tab
                 }
 
+                # If status is completing, try generating AI summary
+                if new_status == "Completed" and content:
+                    with st.spinner("Generating AI Summary for Report..."):
+                        summary = generate_technician_summary(content, job['title'])
+                        if summary:
+                             report_payload['ai_summary'] = summary
+
                 st.session_state.jobs[job_index]['reports'].append(report_payload)
                 changes_made = True
 
@@ -908,7 +957,7 @@ def job_details_dialog(job_id):
 # --- UI COMPONENTS ---
 
 
-def render_job_card(job, compact=False, key_suffix=""):
+def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     tech = get_tech(job['techId'])
     loc = get_location(job['locationId'])
     loc_name = loc['name'] if loc else "Unknown"
@@ -931,8 +980,20 @@ def render_job_card(job, compact=False, key_suffix=""):
         </div>
         """, unsafe_allow_html=True)
         # Unique key using job ID AND suffix to prevent Streamlit duplicates
-        if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-            job_details_dialog(job['id'])
+        if allow_delete:
+            c1, c2 = st.columns([4, 1])
+            with c1:
+                if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+                    job_details_dialog(job['id'])
+            with c2:
+                if st.button("🗑️", key=f"del_{job['id']}_{key_suffix}", help="Delete from Archive"):
+                    if job in st.session_state.jobs:
+                        st.session_state.jobs.remove(job)
+                        save_state()
+                        st.rerun()
+        else:
+            if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+                job_details_dialog(job['id'])
 
 def render_admin_panel():
     st.subheader("Database Management")
@@ -1254,7 +1315,7 @@ def main():
         archived = [j for j in filtered_jobs if j['status'] == 'Completed']
         if not archived: st.info("No archived jobs.")
         for job in archived:
-            render_job_card(job, key_suffix="archive")
+            render_job_card(job, key_suffix="archive", allow_delete=is_admin)
 
     # 6. Admin (Only if Admin)
     if is_admin:
