@@ -127,8 +127,7 @@ DB_FILE = os.path.join(os.getcwd(), "service_data.json")
 
 # Define Image Storage Directory
 IMAGES_DIR = os.path.join(os.getcwd(), "job_photos")
-if not os.path.exists(IMAGES_DIR):
-    os.makedirs(IMAGES_DIR)
+os.makedirs(IMAGES_DIR, exist_ok=True)
 
 def load_data():
     """Loads data from the local JSON file."""
