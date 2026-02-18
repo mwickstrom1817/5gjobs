@@ -248,7 +248,7 @@ def authenticate():
         "access_type": "online", # Use online to avoid refresh token complexity unless needed
         "prompt": "select_account" # Force account selection to avoid auto-selecting wrong account
     }
-    
+    st.write(f"DEBUG: App is sending this URI: `{st.secrets['GOOGLE_REDIRECT_URI']}`")
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
     
     st.markdown(f"""
