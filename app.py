@@ -841,8 +841,22 @@ def job_details_dialog(job_id):
 
             content = st.text_area("General Notes / Summary", placeholder="Detailed summary of work performed today...")
             
-            # Note about photos
-            st.info("ℹ️ Photos should be uploaded in the 'In-Progress' tab. They will be linked to the job history.")
+            # Logic to gather photos from "In-Progress" updates today
+            current_date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+            todays_photos = []
+            for r in job['reports']:
+                # Check timestamp match
+                if r['timestamp'].startswith(current_date_str) and r.get('photos'):
+                    # Only grab from "In-Progress" updates (which don't have structured data like hoursWorked)
+                    # to avoid duplicating photos if a Daily Report was already submitted.
+                    is_full_report = r.get('hoursWorked') or r.get('techsOnSite')
+                    if not is_full_report:
+                        todays_photos.extend(r['photos'])
+            
+            if todays_photos:
+                st.info(f"📸 {len(todays_photos)} photos taken today will be automatically attached to this report.")
+            else:
+                st.info("ℹ️ No photos found for today. Use the 'In-Progress' tab to add photos before submitting.")
 
             if st.form_submit_button("Submit Daily Report"):
                 # Construct Report Data (No Photos)
@@ -857,7 +871,7 @@ def job_details_dialog(job_id):
                     'hoursWorked': str(hours_worked),
                     'partsUsed': parts_used,
                     'billableItems': billable_items,
-                    'photos': [] # Photos handled in other tab
+                    'photos': todays_photos # Photos handled in other tab
                 }
 
                 st.session_state.jobs[job_index]['reports'].append(report_payload)
@@ -876,6 +890,7 @@ def job_details_dialog(job_id):
                 st.rerun()
 
 # --- UI COMPONENTS ---
+
 
 def render_job_card(job, compact=False, key_suffix=""):
     tech = get_tech(job['techId'])
