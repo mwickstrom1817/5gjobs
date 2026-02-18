@@ -314,6 +314,11 @@ def image_to_base64(image):
     image.save(buffered, format="JPEG")
     return "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode()
 
+def get_google_maps_url(address):
+    """Generates a Google Maps Search URL based on address."""
+    if not address: return "#"
+    return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(address)}"
+
 def get_api_key():
     # Try getting from Streamlit secrets, then Env, then return None
     if "GEMINI_API_KEY" in st.secrets:
@@ -784,7 +789,14 @@ def job_details_dialog(job_id):
     c1, c2 = st.columns([3, 1])
     with c1:
         st.subheader(f"{job['title']}")
-        st.caption(f"📍 {loc['name'] if loc else 'Unknown'} | 👤 {tech['name'] if tech else 'Unassigned'}")
+        if loc:
+            maps_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
+            st.markdown(f"📍 **{loc['name']}**")
+            st.markdown(f"[{loc['address']}]({maps_url}) (Open Map)")
+        else:
+            st.caption("📍 Unknown Location")
+            
+        st.caption(f"👤 {tech['name'] if tech else 'Unassigned'}")
         
         # MAILTO LINK BUTTON: Provides manual alternative if SMTP is missing
         if tech and loc:
@@ -1015,358 +1027,173 @@ def job_details_dialog(job_id):
                 else:
                     st.error("Label and Value are required.")
 
-# --- UI COMPONENTS ---
+# --- UI COMPONENTS & MAIN LOOP ---
 
+# Main Navigation
+user = authenticate()
 
-
-def render_job_card(job, compact=False, key_suffix=""):
-    tech = get_tech(job['techId'])
-    loc = get_location(job['locationId'])
-    loc_name = loc['name'] if loc else "Unknown"
-    tech_name = tech['name'] if tech else "Unassigned"
-    
-    priority_class = f"priority-{job['priority']}"
-    
-    with st.container():
-        st.markdown(f"""
-        <div class="job-card {priority_class}">
-            <div style="display:flex; justify-content:space-between;">
-                <span style="font-weight:bold; font-size:1.1em;">{job['title']}</span>
-                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px;">{job['priority']}</span>
-            </div>
-            <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_name}</div>
-            <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
-                 <span>👤 {tech_name}</span>
-                 <span>📅 {job['date'][:10]}</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        # Unique key using job ID AND suffix to prevent Streamlit duplicates
-        if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-            job_details_dialog(job['id'])
-
-def render_admin_panel():
-    st.subheader("Database Management")
-    st.info(f"📁 **Data File Location:** `{DB_FILE}`")
-    
-    c_db1, c_db2 = st.columns(2)
-    with c_db1:
-        if st.button("🔄 Reload Data from Disk"):
-            st.rerun()
-    with c_db2:
-        if st.button("💾 Force Save State"):
-            save_state()
-
-    st.divider()
-
-    # --- ADMIN ACCESS MANAGEMENT ---
-    st.subheader("🛡️ Admin Access")
-    st.caption("Users listed here have full access to settings and can create jobs.")
-    
-    with st.form("add_admin_form"):
-        col_ad1, col_ad2 = st.columns([3, 1])
-        new_admin = col_ad1.text_input("New Admin Email", placeholder="user@company.com")
-        if col_ad2.form_submit_button("Add Admin"):
-            if new_admin and new_admin not in st.session_state.adminEmails:
-                st.session_state.adminEmails.append(new_admin)
-                save_state()
-                st.success(f"Added {new_admin}")
-                st.rerun()
-            elif new_admin in st.session_state.adminEmails:
-                st.warning("Email already exists.")
-
-    for email in st.session_state.adminEmails:
-        c_e1, c_e2 = st.columns([4, 1])
-        c_e1.write(f"• {email}")
-        if c_e2.button("Remove", key=f"rm_admin_{email}"):
-            if len(st.session_state.adminEmails) > 1:
-                st.session_state.adminEmails.remove(email)
-                save_state()
-                st.rerun()
-            else:
-                st.error("Cannot remove the last admin.")
-
-    st.divider()
-
-    # --- EMAIL CONFIGURATION SECTION ---
-    st.subheader("📧 Email Configuration")
-    with st.expander("Configure SMTP Settings", expanded=False):
-        st.info("Settings entered here apply to the current session only. For permanent setup, add to `.streamlit/secrets.toml`.")
-        
-        # Helper to get current value for display
-        session_config = st.session_state.get('smtp_settings', {})
-        def get_val(key, default=""):
-            if session_config.get(key): return session_config.get(key)
-            if key in st.secrets: return st.secrets[key]
-            return os.getenv(key) or default
-
-        with st.form("smtp_config_form"):
-            c_smtp1, c_smtp2 = st.columns(2)
-            new_server = c_smtp1.text_input("SMTP Server", value=get_val("SMTP_SERVER"))
-            new_port = c_smtp2.text_input("SMTP Port", value=get_val("SMTP_PORT", "587"))
-            new_email = st.text_input("Sender Email", value=get_val("SMTP_EMAIL"))
-            new_pass = st.text_input("Sender Password", type="password", value=get_val("SMTP_PASSWORD"))
-            
-            if st.form_submit_button("Save Email Settings"):
-                st.session_state.smtp_settings = {
-                    "SMTP_SERVER": new_server,
-                    "SMTP_PORT": new_port,
-                    "SMTP_EMAIL": new_email,
-                    "SMTP_PASSWORD": new_pass
-                }
-                st.success("Email settings updated for this session!")
-
-    st.divider()
-
-    c1, c2 = st.columns(2)
-    
-    # Tech Management
-    with c1:
-        st.subheader("Manage Technicians")
-        with st.form("add_tech"):
-            t_name = st.text_input("Name")
-            t_email = st.text_input("Email")
-            if st.form_submit_button("Add Technician"):
-                if t_name and t_email:
-                    initials = "".join([n[0] for n in t_name.split()]).upper()[:2]
-                    color = TECH_COLORS[len(st.session_state.techs) % len(TECH_COLORS)]
-                    st.session_state.techs.append({
-                        'id': f"t{datetime.datetime.now().timestamp()}",
-                        'name': t_name, 'email': t_email, 'initials': initials, 'color': color
-                    })
-                    save_state() # Save changes
-                    st.rerun()
-        
-        st.markdown("---")
-        for t in st.session_state.techs:
-            st.markdown(f"**{t['name']}** ({t['email']})")
-            if st.button("Remove", key=f"rm_t_{t['id']}"):
-                st.session_state.techs.remove(t)
-                save_state() # Save changes
-                st.rerun()
-
-    # Location Management
-    with c2:
-        st.subheader("Manage Locations")
-        with st.form("add_loc"):
-            l_name = st.text_input("Location Name")
-            l_addr = st.text_input("Address")
-            if st.form_submit_button("Add Location"):
-                if l_name:
-                    st.session_state.locations.append({
-                        'id': f"l{datetime.datetime.now().timestamp()}",
-                        'name': l_name, 'address': l_addr
-                    })
-                    save_state() # Save changes
-                    st.rerun()
-        
-        st.markdown("---")
-        for l in st.session_state.locations:
-            st.markdown(f"**{l['name']}** - {l['address']}")
-            if st.button("Remove", key=f"rm_l_{l['id']}"):
-                st.session_state.locations.remove(l)
-                save_state() # Save changes
-                st.rerun()
-
-def render_chatbot():
-    st.sidebar.title("🤖 Tech Assistant")
-    st.sidebar.markdown("Ask about jobs, history, or locations.")
-    
-    # Display History
-    for msg in st.session_state.chat_history:
-        with st.sidebar.chat_message(msg["role"]):
-            st.write(msg["parts"][0])
-
-    # Chat Input
-    prompt = st.sidebar.chat_input("How can I help?")
-    if prompt:
-        api_key = get_api_key()
-        if not api_key:
-            st.sidebar.error("API Key missing.")
-            return
-
-        # Use dynamic model selector
-        model = get_available_model(api_key)
-
-        # Add user message
-        st.session_state.chat_history.append({"role": "user", "parts": [prompt]})
-        with st.sidebar.chat_message("user"):
-            st.write(prompt)
-
-        # Contextualize Data (remove heavy base64 strings before sending to LLM)
-        simple_jobs = []
-        for j in st.session_state.jobs:
-            clean_job = {k:v for k,v in j.items() if k != 'reports'}
-            
-            # Include text content of reports, but strip out photos to save tokens/bandwidth
-            clean_reports = []
-            for r in j.get('reports', []):
-                clean_reports.append({
-                    'timestamp': r.get('timestamp'),
-                    'techId': r.get('techId'),
-                    'content': r.get('content'),
-                    'photo_count': len(r.get('photos', []))
-                })
-            
-            clean_job['reports'] = clean_reports
-            simple_jobs.append(clean_job)
-
-        system_context = f"""
-        You are a 5G Security Assistant.
-        Current Time: {datetime.datetime.now()}
-        Techs: {json.dumps(st.session_state.techs)}
-        Locations: {json.dumps(st.session_state.locations)}
-        Jobs: {json.dumps(simple_jobs)}
-        
-        Answer based strictly on this data. If searching for history, note that detailed reports are not in this context, only summaries.
-        """
-        
-        full_prompt = f"{system_context}\n\nUser Question: {prompt}"
-
-        try:
-            with st.sidebar.chat_message("model"):
-                with st.spinner("Thinking..."):
-                    response = model.generate_content(full_prompt)
-                    bot_reply = response.text
-                    st.write(bot_reply)
-            
-            st.session_state.chat_history.append({"role": "model", "parts": [bot_reply]})
-        except Exception as e:
-            st.sidebar.error(f"AI Error: {str(e)}")
-
-# --- MAIN APP FLOW ---
-
-def main():
-    # 1. Authenticate User
-    user = authenticate()
-    if not user:
-        return  # Stop rendering if not logged in
-
-    user_email = user.get("email")
-    user_name = user.get("name")
-    
-    # 2. Determine Role (Admin or Tech)
-    # Bootstrapping: If no admins exist in DB, first login becomes Admin
-    if not st.session_state.adminEmails:
-        st.session_state.adminEmails.append(user_email)
-        save_state()
-        st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")
-
-    is_admin = user_email in st.session_state.adminEmails
-
-    # Sidebar Info
+if user:
+    # Sidebar
     with st.sidebar:
-        st.markdown("---")
-        st.write(f"Logged in as: **{user_name}**")
-        if is_admin:
-            st.success("🛡️ Admin Access")
-        else:
-            st.info("👷 Technician View")
+        st.title("5G Security")
         
-        if st.button("Logout", key="logout_btn"):
+        # Navigation
+        menu = st.radio("Navigation", ["Morning Briefing", "Job Board", "Admin Panel"])
+        
+        st.divider()
+        st.caption("Logged in as:")
+        st.write(f"**{user.get('name')}**")
+        if st.button("Sign Out"):
             logout()
 
-    # Top Bar
-    c1, c2, c3 = st.columns([4, 4, 2])
-    with c1:
-        st.title("5G Security Job Board")
-    with c2:
-        search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs...")
-    with c3:
-        # Restricted Access: Only Admins can create jobs
-        if is_admin:
-            if st.button("➕ New Job", use_container_width=True):
+    # --- VIEWS ---
+
+    if menu == "Morning Briefing":
+        st.title("Morning Briefing ☕")
+        
+        if st.session_state.briefing == "Data required to generate briefing.":
+            with st.spinner("Analyzing schedule with Gemini AI..."):
+                briefing_text = generate_morning_briefing()
+                st.session_state.briefing = briefing_text
+                save_state() # Cache it
+        
+        st.markdown(st.session_state.briefing)
+        
+        if st.button("Refresh Briefing"):
+             st.session_state.briefing = "Data required to generate briefing."
+             st.rerun()
+
+    elif menu == "Job Board":
+        st.title("Job Board")
+        
+        col_act, col_add = st.columns([4, 1])
+        with col_add:
+            if st.button("➕ New Job", type="primary", use_container_width=True):
                 add_job_dialog()
 
-    # Filter Jobs based on search
-    filtered_jobs = st.session_state.jobs
-    if search:
-        filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
+        # Job List
+        active_jobs = [j for j in st.session_state.jobs if j['status'] != 'Completed']
+        
+        # Sort by Priority
+        priority_map = {'Critical': 0, 'High': 1, 'Medium': 2, 'Low': 3}
+        active_jobs.sort(key=lambda x: priority_map.get(x['priority'], 99))
 
-    # Navigation Tabs
-    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
-    if is_admin:
-        tabs_list.append("🛡️ Admin")
-    
-    tabs = st.tabs(tabs_list)
-
-    # 1. Morning Briefing
-    with tabs[0]:
-        col_main, col_feed = st.columns([2, 1])
-        with col_main:
-            st.subheader("Daily Operational Briefing")
+        if not active_jobs:
+            st.info("No active jobs. Enjoy your coffee! ☕")
+        
+        for job in active_jobs:
+            loc = get_location(job['locationId'])
+            tech = get_tech(job['techId'])
             
-            # Automatically generate briefing if it matches default placeholder AND we have jobs
-            if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
-                with st.spinner("🤖 AI is preparing your morning briefing..."):
-                    st.session_state.briefing = generate_morning_briefing()
-                    save_state() # Save new briefing
+            with st.container():
+                # Custom HTML Card (since st.container styling is limited)
+                st.markdown(f"""
+                <div class="job-card priority-{job['priority']}">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0; color:white;">{job['title']}</h3>
+                        <span style="background-color: #27272a; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; color: #a1a1aa;">{job['priority']}</span>
+                    </div>
+                    <p style="color: #a1a1aa; font-size: 0.9em; margin: 5px 0;">{loc['name'] if loc else 'Unknown Location'}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                c_act, c_status = st.columns([1, 4])
+                with c_act:
+                    if st.button("Open", key=f"btn_{job['id']}"):
+                        job_details_dialog(job['id'])
+                with c_status:
+                    st.caption(f"Status: {job['status']} | Tech: {tech['name'] if tech else 'Unassigned'}")
+
+    elif menu == "Admin Panel":
+        st.title("Admin Panel 🛡️")
+        
+        t_loc, t_tech, t_adm = st.tabs(["Locations", "Technicians", "Admins"])
+        
+        with t_loc:
+            st.subheader("Manage Locations")
+            
+            with st.form("new_location_form"):
+                st.write("**Add New Location**")
+                nl_name = st.text_input("Location Name")
+                nl_addr = st.text_input("Address")
+                
+                # Preview Map Link
+                if nl_addr:
+                    st.markdown(f"Preview Map Link: [Open Google Maps]({get_google_maps_url(nl_addr)})")
+
+                if st.form_submit_button("Add Location"):
+                    if nl_name and nl_addr:
+                        new_loc = {
+                            'id': f"l{datetime.datetime.now().timestamp()}",
+                            'name': nl_name,
+                            'address': nl_addr,
+                            'mapsUrl': get_google_maps_url(nl_addr)
+                        }
+                        st.session_state.locations.append(new_loc)
+                        save_state()
+                        st.success("Location Added")
+                        st.rerun()
+            
+            st.divider()
+            for loc in st.session_state.locations:
+                with st.container(border=True):
+                    l1, l2 = st.columns([4, 1])
+                    with l1:
+                        st.markdown(f"**{loc['name']}**")
+                        # Display Map Link if available
+                        maps_link = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
+                        st.markdown(f"📍 [{loc['address']}]({maps_link})")
+                    with l2:
+                        if st.button("Delete", key=f"del_loc_{loc['id']}"):
+                            st.session_state.locations.remove(loc)
+                            save_state()
+                            st.rerun()
+
+        with t_tech:
+            st.subheader("Manage Technicians")
+            
+            with st.form("new_tech_form"):
+                nt_name = st.text_input("Name")
+                nt_email = st.text_input("Email")
+                if st.form_submit_button("Add Technician"):
+                    if nt_name and nt_email:
+                        new_tech = {
+                            'id': f"t{datetime.datetime.now().timestamp()}",
+                            'name': nt_name,
+                            'email': nt_email
+                        }
+                        st.session_state.techs.append(new_tech)
+                        save_state()
+                        st.rerun()
+            
+            st.divider()
+            for tech in st.session_state.techs:
+                with st.container(border=True):
+                    c1, c2 = st.columns([4, 1])
+                    with c1:
+                        st.write(f"**{tech['name']}** ({tech['email']})")
+                    with c2:
+                         if st.button("Remove", key=f"del_tech_{tech['id']}"):
+                            st.session_state.techs.remove(tech)
+                            save_state()
+                            st.rerun()
+
+        with t_adm:
+            st.subheader("Manage Admins")
+            na_email = st.text_input("New Admin Email")
+            if st.button("Add Admin"):
+                if na_email and na_email not in st.session_state.adminEmails:
+                    st.session_state.adminEmails.append(na_email)
+                    save_state()
+                    st.success("Admin Added")
                     st.rerun()
-
-            st.container(border=True).markdown(st.session_state.briefing)
             
-            # Stats
-            s1, s2, s3 = st.columns(3)
-            active = len([j for j in st.session_state.jobs if j['status'] != 'Completed'])
-            crit = len([j for j in st.session_state.jobs if j['priority'] == 'Critical'])
-            s1.metric("Active Jobs", active)
-            s2.metric("Critical", crit)
-            s3.metric("Techs", len(st.session_state.techs))
-
-        with col_feed:
-            st.subheader("Priority Feed")
-            crit_jobs = [j for j in filtered_jobs if j['priority'] in ['Critical', 'High'] and j['status'] != 'Completed']
-            for job in crit_jobs:
-                render_job_card(job, compact=True, key_suffix="feed")
-
-    # 2. Tech Board
-    with tabs[1]:
-        if not st.session_state.techs:
-            st.info("No technicians added. Go to Admin tab.")
-        else:
-            cols = st.columns(len(st.session_state.techs) + 1)
-            # Tech Columns
-            for i, tech in enumerate(st.session_state.techs):
-                with cols[i]:
-                    st.markdown(f"**{tech['initials']}** - {tech['name']}")
-                    tech_jobs = [j for j in filtered_jobs if j['techId'] == tech['id'] and j['status'] != 'Completed']
-                    for job in tech_jobs:
-                        render_job_card(job, compact=True, key_suffix=f"tech_{tech['id']}")
-            # Unassigned
-            with cols[-1]:
-                st.markdown("**Unassigned**")
-                unassigned = [j for j in filtered_jobs if not j['techId'] and j['status'] != 'Completed']
-                for job in unassigned:
-                    render_job_card(job, compact=True, key_suffix="unassigned")
-
-    # 3. Service Calls
-    with tabs[2]:
-        service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
-        if not service_jobs: st.info("No active service calls.")
-        for job in service_jobs:
-            render_job_card(job, key_suffix="service")
-
-    # 4. Projects
-    with tabs[3]:
-        proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
-        if not proj_jobs: st.info("No active projects.")
-        for job in proj_jobs:
-            render_job_card(job, key_suffix="project")
-
-    # 5. Archive
-    with tabs[4]:
-        archived = [j for j in filtered_jobs if j['status'] == 'Completed']
-        if not archived: st.info("No archived jobs.")
-        for job in archived:
-            render_job_card(job, key_suffix="archive")
-
-    # 6. Admin (Only if Admin)
-    if is_admin:
-        with tabs[5]:
-            render_admin_panel()
-
-    # Sidebar Chatbot
-    render_chatbot()
-
-if __name__ == "__main__":
-    main()
+            st.divider()
+            for adm in st.session_state.adminEmails:
+                c1, c2 = st.columns([4, 1])
+                with c1: st.write(adm)
+                with c2:
+                    if st.button("Revoke", key=f"rev_{adm}"):
+                        st.session_state.adminEmails.remove(adm)
+                        save_state()
+                        st.rerun()
