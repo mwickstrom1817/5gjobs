@@ -689,7 +689,7 @@ def generate_morning_briefing():
     
     prompt = f"""
       You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
-      5G Security is a company that specializes in cameras and NVR systems, access control, alarm systems, and infrastructure cabling. We dont do work on 5G Towers.
+      5G Security is a company that specializes in cameras and NVR systems, access control, alarm systems, and infrastructure cabling.
      
      Data:
      - Active Jobs: {len(active_jobs)}
