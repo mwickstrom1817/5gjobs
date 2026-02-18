@@ -125,6 +125,11 @@ st.markdown("""
 # Use absolute path to ensure we know exactly where the file is
 DB_FILE = os.path.join(os.getcwd(), "service_data.json")
 
+# Define Image Storage Directory
+IMAGES_DIR = os.path.join(os.getcwd(), "job_photos")
+if not os.path.exists(IMAGES_DIR):
+    os.makedirs(IMAGES_DIR)
+
 def load_data():
     """Loads data from the local JSON file."""
     default_data = {
@@ -308,10 +313,30 @@ def get_tech(tech_id):
 def get_location(loc_id):
     return next((l for l in st.session_state.locations if l['id'] == loc_id), None)
 
-def image_to_base64(image):
-    buffered = BytesIO()
-    image.save(buffered, format="JPEG")
-    return "data:image/jpeg;base64," + base64.b64encode(buffered.getvalue()).decode()
+def save_image_locally(uploaded_file):
+    """Saves an uploaded file or camera input to disk and returns the relative path."""
+    if uploaded_file is None:
+        return None
+    
+    # Determine extension
+    if hasattr(uploaded_file, 'name') and uploaded_file.name:
+         file_ext = os.path.splitext(uploaded_file.name)[1]
+         if not file_ext: file_ext = ".jpg"
+    else:
+         file_ext = ".jpg" # Default for camera input
+    
+    # Create unique filename
+    file_id = f"img_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.urandom(4).hex()}{file_ext}"
+    file_path = os.path.join(IMAGES_DIR, file_id)
+    
+    # Save to disk
+    try:
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        return file_path
+    except Exception as e:
+        st.error(f"Failed to save image: {e}")
+        return None
 
 def get_google_maps_url(address):
     """Generates a Google Maps Search URL based on address."""
@@ -461,7 +486,7 @@ def generate_job_pdf(job, tech, location, report):
     if ai_summary:
         y -= 20
         p.setFont("Helvetica-Bold", 12)
-        p.drawString(50, y, "WORK SUMMARY")
+        p.drawString(50, y, "WORK SUMMARY (AI Generated)")
         p.line(50, y-5, width-50, y-5)
         y -= 20
         p.setFont("Helvetica-Oblique", 10)
@@ -822,9 +847,10 @@ def job_details_dialog(job_id):
 
                 if r['photos']:
                     cols = st.columns(4)
-                    for i, photo_b64 in enumerate(r['photos']):
+                    for i, photo_source in enumerate(r['photos']):
                         with cols[i % 4]:
-                            st.image(photo_b64, use_container_width=True)
+                            # st.image handles both Base64 and File Paths automatically
+                            st.image(photo_source, use_container_width=True)
 
     with tab_progress:
         st.write("#### 📸 Quick Update")
@@ -843,12 +869,12 @@ def job_details_dialog(job_id):
             if st.form_submit_button("Post Update"):
                 photos_list = []
                 if cam_pic:
-                    img = Image.open(cam_pic)
-                    photos_list.append(image_to_base64(img))
+                    path = save_image_locally(cam_pic)
+                    if path: photos_list.append(path)
                 if upl_pics:
                     for up_file in upl_pics:
-                        img = Image.open(up_file)
-                        photos_list.append(image_to_base64(img))
+                        path = save_image_locally(up_file)
+                        if path: photos_list.append(path)
                 
                 if prog_note or photos_list:
                     # Construct Simple Report Data
@@ -897,7 +923,7 @@ def job_details_dialog(job_id):
                 time_departed = st.time_input("Time Finished", value=datetime.time(17, 0))
                 billable_items = st.text_area("Billable Items / Extras")
 
-            content = st.text_area("General Notes / Summary (Be clear and concise)", placeholder="Detailed summary of work performed today...")
+            content = st.text_area("General Notes / Summary", placeholder="Detailed summary of work performed today...")
             
             # Logic to gather photos from "In-Progress" updates today
             current_date_str = datetime.datetime.now().strftime('%Y-%m-%d')
