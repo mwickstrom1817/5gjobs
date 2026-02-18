@@ -734,9 +734,9 @@ def job_details_dialog(job_id):
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
 
-    tab1, tab2 = st.tabs(["📋 Details & History", "📸 Update & Report"])
+    tab_history, tab_progress, tab_daily = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report"])
 
-    with tab1:
+    with tab_history:
         st.markdown(f"**Description:** {job['description']}")
         st.divider()
         st.write("#### 📜 History")
@@ -747,14 +747,18 @@ def job_details_dialog(job_id):
             with st.container(border=True):
                 st.markdown(f"**{r_tech['name'] if r_tech else 'Unknown'}** - {r['timestamp'][:16]}")
                 
-                # Show structured data if available
-                if 'hoursWorked' in r:
+                # Check if it's a "Daily Report" (has hours/techs) or "In-Progress" (just content/photos)
+                is_daily_report = r.get('hoursWorked') or r.get('techsOnSite')
+                
+                if is_daily_report:
                     h1, h2, h3 = st.columns(3)
                     h1.caption(f"🕒 Hours: {r.get('hoursWorked')}")
                     h2.caption(f"⏰ In: {r.get('timeArrived')}")
                     h3.caption(f"⏰ Out: {r.get('timeDeparted')}")
                 
-                st.write(r['content'])
+                if r.get('content'):
+                    st.write(r['content'])
+                    
                 if r.get('partsUsed'):
                     st.caption(f"🔩 Parts: {r['partsUsed']}")
 
@@ -764,19 +768,67 @@ def job_details_dialog(job_id):
                         with cols[i % 4]:
                             st.image(photo_b64, use_container_width=True)
 
-    with tab2:
-        with st.form(key=f"report_form_{job_id}"):
-            st.write("#### Update Status")
+    with tab_progress:
+        st.write("#### 📸 Quick Update")
+        st.caption("Add photos and notes while working. These save to history immediately.")
+        
+        with st.form(key=f"progress_form_{job_id}"):
+            prog_note = st.text_area("Note", placeholder="Quick update (e.g. 'Arrived on site', 'Found the issue')...")
+            
+            st.write("**Attach Photos**")
+            c_cam, c_upl = st.columns(2)
+            with c_cam:
+                cam_pic = st.camera_input("Take Photo")
+            with c_upl:
+                upl_pics = st.file_uploader("Upload Images", accept_multiple_files=True, type=['png', 'jpg'])
+                
+            if st.form_submit_button("Post Update"):
+                photos_list = []
+                if cam_pic:
+                    img = Image.open(cam_pic)
+                    photos_list.append(image_to_base64(img))
+                if upl_pics:
+                    for up_file in upl_pics:
+                        img = Image.open(up_file)
+                        photos_list.append(image_to_base64(img))
+                
+                if prog_note or photos_list:
+                    # Construct Simple Report Data
+                    report_payload = {
+                        'id': f"r{datetime.datetime.now().timestamp()}",
+                        'techId': job['techId'] or 'unknown',
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'content': prog_note,
+                        'photos': photos_list,
+                        # Empty structured fields
+                        'techsOnSite': "", 'timeArrived': "", 'timeDeparted': "", 
+                        'hoursWorked': "", 'partsUsed': "", 'billableItems': ""
+                    }
+                    st.session_state.jobs[job_index]['reports'].append(report_payload)
+                    
+                    # Auto-set status to In Progress if Pending
+                    if job['status'] == 'Pending':
+                        st.session_state.jobs[job_index]['status'] = 'In Progress'
+                        st.session_state.briefing = "Data required to generate briefing."
+                    
+                    save_state()
+                    st.success("Update Posted!")
+                    st.rerun()
+                else:
+                    st.warning("Please add a note or photo.")
+
+    with tab_daily:
+        st.write("#### 📝 Daily Field Report")
+        st.caption("End of day reporting. Submit labor hours, parts, and finalize status.")
+        
+        with st.form(key=f"daily_form_{job_id}"):
             new_status = st.selectbox("Job Status", ["Pending", "In Progress", "Completed"], 
                                       index=["Pending", "In Progress", "Completed"].index(job['status']))
 
-            st.write("#### Daily Field Report")
-            
             r_col1, r_col2 = st.columns(2)
             with r_col1:
                 # Techs on Site: Multiselect
                 available_techs = [t['name'] for t in st.session_state.techs]
-                # Default to currently assigned tech if available
                 default_techs = [tech['name']] if tech and tech['name'] in available_techs else []
                 
                 techs_on_site_list = st.multiselect("Techs On Site", options=available_techs, default=default_techs)
@@ -787,22 +839,13 @@ def job_details_dialog(job_id):
                 time_departed = st.time_input("Time Finished", value=datetime.time(17, 0))
                 billable_items = st.text_area("Billable Items / Extras")
 
-            content = st.text_area("General Notes / Description of Work", placeholder="Detailed summary of work performed...")
+            content = st.text_area("General Notes / Summary", placeholder="Detailed summary of work performed today...")
             
-            st.write("#### Attach Photos")
-            col_cam, col_upload = st.columns(2)
-            
-            with col_cam:
-                cam_pic = st.camera_input("Take Photo")
-            with col_upload:
-                upl_pics = st.file_uploader("Upload Images", accept_multiple_files=True, type=['png', 'jpg'])
+            # Note about photos
+            st.info("ℹ️ Photos should be uploaded in the 'In-Progress' tab. They will be linked to the job history.")
 
-            submitted = st.form_submit_button("Save & Update")
-            
-            if submitted:
-                changes_made = False
-                
-                # Construct Report Data
+            if st.form_submit_button("Submit Daily Report"):
+                # Construct Report Data (No Photos)
                 report_payload = {
                     'id': f"r{datetime.datetime.now().timestamp()}",
                     'techId': job['techId'] or 'unknown',
@@ -814,41 +857,23 @@ def job_details_dialog(job_id):
                     'hoursWorked': str(hours_worked),
                     'partsUsed': parts_used,
                     'billableItems': billable_items,
-                    'photos': []
+                    'photos': [] # Photos handled in other tab
                 }
 
-                # 1. Add Report (if content or hours present)
-                if content or hours_worked > 0:
-                    photos_list = []
-                    # Process Camera
-                    if cam_pic:
-                        img = Image.open(cam_pic)
-                        photos_list.append(image_to_base64(img))
-                    # Process Uploads
-                    if upl_pics:
-                        for up_file in upl_pics:
-                            img = Image.open(up_file)
-                            photos_list.append(image_to_base64(img))
-                    
-                    report_payload['photos'] = photos_list
-                    st.session_state.jobs[job_index]['reports'].append(report_payload)
-                    changes_made = True
+                st.session_state.jobs[job_index]['reports'].append(report_payload)
+                changes_made = True
 
-                # 2. Update Status
+                # Update Status
                 if new_status != job['status']:
                     st.session_state.jobs[job_index]['status'] = new_status
                     st.session_state.briefing = "Data required to generate briefing."
-                    changes_made = True
                     
                     if new_status == "Completed":
                         send_completion_email(job, tech, loc, report_payload)
                 
-                if changes_made:
-                    save_state() # Save changes
-                    st.success("Job Updated Successfully!")
-                    st.rerun()
-                else:
-                    st.info("No significant changes to save.")
+                save_state()
+                st.success("Daily Report Submitted!")
+                st.rerun()
 
 # --- UI COMPONENTS ---
 
