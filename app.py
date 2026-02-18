@@ -617,7 +617,7 @@ def generate_morning_briefing():
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
     
     prompt = f"""
-      You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
+      You are the Operations Manager for 5G Security, a company that specializes in Cameras, access control, alarm systems, infrastructure cabling. Generate a concise "Morning Briefing" for the dashboard.
       
       Data:
       - Active Jobs: {len(active_jobs)}
