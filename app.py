@@ -14,7 +14,7 @@ from io import BytesIO
 
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
-    page_title="5G Job Board",
+    page_title="ServiceCommand",
     page_icon="🧰",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -254,8 +254,8 @@ def authenticate():
     st.markdown(f"""
         <div class="login-container">
             <div class="login-box">
-                <h1 style="color:white; margin-bottom: 10px;">5G Security</h1>
-                <p style="color:#a1a1aa; margin-bottom: 30px;">Job Board</p>
+                <h1 style="color:white; margin-bottom: 10px;">ServiceCommand</h1>
+                <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
                 <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
                     display: inline-block;
                     background-color: #DB4437; 
@@ -430,6 +430,61 @@ def send_assignment_email(job, tech, location):
         print(f"Email Error: {str(e)}")
         return False
 
+def send_completion_email(job, tech, location):
+    """Sends an email notification to Admins when a job is completed."""
+    # Helper to resolve config priority: Session > Secrets > Env
+    def get_config_val(key, default=None):
+        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
+            return st.session_state.smtp_settings[key]
+        if key in st.secrets:
+            return st.secrets[key]
+        return os.getenv(key) or default
+
+    smtp_server = get_config_val("SMTP_SERVER")
+    smtp_port = get_config_val("SMTP_PORT", 587)
+    sender_email = get_config_val("SMTP_EMAIL")
+    sender_password = get_config_val("SMTP_PASSWORD")
+    
+    # Get Admin Emails
+    recipients = st.session_state.adminEmails
+    if not recipients:
+        return
+
+    # Prepare email content
+    subject = f"✅ Job Completed: {job['title']}"
+    body = f"""
+    JOB COMPLETED NOTIFICATION
+    
+    Job:      {job['title']}
+    Tech:     {tech['name'] if tech else 'Unknown'}
+    Location: {location['name'] if location else 'Unknown'}
+    
+    The job has been marked as Completed.
+    Please check the ServiceCommand dashboard for the final report.
+    """
+
+    if not (smtp_server and sender_email and sender_password):
+        print("SMTP not configured. Skipping admin completion email.")
+        return
+
+    try:
+        server = smtplib.SMTP(smtp_server, int(smtp_port))
+        server.starttls()
+        server.login(sender_email, sender_password)
+        
+        for recipient in recipients:
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = recipient
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            server.send_message(msg)
+            
+        server.quit()
+        st.toast("📧 Completion notification sent to Admins", icon="✅")
+    except Exception as e:
+        print(f"Email Error: {str(e)}")
+
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
     api_key = get_api_key()
@@ -555,17 +610,15 @@ def job_details_dialog(job_id):
             st.link_button("📧 Email Assignment to Tech", mailto_url)
 
     with c2:
-        new_status = st.selectbox("Status", ["Pending", "In Progress", "Completed"], 
-                                  index=["Pending", "In Progress", "Completed"].index(job['status']),
-                                  key=f"status_{job_id}")
-        if new_status != job['status']:
-            st.session_state.jobs[job_index]['status'] = new_status
-            # Invalidate briefing on status change (e.g. active count changes)
-            st.session_state.briefing = "Data required to generate briefing."
-            save_state() # Save changes
-            st.rerun()
+        st.markdown("**Current Status:**")
+        status_color = {
+            "Pending": "gray",
+            "In Progress": "orange", 
+            "Completed": "green"
+        }.get(job['status'], "gray")
+        st.markdown(f":{status_color}-background[{job['status']}]")
 
-    tab1, tab2 = st.tabs(["📋 Details & History", "📸 Daily Report"])
+    tab1, tab2 = st.tabs(["📋 Details & History", "📸 Update & Report"])
 
     with tab1:
         st.markdown(f"**Description:** {job['description']}")
@@ -586,6 +639,11 @@ def job_details_dialog(job_id):
 
     with tab2:
         with st.form(key=f"report_form_{job_id}"):
+            st.write("#### Update Status")
+            new_status = st.selectbox("Job Status", ["Pending", "In Progress", "Completed"], 
+                                      index=["Pending", "In Progress", "Completed"].index(job['status']))
+
+            st.write("#### Daily Report")
             content = st.text_area("Report Content", placeholder="Describe progress, issues...")
             
             st.write("#### Attach Photos")
@@ -596,33 +654,51 @@ def job_details_dialog(job_id):
             with col_upload:
                 upl_pics = st.file_uploader("Upload Images", accept_multiple_files=True, type=['png', 'jpg'])
 
-            submitted = st.form_submit_button("Submit Report")
+            submitted = st.form_submit_button("Save & Update")
             
-            if submitted and content:
-                photos_list = []
+            if submitted:
+                changes_made = False
                 
-                # Process Camera
-                if cam_pic:
-                    img = Image.open(cam_pic)
-                    photos_list.append(image_to_base64(img))
+                # 1. Update Status
+                if new_status != job['status']:
+                    st.session_state.jobs[job_index]['status'] = new_status
+                    st.session_state.briefing = "Data required to generate briefing."
+                    changes_made = True
+                    
+                    if new_status == "Completed":
+                        send_completion_email(job, tech, loc)
                 
-                # Process Uploads
-                if upl_pics:
-                    for up_file in upl_pics:
-                        img = Image.open(up_file)
+                # 2. Add Report
+                if content:
+                    photos_list = []
+                    
+                    # Process Camera
+                    if cam_pic:
+                        img = Image.open(cam_pic)
                         photos_list.append(image_to_base64(img))
+                    
+                    # Process Uploads
+                    if upl_pics:
+                        for up_file in upl_pics:
+                            img = Image.open(up_file)
+                            photos_list.append(image_to_base64(img))
 
-                new_report = {
-                    'id': f"r{datetime.datetime.now().timestamp()}",
-                    'techId': job['techId'] or 'unknown',
-                    'timestamp': datetime.datetime.now().isoformat(),
-                    'content': content,
-                    'photos': photos_list
-                }
-                st.session_state.jobs[job_index]['reports'].append(new_report)
-                save_state() # Save changes
-                st.success("Report Submitted!")
-                st.rerun()
+                    new_report = {
+                        'id': f"r{datetime.datetime.now().timestamp()}",
+                        'techId': job['techId'] or 'unknown',
+                        'timestamp': datetime.datetime.now().isoformat(),
+                        'content': content,
+                        'photos': photos_list
+                    }
+                    st.session_state.jobs[job_index]['reports'].append(new_report)
+                    changes_made = True
+                
+                if changes_made:
+                    save_state() # Save changes
+                    st.success("Job Updated Successfully!")
+                    st.rerun()
+                else:
+                    st.info("No changes detected.")
 
 # --- UI COMPONENTS ---
 
