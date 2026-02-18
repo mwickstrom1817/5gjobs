@@ -14,7 +14,7 @@ from io import BytesIO
 
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
-    page_title="ServiceCommand",
+    page_title="5G Job Board",
     page_icon="🧰",
     layout="wide",
     initial_sidebar_state="expanded"
