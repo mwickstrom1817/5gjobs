@@ -1341,8 +1341,19 @@ def main():
         with col_feed:
             st.subheader("Priority Feed")
             crit_jobs = [j for j in filtered_jobs if j['priority'] in ['Critical', 'High'] and j['status'] != 'Completed']
+            if not crit_jobs:
+                st.caption("No critical jobs.")
             for job in crit_jobs:
-                render_job_card(job, compact=True, key_suffix="feed")
+                render_job_card(job, compact=True, key_suffix="feed_crit")
+
+            st.divider()
+
+            st.subheader("Standard Feed")
+            std_jobs = [j for j in filtered_jobs if j['priority'] in ['Medium', 'Low'] and j['status'] != 'Completed']
+            if not std_jobs:
+                st.caption("No standard jobs.")
+            for job in std_jobs:
+                render_job_card(job, compact=True, key_suffix="feed_std")
 
     # 2. Tech Board
     with tabs[1]:
