@@ -1291,7 +1291,14 @@ def main():
     # Top Bar
     c1, c2, c3 = st.columns([4, 4, 2])
     with c1:
-        st.title("5G Security Job Board")
+        col_logo, col_title = st.columns([1, 4], gap="small")
+        with col_logo:
+            try:
+                st.image("public/logo.svg", use_container_width=True)
+            except:
+                st.write("🛡️")
+        with col_title:
+            st.title("5G Security")
     with c2:
         search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs...")
     with c3:
