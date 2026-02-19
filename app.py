@@ -271,9 +271,20 @@ def authenticate():
     
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
     
+    # Load Logo for Login
+    logo_html = ""
+    try:
+        with open("public/logo.svg", "r") as f:
+            logo_svg = f.read()
+        logo_b64 = base64.b64encode(logo_svg.encode('utf-8')).decode('utf-8')
+        logo_html = f'<div style="display:flex;justify-content:center;margin-bottom:20px;"><img src="data:image/svg+xml;base64,{logo_b64}" style="width: 120px;"></div>'
+    except Exception as e:
+        print(f"Logo load error: {e}")
+
     st.markdown(f"""
        <div class="login-container">
            <div class="login-box">
+               {logo_html}
                <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
                <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
                <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
@@ -691,7 +702,7 @@ def generate_morning_briefing():
 
     prompt = f"""
       You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
-      5G Security is a company that specializes in cameras and NVR systems, access control, alarm systems, and infrastructure cabling.
+      5G Security is a company that specializes in cameras and NVR systems, access control, alarm systems, and infrastructure cabling. We dont do work on 5G Towers.
      
      Today's Date: {current_date}
 
@@ -1249,6 +1260,10 @@ def main():
     
     # Sidebar Info
     with st.sidebar:
+        try:
+            st.image("public/logo.svg", use_container_width=True)
+        except:
+            pass
         st.markdown("---")
         st.write(f"Logged in as: **{user_name}**")
         if is_admin:
