@@ -153,8 +153,11 @@ def load_data():
     except (json.JSONDecodeError, IOError):
         return default_data
 
-def save_state():
+def save_state(invalidate_briefing=True):
     """Saves the current session state (relevant parts) to JSON."""
+    if invalidate_briefing:
+        st.session_state.briefing = "Data required to generate briefing."
+
     data = {
         "jobs": st.session_state.jobs,
         "techs": st.session_state.techs,
@@ -270,10 +273,21 @@ def authenticate():
     }
     
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
+    
+    # Load Logo for Login
+    logo_html = ""
+    try:
+        with open("public/logo.svg", "r") as f:
+            logo_svg = f.read()
+        logo_b64 = base64.b64encode(logo_svg.encode('utf-8')).decode('utf-8')
+        logo_html = f'<div style="display:flex;justify-content:center;margin-bottom:20px;"><img src="data:image/svg+xml;base64,{logo_b64}" style="width: 120px;"></div>'
+    except Exception as e:
+        print(f"Logo load error: {e}")
 
     st.markdown(f"""
        <div class="login-container">
            <div class="login-box">
+               {logo_html}
                <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
                <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
                <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
@@ -1280,14 +1294,7 @@ def main():
     # Top Bar
     c1, c2, c3 = st.columns([4, 4, 2])
     with c1:
-        col_logo, col_title = st.columns([1, 4], gap="small")
-        with col_logo:
-            try:
-                st.image("public/logo.svg", use_container_width=True)
-            except:
-                st.write("🛡️")
-        with col_title:
-            st.title("5G Security")
+        st.title("5G Security Job Board")
     with c2:
         search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs...")
     with c3:
@@ -1318,7 +1325,7 @@ def main():
             if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
                 with st.spinner("🤖 AI is preparing your morning briefing..."):
                     st.session_state.briefing = generate_morning_briefing()
-                    save_state() # Save new briefing
+                    save_state(invalidate_briefing=False) # Save new briefing
                     st.rerun()
             
             st.container(border=True).markdown(st.session_state.briefing)
