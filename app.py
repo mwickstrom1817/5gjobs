@@ -270,16 +270,6 @@ def authenticate():
     }
     
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
-    
-    # Load Logo for Login
-    logo_html = ""
-    try:
-        with open("public/logo.svg", "r") as f:
-            logo_svg = f.read()
-        logo_b64 = base64.b64encode(logo_svg.encode('utf-8')).decode('utf-8')
-        logo_html = f'<div style="display:flex;justify-content:center;margin-bottom:20px;"><img src="data:image/svg+xml;base64,{logo_b64}" style="width: 120px;"></div>'
-    except Exception as e:
-        print(f"Logo load error: {e}")
 
     st.markdown(f"""
        <div class="login-container">
