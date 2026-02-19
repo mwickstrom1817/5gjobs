@@ -1339,27 +1339,27 @@ def main():
                     st.markdown(f"**{tech['initials']}** - {tech['name']}")
                     tech_jobs = [j for j in filtered_jobs if j['techId'] == tech['id'] and j['status'] != 'Completed']
                     for job in tech_jobs:
-                        render_job_card(job, compact=True, key_suffix=f"tech_{tech['id']}")
+                        render_job_card(job, compact=True, key_suffix=f"tech_{tech['id']}", allow_delete=is_admin)
             # Unassigned
             with cols[-1]:
                 st.markdown("**Unassigned**")
                 unassigned = [j for j in filtered_jobs if not j['techId'] and j['status'] != 'Completed']
                 for job in unassigned:
-                    render_job_card(job, compact=True, key_suffix="unassigned")
+                    render_job_card(job, compact=True, key_suffix="unassigned", allow_delete=is_admin)
 
     # 3. Service Calls
     with tabs[2]:
         service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
         if not service_jobs: st.info("No active service calls.")
         for job in service_jobs:
-            render_job_card(job, key_suffix="service")
+            render_job_card(job, key_suffix="service", allow_delete=is_admin)
 
     # 4. Projects
     with tabs[3]:
         proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
         if not proj_jobs: st.info("No active projects.")
         for job in proj_jobs:
-            render_job_card(job, key_suffix="project")
+            render_job_card(job, key_suffix="project", allow_delete=is_admin)
 
     # 5. Archive
     with tabs[4]:
