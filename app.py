@@ -606,8 +606,15 @@ def send_assignment_email(job, tech, location):
     msg.attach(MIMEText(body, 'plain'))
 
     try:
-        server = smtplib.SMTP(smtp_server, int(smtp_port))
-        server.starttls()
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+
         server.login(sender_email, sender_password)
         server.send_message(msg)
         server.quit()
@@ -659,8 +666,15 @@ def send_completion_email(job, tech, location, report_data):
         return
 
     try:
-        server = smtplib.SMTP(smtp_server, int(smtp_port))
-        server.starttls()
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+
         server.login(sender_email, sender_password)
         
         for recipient in recipients:
