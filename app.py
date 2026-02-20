@@ -278,7 +278,6 @@ def authenticate():
     st.markdown(f"""
        <div class="login-container">
            <div class="login-box">
-               {logo_html}
                <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
                <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
                <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
