@@ -1670,7 +1670,8 @@ def main():
         with c_controls:
             st.markdown("### 🛠️ Map Tools")
             
-            st.divider()
+            # Search/Focus removed as requested
+
             
             # --- Add Location ---
             with st.expander("➕ Add New Location"):
@@ -1765,7 +1766,9 @@ def main():
                         'priority': job['priority'],
                         'tech': tech_name,
                         'status': job['status'],
-                        'color': color
+                        'color': color,
+                        'address': loc['address'],
+                        'mapsUrl': loc.get('mapsUrl') or get_google_maps_url(loc['address'])
                     })
             
             if progress_bar:
@@ -1790,7 +1793,8 @@ def main():
                     get_color='color',
                     get_radius=3000,
                     pickable=True,
-                    auto_highlight=True
+                    auto_highlight=True,
+                    id="jobs-layer"
                 )
                 
                 view_state = pdk.ViewState(
@@ -1800,12 +1804,27 @@ def main():
                     pitch=0
                 )
                 
-                st.pydeck_chart(pdk.Deck(
+                # Render Map with Selection
+                event = st.pydeck_chart(pdk.Deck(
                     map_style=None,
                     initial_view_state=view_state,
                     layers=[layer],
                     tooltip={"text": "{title}\nPriority: {priority}\nTech: {tech}\nStatus: {status}"}
-                ))
+                ), on_select="rerun", selection_mode="single-object", key="map_chart")
+                
+                # Handle Selection
+                if event.selection:
+                    indices = event.selection.get("jobs-layer", [])
+                    if indices:
+                        idx = indices[0]
+                        if idx < len(map_data):
+                            selected_job = map_data[idx]
+                            with c_controls:
+                                st.divider()
+                                st.markdown(f"### 📍 Selected Job")
+                                st.markdown(f"**{selected_job['title']}**")
+                                st.caption(f"{selected_job['address']}")
+                                st.link_button("🚀 Navigate to Job", selected_job['mapsUrl'], type="primary", use_container_width=True)
             else:
                 st.info("No active jobs with valid location data found.")
 
