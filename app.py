@@ -136,7 +136,8 @@ def load_data():
         "techs": [],
         "locations": [],
         "briefing": "Data required to generate briefing.",
-        "adminEmails": []
+        "adminEmails": [],
+        "last_reminder_date": None
     }
     
     if not os.path.exists(DB_FILE):
@@ -163,7 +164,8 @@ def save_state(invalidate_briefing=True):
         "techs": st.session_state.techs,
         "locations": st.session_state.locations,
         "briefing": st.session_state.briefing,
-        "adminEmails": st.session_state.adminEmails
+        "adminEmails": st.session_state.adminEmails,
+        "last_reminder_date": st.session_state.get("last_reminder_date")
     }
     try:
         with open(DB_FILE, "w") as f:
@@ -179,6 +181,7 @@ st.session_state.techs = db_data['techs']
 st.session_state.locations = db_data['locations']
 st.session_state.briefing = db_data['briefing']
 st.session_state.adminEmails = db_data['adminEmails']
+st.session_state.last_reminder_date = db_data.get('last_reminder_date')
 
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = [
@@ -700,6 +703,105 @@ def send_completion_email(job, tech, location, report_data):
     except Exception as e:
         print(f"Email Error: {str(e)}")
         st.error(f"Failed to send email: {str(e)}")
+
+def send_daily_reminders():
+    """Sends daily reminder emails to techs with active assignments (Mon-Fri only)."""
+    
+    # 1. Check Date & Time
+    now = datetime.datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
+    weekday = now.weekday() # 0=Mon, 4=Fri, 5=Sat, 6=Sun
+    
+    # Only run Mon-Fri (0-4)
+    if weekday > 4:
+        return
+
+    # Check if already ran today
+    if st.session_state.get("last_reminder_date") == today_str:
+        return
+
+    # 2. Get SMTP Config
+    def get_config_val(key, default=None):
+        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
+            return st.session_state.smtp_settings[key]
+        if key in st.secrets:
+            return st.secrets[key]
+        return os.getenv(key) or default
+
+    smtp_server = get_config_val("SMTP_SERVER")
+    smtp_port = get_config_val("SMTP_PORT", 587)
+    sender_email = get_config_val("SMTP_EMAIL")
+    sender_password = get_config_val("SMTP_PASSWORD")
+
+    if not (smtp_server and sender_email and sender_password):
+        return # Cannot send email
+
+    # 3. Iterate Techs
+    techs_emailed = 0
+    try:
+        # Connect once
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        
+        server.login(sender_email, sender_password)
+
+        for tech in st.session_state.techs:
+            # Find active jobs for this tech
+            active_jobs = [j for j in st.session_state.jobs 
+                           if j['techId'] == tech['id'] and j['status'] != 'Completed']
+            
+            if not active_jobs:
+                continue
+
+            # Compose Email
+            subject = f"📅 Daily Assignment Reminder - {today_str}"
+            
+            job_list_text = ""
+            for job in active_jobs:
+                loc = get_location(job['locationId'])
+                loc_name = loc['name'] if loc else "Unknown Location"
+                loc_addr = loc['address'] if loc else ""
+                
+                job_list_text += f"""
+- {job['title']} ({job['priority']})
+  Location: {loc_name} - {loc_addr}
+  Status: {job['status']}
+"""
+
+            body = f"""Hello {tech['name']},
+
+Here is your summary of active assignments for today ({today_str}):
+{job_list_text}
+
+Please check the 5G Security Job Board for full details and to log your work.
+"""
+            
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = tech['email']
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            
+            server.send_message(msg)
+            techs_emailed += 1
+            
+        server.quit()
+        
+        # Update State
+        st.session_state.last_reminder_date = today_str
+        save_state(invalidate_briefing=False)
+        
+        if techs_emailed > 0:
+            st.toast(f"📧 Sent daily reminders to {techs_emailed} technicians.", icon="✅")
+            
+    except Exception as e:
+        print(f"Daily Reminder Error: {e}")
 
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
@@ -1306,6 +1408,9 @@ def main():
         st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")
     
     is_admin = user_email in st.session_state.adminEmails
+    
+    # --- DAILY REMINDERS ---
+    send_daily_reminders()
     
     # Sidebar Info
     with st.sidebar:
