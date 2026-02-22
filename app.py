@@ -933,6 +933,88 @@ def add_job_dialog():
                 
             st.rerun()
 
+@st.dialog("Edit Job Details")
+def edit_job_dialog(job_id):
+    # Find job directly from session state
+    job_index = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
+    if job_index == -1:
+        st.error("Job not found")
+        return
+    
+    job = st.session_state.jobs[job_index]
+
+    with st.form(key=f"edit_job_form_{job_id}"):
+        title = st.text_input("Job Title", value=job['title'])
+        desc = st.text_area("Description", value=job['description'])
+        
+        c1, c2 = st.columns(2)
+        
+        # Type
+        type_opts = ["Service", "Project"]
+        curr_type_idx = 0
+        if job['type'] in type_opts:
+            curr_type_idx = type_opts.index(job['type'])
+        job_type = c1.selectbox("Type", type_opts, index=curr_type_idx)
+        
+        # Priority
+        prio_opts = ["Medium", "Low", "High", "Critical"]
+        curr_prio_idx = 0
+        if job['priority'] in prio_opts:
+            curr_prio_idx = prio_opts.index(job['priority'])
+        priority = c2.selectbox("Priority", prio_opts, index=curr_prio_idx)
+        
+        # Location Selection
+        loc_map = {l['name']: l['id'] for l in st.session_state.locations}
+        loc_options = list(loc_map.keys())
+        
+        current_loc_id = job.get('locationId')
+        current_loc_name = next((k for k, v in loc_map.items() if v == current_loc_id), None)
+        
+        loc_index = 0
+        if current_loc_name and current_loc_name in loc_options:
+            loc_index = loc_options.index(current_loc_name)
+            
+        if loc_options:
+            loc_name = st.selectbox("Location", loc_options, index=loc_index)
+        else:
+            st.warning("No locations found.")
+            loc_name = None
+        
+        # Tech Selection
+        tech_map = {t['name']: t['id'] for t in st.session_state.techs}
+        tech_map["Unassigned"] = None
+        tech_options = list(tech_map.keys())
+        
+        current_tech_id = job.get('techId')
+        current_tech_name = next((k for k, v in tech_map.items() if v == current_tech_id), "Unassigned")
+        
+        tech_index = 0
+        if current_tech_name in tech_options:
+            tech_index = tech_options.index(current_tech_name)
+            
+        tech_name = st.selectbox("Assign Tech", tech_options, index=tech_index)
+
+        if st.form_submit_button("Update Job"):
+            if title:
+                st.session_state.jobs[job_index]['title'] = title
+                st.session_state.jobs[job_index]['description'] = desc
+                st.session_state.jobs[job_index]['type'] = job_type
+                st.session_state.jobs[job_index]['priority'] = priority
+                
+                if loc_name:
+                    st.session_state.jobs[job_index]['locationId'] = loc_map[loc_name]
+                
+                st.session_state.jobs[job_index]['techId'] = tech_map[tech_name]
+                
+                # Invalidate briefing so it regenerates with new data
+                st.session_state.briefing = "Data required to generate briefing."
+                save_state()  # Save changes
+                
+                st.toast("Job updated successfully!", icon="✅")
+                st.rerun()
+            else:
+                st.error("Title is required.")
+
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
     # Find job directly from session state
@@ -1165,11 +1247,14 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         """, unsafe_allow_html=True)
         # Unique key using job ID AND suffix to prevent Streamlit duplicates
         if allow_delete:
-            c1, c2 = st.columns([4, 1])
+            c1, c2, c3 = st.columns([6, 1, 1])
             with c1:
                 if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
                     job_details_dialog(job['id'])
             with c2:
+                if st.button("✏️", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job"):
+                    edit_job_dialog(job['id'])
+            with c3:
                 if st.button("🗑️", key=f"del_{job['id']}_{key_suffix}", help="Delete from Archive"):
                     if job in st.session_state.jobs:
                         st.session_state.jobs.remove(job)
@@ -1602,7 +1687,7 @@ def main():
                 df,
                 get_position='[lon, lat]',
                 get_color='color',
-                get_radius=1000,
+                get_radius=800,
                 pickable=True,
                 auto_highlight=True
             )
