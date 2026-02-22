@@ -1782,16 +1782,6 @@ def main():
                 view_lon = df['lon'].mean()
                 view_zoom = 10
                 
-                # If a specific job is selected, focus on it
-                if selected_focus != "Show All":
-                    focused_job = next((j for j in active_jobs if j['title'] == selected_focus), None)
-                    if focused_job:
-                        f_loc = get_location(focused_job['locationId'])
-                        if f_loc and 'lat' in f_loc:
-                            view_lat = f_loc['lat']
-                            view_lon = f_loc['lng']
-                            view_zoom = 14
-                
                 # Pydeck Layer
                 layer = pdk.Layer(
                     "ScatterplotLayer",
