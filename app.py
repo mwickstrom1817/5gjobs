@@ -1670,12 +1670,6 @@ def main():
         with c_controls:
             st.markdown("### 🛠️ Map Tools")
             
-            # --- Search / Focus ---
-            st.write("**🔍 Focus Job**")
-            active_jobs_map = [j for j in filtered_jobs if j['status'] != 'Completed']
-            job_options = ["Show All"] + [j['title'] for j in active_jobs_map]
-            selected_focus = st.selectbox("Select Job", job_options)
-            
             st.divider()
             
             # --- Add Location ---
