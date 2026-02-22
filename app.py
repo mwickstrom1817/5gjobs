@@ -7,6 +7,8 @@ import json
 import smtplib
 import urllib.parse
 import requests
+import pandas as pd
+import pydeck as pdk
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -347,6 +349,21 @@ def get_google_maps_url(address):
     """Generates a Google Maps Search URL based on address."""
     if not address: return None
     return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(address)}"
+
+def get_coordinates(address):
+    """Geocodes an address using OpenStreetMap Nominatim API."""
+    try:
+        url = 'https://nominatim.openstreetmap.org/search'
+        params = {'q': address, 'format': 'json', 'limit': 1}
+        headers = {'User-Agent': '5GSecurityJobBoard/1.0'}
+        response = requests.get(url, params=params, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                return float(data[0]['lat']), float(data[0]['lon'])
+    except Exception as e:
+        print(f"Geocoding error: {e}")
+    return None, None
 
 def get_api_key():
     # Try getting from Streamlit secrets, then Env, then return None
@@ -1295,12 +1312,20 @@ def render_admin_panel():
             
             if l_name and l_addr:
                 map_url = get_google_maps_url(l_addr)
-                st.session_state.locations.append({
+                lat, lon = get_coordinates(l_addr) # Fetch coordinates
+
+                new_loc = {
                     'id': f"l{datetime.datetime.now().timestamp()}",
                     'name': l_name, 
                     'address': l_addr,
                     'mapsUrl': map_url
-                })
+                }
+                
+                if lat and lon:
+                    new_loc['lat'] = lat
+                    new_loc['lng'] = lon
+
+                st.session_state.locations.append(new_loc)
                 # Clear inputs
                 st.session_state.new_loc_name = ""
                 st.session_state.new_loc_addr = ""
@@ -1442,7 +1467,7 @@ def main():
         filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
 
     # Navigation Tabs
-    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "🗺️ Map View", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
     if is_admin:
         tabs_list.append("🛡️ Admin")
     
@@ -1508,30 +1533,120 @@ def main():
                 for job in unassigned:
                     render_job_card(job, compact=True, key_suffix="unassigned", allow_delete=is_admin)
 
-    # 3. Service Calls
+    # 3. Map View
     with tabs[2]:
+        st.subheader("📍 Live Job Map")
+        
+        # Prepare data
+        map_data = []
+        need_save = False
+        
+        active_jobs = [j for j in filtered_jobs if j['status'] != 'Completed']
+        
+        # Progress bar if we need to geocode many items
+        progress_bar = None
+        
+        for i, job in enumerate(active_jobs):
+            loc = get_location(job['locationId'])
+            if loc:
+                # Check if loc has coordinates
+                if 'lat' not in loc or 'lng' not in loc:
+                    # Try to fetch
+                    if not progress_bar:
+                        progress_bar = st.progress(0, text="Geocoding locations...")
+                    
+                    lat, lng = get_coordinates(loc['address'])
+                    if lat and lng:
+                        loc['lat'] = lat
+                        loc['lng'] = lng
+                        need_save = True
+                    else:
+                        continue # Skip if can't geocode
+                    
+                    if progress_bar:
+                        progress_bar.progress((i + 1) / len(active_jobs), text=f"Geocoding {loc['name']}...")
+                
+                # Add to map data
+                tech = get_tech(job['techId'])
+                tech_name = tech['name'] if tech else "Unassigned"
+                
+                # Color based on priority (R, G, B, A)
+                color = [200, 200, 200, 200] # Default grey
+                if job['priority'] == 'Critical': color = [239, 68, 68, 255] # Red
+                elif job['priority'] == 'High': color = [220, 38, 38, 255] # Dark Red
+                elif job['priority'] == 'Medium': color = [245, 158, 11, 255] # Amber
+                elif job['priority'] == 'Low': color = [16, 185, 129, 255] # Green
+                
+                map_data.append({
+                    'lat': loc['lat'],
+                    'lon': loc['lng'],
+                    'title': job['title'],
+                    'priority': job['priority'],
+                    'tech': tech_name,
+                    'status': job['status'],
+                    'color': color
+                })
+        
+        if progress_bar:
+            progress_bar.empty()
+            
+        if need_save:
+            save_state(invalidate_briefing=False)
+            
+        if map_data:
+            df = pd.DataFrame(map_data)
+            
+            # Pydeck Layer
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                df,
+                get_position='[lon, lat]',
+                get_color='color',
+                get_radius=200,
+                pickable=True,
+                auto_highlight=True
+            )
+            
+            view_state = pdk.ViewState(
+                latitude=df['lat'].mean(),
+                longitude=df['lon'].mean(),
+                zoom=10,
+                pitch=0
+            )
+            
+            st.pydeck_chart(pdk.Deck(
+                map_style=None,
+                initial_view_state=view_state,
+                layers=[layer],
+                tooltip={"text": "{title}\nPriority: {priority}\nTech: {tech}\nStatus: {status}"}
+            ))
+        else:
+            st.info("No active jobs with valid location data found.")
+
+    # 4. Service Calls
+    with tabs[3]:
         service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
         if not service_jobs: st.info("No active service calls.")
         for job in service_jobs:
             render_job_card(job, key_suffix="service", allow_delete=is_admin)
 
-    # 4. Projects
-    with tabs[3]:
+    # 5. Projects
+    with tabs[4]:
         proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
         if not proj_jobs: st.info("No active projects.")
         for job in proj_jobs:
             render_job_card(job, key_suffix="project", allow_delete=is_admin)
 
-    # 5. Archive
-    with tabs[4]:
+    # 6. Archive
+    with tabs[5]:
         archived = [j for j in filtered_jobs if j['status'] == 'Completed']
         if not archived: st.info("No archived jobs.")
         for job in archived:
             render_job_card(job, key_suffix="archive", allow_delete=is_admin)
 
-    # 6. Admin (Only if Admin)
+    # 7. Admin (Only if Admin)
     if is_admin:
-        with tabs[5]:
+        with tabs[6]:
             render_admin_panel()
 
     # Sidebar Chatbot
