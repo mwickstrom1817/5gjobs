@@ -1665,91 +1665,166 @@ def main():
     with tabs[2]:
         st.subheader("📍 Live Job Map")
         
-        # Prepare data
-        map_data = []
-        need_save = False
+        c_controls, c_map = st.columns([1, 3])
         
-        active_jobs = [j for j in filtered_jobs if j['status'] != 'Completed']
-        
-        # Progress bar if we need to geocode many items
-        progress_bar = None
-        
-        for i, job in enumerate(active_jobs):
-            loc = get_location(job['locationId'])
-            if loc:
-                # Check if loc has coordinates
-                if 'lat' not in loc or 'lng' not in loc:
-                    # Try to fetch
-                    if not progress_bar:
-                        progress_bar = st.progress(0, text="Geocoding locations...")
-                    
-                    lat, lng = get_coordinates(loc['address'])
-                    if lat and lng:
-                        loc['lat'] = lat
-                        loc['lng'] = lng
-                        need_save = True
+        with c_controls:
+            st.markdown("### 🛠️ Map Tools")
+            
+            # --- Search / Focus ---
+            st.write("**🔍 Focus Job**")
+            active_jobs_map = [j for j in filtered_jobs if j['status'] != 'Completed']
+            job_options = ["Show All"] + [j['title'] for j in active_jobs_map]
+            selected_focus = st.selectbox("Select Job", job_options)
+            
+            st.divider()
+            
+            # --- Add Location ---
+            st.write("**➕ Add New Location**")
+            
+            # Initialize session state for map location inputs if not present
+            if 'm_loc_name' not in st.session_state:
+                st.session_state.m_loc_name = ""
+            if 'm_loc_addr' not in st.session_state:
+                st.session_state.m_loc_addr = ""
+
+            st.text_input("Name", key="m_loc_name")
+            st.text_input("Address", key="m_loc_addr")
+            
+            def map_ac_callback():
+                if st.session_state.m_loc_addr:
+                    suggestion = suggest_address_with_gemini(st.session_state.m_loc_addr)
+                    if suggestion:
+                        st.session_state.m_loc_addr = suggestion
+            
+            st.button("✨ Auto-Complete", key="map_ac_btn", on_click=map_ac_callback)
+            
+            if st.button("Save Location", key="map_save_btn"):
+                l_name = st.session_state.m_loc_name
+                l_addr = st.session_state.m_loc_addr
+                
+                if l_name and l_addr:
+                    lat, lon = get_coordinates(l_addr)
+                    if lat and lon:
+                        new_loc = {
+                            'id': f"l{datetime.datetime.now().timestamp()}",
+                            'name': l_name, 
+                            'address': l_addr,
+                            'lat': lat,
+                            'lng': lon,
+                            'mapsUrl': get_google_maps_url(l_addr)
+                        }
+                        st.session_state.locations.append(new_loc)
+                        st.session_state.m_loc_name = ""
+                        st.session_state.m_loc_addr = ""
+                        save_state()
+                        st.success(f"Added {l_name}!")
+                        st.rerun()
                     else:
-                        continue # Skip if can't geocode
+                        st.error("Could not geocode address.")
+                else:
+                    st.warning("Name and Address required.")
+
+        with c_map:
+            # Prepare data
+            map_data = []
+            need_save = False
+            
+            active_jobs = [j for j in filtered_jobs if j['status'] != 'Completed']
+            
+            # Progress bar if we need to geocode many items
+            progress_bar = None
+            
+            for i, job in enumerate(active_jobs):
+                loc = get_location(job['locationId'])
+                if loc:
+                    # Check if loc has coordinates
+                    if 'lat' not in loc or 'lng' not in loc:
+                        # Try to fetch
+                        if not progress_bar:
+                            progress_bar = st.progress(0, text="Geocoding locations...")
+                        
+                        lat, lng = get_coordinates(loc['address'])
+                        if lat and lng:
+                            loc['lat'] = lat
+                            loc['lng'] = lng
+                            need_save = True
+                        else:
+                            continue # Skip if can't geocode
+                        
+                        if progress_bar:
+                            progress_bar.progress((i + 1) / len(active_jobs), text=f"Geocoding {loc['name']}...")
                     
-                    if progress_bar:
-                        progress_bar.progress((i + 1) / len(active_jobs), text=f"Geocoding {loc['name']}...")
+                    # Add to map data
+                    tech = get_tech(job['techId'])
+                    tech_name = tech['name'] if tech else "Unassigned"
+                    
+                    # Color based on priority (R, G, B, A)
+                    color = [200, 200, 200, 200] # Default grey
+                    if job['priority'] == 'Critical': color = [239, 68, 68, 255] # Red
+                    elif job['priority'] == 'High': color = [220, 38, 38, 255] # Dark Red
+                    elif job['priority'] == 'Medium': color = [245, 158, 11, 255] # Amber
+                    elif job['priority'] == 'Low': color = [16, 185, 129, 255] # Green
+                    
+                    map_data.append({
+                        'lat': loc['lat'],
+                        'lon': loc['lng'],
+                        'title': job['title'],
+                        'priority': job['priority'],
+                        'tech': tech_name,
+                        'status': job['status'],
+                        'color': color
+                    })
+            
+            if progress_bar:
+                progress_bar.empty()
                 
-                # Add to map data
-                tech = get_tech(job['techId'])
-                tech_name = tech['name'] if tech else "Unassigned"
+            if need_save:
+                save_state(invalidate_briefing=False)
                 
-                # Color based on priority (R, G, B, A)
-                color = [200, 200, 200, 200] # Default grey
-                if job['priority'] == 'Critical': color = [239, 68, 68, 255] # Red
-                elif job['priority'] == 'High': color = [220, 38, 38, 255] # Dark Red
-                elif job['priority'] == 'Medium': color = [245, 158, 11, 255] # Amber
-                elif job['priority'] == 'Low': color = [16, 185, 129, 255] # Green
+            if map_data:
+                df = pd.DataFrame(map_data)
                 
-                map_data.append({
-                    'lat': loc['lat'],
-                    'lon': loc['lng'],
-                    'title': job['title'],
-                    'priority': job['priority'],
-                    'tech': tech_name,
-                    'status': job['status'],
-                    'color': color
-                })
-        
-        if progress_bar:
-            progress_bar.empty()
-            
-        if need_save:
-            save_state(invalidate_briefing=False)
-            
-        if map_data:
-            df = pd.DataFrame(map_data)
-            
-            # Pydeck Layer
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                df,
-                get_position='[lon, lat]',
-                get_color='color',
-                get_radius=3000,
-                pickable=True,
-                auto_highlight=True
-            )
-            
-            view_state = pdk.ViewState(
-                latitude=df['lat'].mean(),
-                longitude=df['lon'].mean(),
-                zoom=10,
-                pitch=0
-            )
-            
-            st.pydeck_chart(pdk.Deck(
-                map_style=None,
-                initial_view_state=view_state,
-                layers=[layer],
-                tooltip={"text": "{title}\nPriority: {priority}\nTech: {tech}\nStatus: {status}"}
-            ))
-        else:
-            st.info("No active jobs with valid location data found.")
+                # Determine View State
+                view_lat = df['lat'].mean()
+                view_lon = df['lon'].mean()
+                view_zoom = 10
+                
+                # If a specific job is selected, focus on it
+                if selected_focus != "Show All":
+                    focused_job = next((j for j in active_jobs if j['title'] == selected_focus), None)
+                    if focused_job:
+                        f_loc = get_location(focused_job['locationId'])
+                        if f_loc and 'lat' in f_loc:
+                            view_lat = f_loc['lat']
+                            view_lon = f_loc['lng']
+                            view_zoom = 14
+                
+                # Pydeck Layer
+                layer = pdk.Layer(
+                    "ScatterplotLayer",
+                    df,
+                    get_position='[lon, lat]',
+                    get_color='color',
+                    get_radius=3000,
+                    pickable=True,
+                    auto_highlight=True
+                )
+                
+                view_state = pdk.ViewState(
+                    latitude=view_lat,
+                    longitude=view_lon,
+                    zoom=view_zoom,
+                    pitch=0
+                )
+                
+                st.pydeck_chart(pdk.Deck(
+                    map_style=None,
+                    initial_view_state=view_state,
+                    layers=[layer],
+                    tooltip={"text": "{title}\nPriority: {priority}\nTech: {tech}\nStatus: {status}"}
+                ))
+            else:
+                st.info("No active jobs with valid location data found.")
 
     # 4. Service Calls
     with tabs[3]:
