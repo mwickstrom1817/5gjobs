@@ -1057,7 +1057,50 @@ def job_details_dialog(job_id):
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
 
-    tab_history, tab_progress, tab_daily = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report"])
+    tab_history, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report", "🔐 IPs & Passwords"])
+
+    with tab_creds:
+        st.write("#### 🔐 Site Credentials & Network Info")
+        st.caption("Securely store logins and IP addresses for this job.")
+        
+        # Ensure 'credentials' key exists
+        if 'credentials' not in job:
+            job['credentials'] = {}
+            
+        creds = job['credentials']
+        
+        with st.form(key=f"creds_form_{job_id}"):
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Windows Login**")
+                win_user = st.text_input("Username", value=creds.get('windows_user', ''), key=f"win_u_{job_id}")
+                win_pass = st.text_input("Password", value=creds.get('windows_pass', ''), key=f"win_p_{job_id}")
+                
+                st.markdown("**ICT Login**")
+                ict_user = st.text_input("Username", value=creds.get('ict_user', ''), key=f"ict_u_{job_id}")
+                ict_pass = st.text_input("Password", value=creds.get('ict_pass', ''), key=f"ict_p_{job_id}")
+            
+            with c2:
+                st.markdown("**DW Spectrum Login**")
+                dw_user = st.text_input("Username", value=creds.get('dw_user', ''), key=f"dw_u_{job_id}")
+                dw_pass = st.text_input("Password", value=creds.get('dw_pass', ''), key=f"dw_p_{job_id}")
+                
+                st.markdown("**Network / IPs**")
+                ips = st.text_area("IP Addresses & Notes", value=creds.get('ips', ''), height=145, key=f"ips_{job_id}")
+
+            if st.form_submit_button("Save Credentials"):
+                st.session_state.jobs[job_index]['credentials'] = {
+                    'windows_user': win_user,
+                    'windows_pass': win_pass,
+                    'dw_user': dw_user,
+                    'dw_pass': dw_pass,
+                    'ict_user': ict_user,
+                    'ict_pass': ict_pass,
+                    'ips': ips
+                }
+                save_state(invalidate_briefing=False)
+                st.success("Credentials saved!")
+                st.rerun()
 
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
