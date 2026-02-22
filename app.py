@@ -1164,20 +1164,49 @@ def render_admin_panel():
     # Location Management
     with c2:
         st.subheader("Manage Locations")
-        with st.form("add_loc"):
-            l_name = st.text_input("Location Name")
-            l_addr = st.text_input("Address")
-            if st.form_submit_button("Add Location"):
-                if l_name:
-                    map_url = get_google_maps_url(l_addr) if l_addr else None
-                    st.session_state.locations.append({
-                        'id': f"l{datetime.datetime.now().timestamp()}",
-                        'name': l_name, 
-                        'address': l_addr,
-                        'mapsUrl': map_url
-                    })
-                    save_state() # Save changes
-                    st.rerun()
+        
+        # Initialize session state for new location inputs if not present
+        if 'new_loc_name' not in st.session_state:
+            st.session_state.new_loc_name = ""
+        if 'new_loc_addr' not in st.session_state:
+            st.session_state.new_loc_addr = ""
+
+        st.text_input("Location Name", key="new_loc_name")
+        
+        col_addr, col_btn = st.columns([3, 1])
+        with col_addr:
+            st.text_input("Address", key="new_loc_addr")
+        with col_btn:
+            st.write("") # Spacer
+            st.write("") # Spacer
+            if st.button("✨ Auto-Complete", help="Use AI to complete address"):
+                if st.session_state.new_loc_addr:
+                    with st.spinner("Completing..."):
+                        suggestion = suggest_address_with_gemini(st.session_state.new_loc_addr)
+                        if suggestion:
+                            st.session_state.new_loc_addr = suggestion
+                            st.rerun()
+
+        if st.button("Add Location", type="primary"):
+            l_name = st.session_state.new_loc_name
+            l_addr = st.session_state.new_loc_addr
+            
+            if l_name and l_addr:
+                map_url = get_google_maps_url(l_addr)
+                st.session_state.locations.append({
+                    'id': f"l{datetime.datetime.now().timestamp()}",
+                    'name': l_name, 
+                    'address': l_addr,
+                    'mapsUrl': map_url
+                })
+                # Clear inputs
+                st.session_state.new_loc_name = ""
+                st.session_state.new_loc_addr = ""
+                save_state() # Save changes
+                st.success(f"Added location: {l_name}")
+                st.rerun()
+            else:
+                st.warning("Please enter both Name and Address.")
         
         st.markdown("---")
         for l in st.session_state.locations:
