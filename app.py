@@ -274,7 +274,6 @@ def authenticate():
     
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
-
     st.markdown(f"""
        <div class="login-container">
            <div class="login-box">
@@ -1179,13 +1178,14 @@ def render_admin_panel():
         with col_btn:
             st.write("") # Spacer
             st.write("") # Spacer
-            if st.button("✨ Auto-Complete", help="Use AI to complete address"):
+            
+            def auto_complete_callback():
                 if st.session_state.new_loc_addr:
-                    with st.spinner("Completing..."):
-                        suggestion = suggest_address_with_gemini(st.session_state.new_loc_addr)
-                        if suggestion:
-                            st.session_state.new_loc_addr = suggestion
-                            st.rerun()
+                    suggestion = suggest_address_with_gemini(st.session_state.new_loc_addr)
+                    if suggestion:
+                        st.session_state.new_loc_addr = suggestion
+            
+            st.button("✨ Auto-Complete", help="Use AI to complete address", on_click=auto_complete_callback)
 
         if st.button("Add Location", type="primary"):
             l_name = st.session_state.new_loc_name
@@ -1308,10 +1308,6 @@ def main():
     
     # Sidebar Info
     with st.sidebar:
-        try:
-            st.image("public/logo.svg", use_container_width=True)
-        except:
-            pass
         st.markdown("---")
         st.write(f"Logged in as: **{user_name}**")
         if is_admin:
