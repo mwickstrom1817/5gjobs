@@ -1602,7 +1602,7 @@ def main():
                 df,
                 get_position='[lon, lat]',
                 get_color='color',
-                get_radius=200,
+                get_radius=800,
                 pickable=True,
                 auto_highlight=True
             )
