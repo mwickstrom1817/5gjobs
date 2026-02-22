@@ -273,7 +273,7 @@ def authenticate():
     }
     
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
- 
+
 
     st.markdown(f"""
        <div class="login-container">
@@ -426,6 +426,18 @@ Details:
     # Use quote_via=quote to ensure spaces are encoded correctly for mail clients
     qs = urllib.parse.urlencode({'subject': subject, 'body': body}, quote_via=urllib.parse.quote)
     return f"mailto:{tech['email']}?{qs}"
+
+def suggest_address_with_gemini(partial_address):
+    """Uses Gemini to autocomplete/validate an address."""
+    api_key = get_api_key()
+    if not api_key: return partial_address
+    model = get_available_model(api_key)
+    prompt = f"You are an address autocomplete tool. The user typed: '{partial_address}'. Return the most likely full address. If ambiguous, return the best guess. Return ONLY the address text, no other words."
+    try:
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except:
+        return partial_address
 
 # --- PDF GENERATION ---
 def generate_job_pdf(job, tech, location, report):
@@ -1396,4 +1408,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
