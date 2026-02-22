@@ -1187,7 +1187,7 @@ def render_admin_panel():
             
             st.button("✨ Auto-Complete", help="Use AI to complete address", on_click=auto_complete_callback)
 
-        if st.button("Add Location", type="primary"):
+        def add_location_callback():
             l_name = st.session_state.new_loc_name
             l_addr = st.session_state.new_loc_addr
             
@@ -1203,10 +1203,11 @@ def render_admin_panel():
                 st.session_state.new_loc_name = ""
                 st.session_state.new_loc_addr = ""
                 save_state() # Save changes
-                st.success(f"Added location: {l_name}")
-                st.rerun()
+                st.toast(f"Added location: {l_name}", icon="✅")
             else:
-                st.warning("Please enter both Name and Address.")
+                st.toast("Please enter both Name and Address.", icon="⚠️")
+
+        st.button("Add Location", type="primary", on_click=add_location_callback)
         
         st.markdown("---")
         for l in st.session_state.locations:
