@@ -9,6 +9,8 @@ import urllib.parse
 import requests
 import pandas as pd
 import pydeck as pdk
+import calendar
+import numpy as np
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
@@ -23,6 +25,13 @@ try:
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
+
+# Try importing Streamlit Drawable Canvas for signatures
+try:
+    from streamlit_drawable_canvas import st_canvas
+    HAS_CANVAS = True
+except ImportError:
+    HAS_CANVAS = False
 
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -586,6 +595,15 @@ def generate_job_pdf(job, tech, location, report):
         
     p.drawText(text_object)
     
+    # Signature
+    signature_path = report.get('signature_path')
+    if signature_path and os.path.exists(signature_path):
+        y -= 60
+        p.drawImage(signature_path, 50, y, width=150, height=50, mask='auto')
+        p.setFont("Helvetica-Oblique", 8)
+        p.drawString(50, y-10, "Customer Digital Signature")
+        y -= 20
+
     p.showPage()
     p.save()
     
@@ -1035,61 +1053,103 @@ def render_completion_confirmation(job_index, report_payload):
     st.warning("You are marking this job as **Completed**. This will archive the job and notify admins.")
     
     st.write("#### ✅ Completion Checklist")
-    with st.form("completion_checklist_form"):
-        c1 = st.checkbox("🧹 Messes Cleaned")
-        c2 = st.checkbox("🧱 Tiles Replaced")
-        c3 = st.checkbox("🗑️ Trash Taken Out")
-        c4 = st.checkbox("✍️ Customer Signed Off")
+    
+    # We use a form for the checklist and notes, but the canvas needs to be outside 
+    # because custom components inside forms can be tricky with state updates.
+    # However, for simplicity, we'll try to keep it together or manage state carefully.
+    
+    c1 = st.checkbox("🧹 Messes Cleaned")
+    c2 = st.checkbox("🧱 Tiles Replaced")
+    c3 = st.checkbox("🗑️ Trash Taken Out")
+    
+    st.write("#### ✍️ Customer Signature")
+    signature_data = None
+    
+    if HAS_CANVAS:
+        # Canvas for signature
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",  # Fixed fill color with some opacity
+            stroke_width=2,
+            stroke_color="#000000",
+            background_color="#ffffff",
+            update_streamlit=True,
+            height=150,
+            drawing_mode="freedraw",
+            key=f"sig_canvas_{job['id']}",
+        )
         
-        st.write("#### 📝 Final Notes")
-        final_note = st.text_area("Add any final closing notes (optional):")
+        if canvas_result.image_data is not None:
+            signature_data = canvas_result.image_data
+    else:
+        st.warning("Signature pad not available (library missing). Please type name below.")
+        signed_name = st.text_input("Customer Name (Signed)")
+    
+    st.write("#### 📝 Final Notes")
+    final_note = st.text_area("Add any final closing notes (optional):")
+    
+    c_confirm, c_cancel = st.columns(2)
+    
+    if c_confirm.button("Confirm & Close Job", type="primary"):
+        # Update report payload with checklist
+        checklist = []
+        if c1: checklist.append("Messes Cleaned")
+        if c2: checklist.append("Tiles Replaced")
+        if c3: checklist.append("Trash Taken Out")
         
-        c_confirm, c_cancel = st.columns(2)
-        
-        if c_confirm.form_submit_button("Confirm & Close Job", type="primary"):
-            # Update report payload with checklist
-            checklist = []
-            if c1: checklist.append("Messes Cleaned")
-            if c2: checklist.append("Tiles Replaced")
-            if c3: checklist.append("Trash Taken Out")
-            if c4: checklist.append("Customer Signed Off")
-            
-            report_payload['completion_checklist'] = checklist
-            
-            if final_note:
-                report_payload['content'] += f"\n\n[Closing Note]: {final_note}"
-            
-            # Generate AI Summary if content exists
-            if report_payload.get('content'):
-                 with st.spinner("Generating AI Summary..."):
-                     summary = generate_technician_summary(report_payload['content'], job['title'])
-                     if summary:
-                         report_payload['ai_summary'] = summary
+        # Handle Signature
+        if HAS_CANVAS and signature_data is not None:
+            # Check if canvas is not empty (simple check on alpha channel or sum)
+            if signature_data.sum() > 0:
+                # Convert numpy array to image bytes
+                try:
+                    img = Image.fromarray(signature_data.astype('uint8'), 'RGBA')
+                    # Save signature to disk
+                    sig_filename = f"sig_{job['id']}_{datetime.datetime.now().timestamp()}.png"
+                    sig_path = os.path.join(IMAGES_DIR, sig_filename)
+                    img.save(sig_path)
+                    report_payload['signature_path'] = sig_path
+                    checklist.append("Customer Signed (Digital)")
+                except Exception as e:
+                    st.error(f"Error saving signature: {e}")
+        elif not HAS_CANVAS and 'signed_name' in locals() and signed_name:
+             checklist.append(f"Customer Signed: {signed_name}")
 
-            # Update Job State
-            st.session_state.jobs[job_index]['reports'].append(report_payload)
-            st.session_state.jobs[job_index]['status'] = 'Completed'
-            st.session_state.briefing = "Data required to generate briefing."
+        report_payload['completion_checklist'] = checklist
+        
+        if final_note:
+            report_payload['content'] += f"\n\n[Closing Note]: {final_note}"
+        
+        # Generate AI Summary if content exists
+        if report_payload.get('content'):
+             with st.spinner("Generating AI Summary..."):
+                 summary = generate_technician_summary(report_payload['content'], job['title'])
+                 if summary:
+                     report_payload['ai_summary'] = summary
+
+        # Update Job State
+        st.session_state.jobs[job_index]['reports'].append(report_payload)
+        st.session_state.jobs[job_index]['status'] = 'Completed'
+        st.session_state.briefing = "Data required to generate briefing."
+        
+        # Send Email
+        tech = get_tech(job['techId'])
+        loc = get_location(job['locationId'])
+        send_completion_email(job, tech, loc, report_payload)
+        
+        save_state()
+        
+        # Clear pending state
+        if f"completion_pending_{job['id']}" in st.session_state:
+            del st.session_state[f"completion_pending_{job['id']}"]
             
-            # Send Email
-            tech = get_tech(job['techId'])
-            loc = get_location(job['locationId'])
-            send_completion_email(job, tech, loc, report_payload)
-            
-            save_state()
-            
-            # Clear pending state
-            if f"completion_pending_{job['id']}" in st.session_state:
-                del st.session_state[f"completion_pending_{job['id']}"]
-                
-            st.success("Job Completed & Closed!")
-            st.rerun()
-            
-        if c_cancel.form_submit_button("Cancel"):
-            # Clear pending state
-            if f"completion_pending_{job['id']}" in st.session_state:
-                del st.session_state[f"completion_pending_{job['id']}"]
-            st.rerun()
+        st.success("Job Completed & Closed!")
+        st.rerun()
+        
+    if c_cancel.button("Cancel"):
+        # Clear pending state
+        if f"completion_pending_{job['id']}" in st.session_state:
+            del st.session_state[f"completion_pending_{job['id']}"]
+        st.rerun()
 
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
@@ -1671,7 +1731,7 @@ def main():
         filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
 
     # Navigation Tabs
-    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "🗺️ Map View", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "📍 Map View", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
     if is_admin:
         tabs_list.append("🛡️ Admin")
     
@@ -1737,8 +1797,76 @@ def main():
                 for job in unassigned:
                     render_job_card(job, compact=True, key_suffix="unassigned", allow_delete=is_admin)
 
-    # 3. Map View
+    # 3. Calendar View
     with tabs[2]:
+        st.subheader("📅 Job Schedule")
+        
+        # Calendar Controls
+        col_cal1, col_cal2 = st.columns([1, 4])
+        with col_cal1:
+            # Simple month navigation could be added here, defaulting to current month for now
+            current_date = datetime.datetime.now()
+            cal_year = st.number_input("Year", value=current_date.year, min_value=2024, max_value=2030)
+            cal_month = st.selectbox("Month", list(calendar.month_name)[1:], index=current_date.month - 1)
+            month_num = list(calendar.month_name).index(cal_month)
+            
+        with col_cal2:
+            st.write("") # Spacer
+        
+        # Generate Calendar Grid
+        cal = calendar.monthcalendar(cal_year, month_num)
+        
+        # Weekday Headers
+        cols = st.columns(7)
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        for i, day in enumerate(days):
+            cols[i].markdown(f"**{day}**")
+            
+        # Calendar Rows
+        for week in cal:
+            cols = st.columns(7)
+            for i, day in enumerate(week):
+                with cols[i]:
+                    if day == 0:
+                        st.write("") # Empty day from other month
+                    else:
+                        # Render Day Cell
+                        st.markdown(f"**{day}**")
+                        
+                        # Find jobs for this date
+                        # Note: Job 'date' is ISO format string. We compare YYYY-MM-DD.
+                        target_date_str = f"{cal_year}-{month_num:02d}-{day:02d}"
+                        
+                        day_jobs = [j for j in filtered_jobs if j['date'].startswith(target_date_str) and j['status'] != 'Completed']
+                        
+                        for job in day_jobs:
+                            tech = get_tech(job['techId'])
+                            tech_initials = tech['initials'] if tech else "Un"
+                            color = tech['color'] if tech else "#52525b"
+                            
+                            # Small pill for the job
+                            st.markdown(f"""
+                            <div style="
+                                background-color: {color}; 
+                                color: white; 
+                                padding: 2px 4px; 
+                                border-radius: 4px; 
+                                font-size: 0.7em; 
+                                margin-bottom: 2px;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                                cursor: help;"
+                                title="{job['title']} ({tech['name'] if tech else 'Unassigned'})">
+                                {tech_initials} - {job['title'][:10]}..
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                        if not day_jobs:
+                            st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+
+    # 4. Map View
+    with tabs[3]:
         st.subheader("📍 Live Job Map")
         
         c_controls, c_map = st.columns([1, 3])
@@ -1913,30 +2041,30 @@ def main():
             else:
                 st.info("No active jobs with valid location data found.")
 
-    # 4. Service Calls
-    with tabs[3]:
+    # 5. Service Calls
+    with tabs[4]:
         service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
         if not service_jobs: st.info("No active service calls.")
         for job in service_jobs:
             render_job_card(job, key_suffix="service", allow_delete=is_admin)
 
-    # 5. Projects
-    with tabs[4]:
+    # 6. Projects
+    with tabs[5]:
         proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
         if not proj_jobs: st.info("No active projects.")
         for job in proj_jobs:
             render_job_card(job, key_suffix="project", allow_delete=is_admin)
 
-    # 6. Archive
-    with tabs[5]:
+    # 7. Archive
+    with tabs[6]:
         archived = [j for j in filtered_jobs if j['status'] == 'Completed']
         if not archived: st.info("No archived jobs.")
         for job in archived:
             render_job_card(job, key_suffix="archive", allow_delete=is_admin)
 
-    # 7. Admin (Only if Admin)
+    # 8. Admin (Only if Admin)
     if is_admin:
-        with tabs[6]:
+        with tabs[7]:
             render_admin_panel()
 
     # Sidebar Chatbot
