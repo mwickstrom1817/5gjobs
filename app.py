@@ -848,15 +848,15 @@ def generate_morning_briefing():
      - Critical: {len(critical_jobs)}
      - Techs: {', '.join([t['name'] for t in st.session_state.techs])}
      
-     Critical Issues:
-     {chr(10).join([f"- {j['title']} ({j['priority']})" for j in critical_jobs])}
+     Active Job List:
+     {chr(10).join([f"- {j['title']} ({j['priority']})" for j in active_jobs])}
 
      Format: 
      Start with the header: **Morning Briefing: 5G Security - {current_date}**
 
      Then:
      1. Security Focus (Motivation)
-     2. Critical Focus
+     2. Critical Focus (Briefly summarize the active jobs list, highlighting critical ones if any)
      3. Safety Tip.
 
      Max 150 words. No markdown headers (#), use Bold instead.
