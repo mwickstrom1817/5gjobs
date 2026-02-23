@@ -1029,8 +1029,7 @@ def edit_job_dialog(job_id):
             else:
                 st.error("Title is required.")
 
-@st.dialog("Confirm Job Completion")
-def confirm_completion_dialog(job_index, report_payload):
+def render_completion_confirmation(job_index, report_payload):
     job = st.session_state.jobs[job_index]
     st.write(f"**Job:** {job['title']}")
     st.warning("You are marking this job as **Completed**. This will archive the job and notify admins.")
@@ -1045,7 +1044,9 @@ def confirm_completion_dialog(job_index, report_payload):
         st.write("#### 📝 Final Notes")
         final_note = st.text_area("Add any final closing notes (optional):")
         
-        if st.form_submit_button("Confirm & Close Job", type="primary"):
+        c_confirm, c_cancel = st.columns(2)
+        
+        if c_confirm.form_submit_button("Confirm & Close Job", type="primary"):
             # Update report payload with checklist
             checklist = []
             if c1: checklist.append("Messes Cleaned")
@@ -1076,7 +1077,18 @@ def confirm_completion_dialog(job_index, report_payload):
             send_completion_email(job, tech, loc, report_payload)
             
             save_state()
+            
+            # Clear pending state
+            if f"completion_pending_{job['id']}" in st.session_state:
+                del st.session_state[f"completion_pending_{job['id']}"]
+                
             st.success("Job Completed & Closed!")
+            st.rerun()
+            
+        if c_cancel.form_submit_button("Cancel"):
+            # Clear pending state
+            if f"completion_pending_{job['id']}" in st.session_state:
+                del st.session_state[f"completion_pending_{job['id']}"]
             st.rerun()
 
 @st.dialog("Job Details & Report", width="large")
@@ -1087,6 +1099,12 @@ def job_details_dialog(job_id):
         st.error("Job not found")
         return
     
+    # Check for pending completion confirmation
+    pending_key = f"completion_pending_{job_id}"
+    if pending_key in st.session_state:
+        render_completion_confirmation(job_index, st.session_state[pending_key])
+        return
+
     job = st.session_state.jobs[job_index]
     loc = get_location(job['locationId'])
     tech = get_tech(job['techId'])
@@ -1306,7 +1324,9 @@ def job_details_dialog(job_id):
                 }
 
                 if new_status == "Completed":
-                    confirm_completion_dialog(job_index, report_payload)
+                    # Set pending state and rerun to show confirmation UI
+                    st.session_state[f"completion_pending_{job['id']}"] = report_payload
+                    st.rerun()
                 else:
                     st.session_state.jobs[job_index]['reports'].append(report_payload)
                     
