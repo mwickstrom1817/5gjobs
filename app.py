@@ -917,6 +917,9 @@ def add_job_dialog():
         job_type = c1.selectbox("Type", ["Service", "Project"])
         priority = c2.selectbox("Priority", ["Medium", "Low", "High", "Critical"])
         
+        # Date Selection
+        job_date = st.date_input("Scheduled Date", value=datetime.datetime.now())
+        
         # Location Selection
         loc_map = {l['name']: l['id'] for l in st.session_state.locations}
         loc_name = st.selectbox("Location", list(loc_map.keys()))
@@ -928,6 +931,9 @@ def add_job_dialog():
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
+            # Combine date with current time for ISO format
+            full_date = datetime.datetime.combine(job_date, datetime.datetime.now().time())
+            
             new_job = {
                 'id': f"j{len(st.session_state.jobs) + 100}_{datetime.datetime.now().timestamp()}",
                 'title': title,
@@ -937,7 +943,7 @@ def add_job_dialog():
                 'status': 'Pending',
                 'locationId': loc_map[loc_name],
                 'techId': tech_map[tech_name],
-                'date': datetime.datetime.now().isoformat(),
+                'date': full_date.isoformat(),
                 'reports': []
             }
             st.session_state.jobs.insert(0, new_job)
@@ -995,6 +1001,23 @@ def edit_job_dialog(job_id):
             curr_prio_idx = prio_opts.index(job['priority'])
         priority = c2.selectbox("Priority", prio_opts, index=curr_prio_idx)
         
+        # Date Selection
+        try:
+            # Handle both full ISO strings and YYYY-MM-DD
+            if 'T' in job['date']:
+                existing_dt = datetime.datetime.fromisoformat(job['date'])
+                existing_date = existing_dt.date()
+                existing_time = existing_dt.time()
+            else:
+                existing_dt = datetime.datetime.strptime(job['date'][:10], "%Y-%m-%d")
+                existing_date = existing_dt.date()
+                existing_time = datetime.datetime.now().time()
+        except:
+            existing_date = datetime.datetime.now().date()
+            existing_time = datetime.datetime.now().time()
+            
+        job_date = st.date_input("Scheduled Date", value=existing_date)
+        
         # Location Selection
         loc_map = {l['name']: l['id'] for l in st.session_state.locations}
         loc_options = list(loc_map.keys())
@@ -1032,6 +1055,10 @@ def edit_job_dialog(job_id):
                 st.session_state.jobs[job_index]['description'] = desc
                 st.session_state.jobs[job_index]['type'] = job_type
                 st.session_state.jobs[job_index]['priority'] = priority
+                
+                # Update Date (preserve time if possible, or use current time)
+                full_date = datetime.datetime.combine(job_date, existing_time)
+                st.session_state.jobs[job_index]['date'] = full_date.isoformat()
                 
                 if loc_name:
                     st.session_state.jobs[job_index]['locationId'] = loc_map[loc_name]
