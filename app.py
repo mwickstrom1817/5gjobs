@@ -2117,6 +2117,7 @@ def main():
                     elif job['priority'] == 'Low': color = [16, 185, 129, 255] # Green
                     
                     map_data.append({
+                        'id': job['id'],
                         'lat': loc['lat'],
                         'lon': loc['lng'],
                         'title': job['title'],
@@ -2181,6 +2182,10 @@ def main():
                                 st.markdown(f"### 📍 Selected Job")
                                 st.markdown(f"**{selected_job['title']}**")
                                 st.caption(f"{selected_job['address']}")
+                                
+                                if st.button("📄 View Details", key=f"map_btn_{selected_job['id']}", use_container_width=True):
+                                    job_details_dialog(selected_job['id'])
+                                    
                                 st.link_button("🚀 Navigate to Job", selected_job['mapsUrl'], type="primary", use_container_width=True)
             else:
                 st.info("No active jobs with valid location data found.")
