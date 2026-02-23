@@ -1670,53 +1670,58 @@ def main():
         with c_controls:
             st.markdown("### 🛠️ Map Tools")
             
-            # Search/Focus removed as requested
-
+            # --- Search Jobs (Local) ---
+            st.write("**🔍 Search Jobs on Map**")
+            map_search_query = st.text_input("Search title or description", key="map_search_query")
             
-            # --- Add Location ---
-            with st.expander("➕ Add New Location"):
-                # Initialize session state for map location inputs if not present
-                if 'm_loc_name' not in st.session_state:
-                    st.session_state.m_loc_name = ""
-                if 'm_loc_addr' not in st.session_state:
-                    st.session_state.m_loc_addr = ""
+            st.divider()
+            
+            # --- Add Location (Admin Only) ---
+            if is_admin:
+                with st.expander("➕ Add New Location"):
+                    # Initialize session state for map location inputs if not present
+                    if 'm_loc_name' not in st.session_state:
+                        st.session_state.m_loc_name = ""
+                    if 'm_loc_addr' not in st.session_state:
+                        st.session_state.m_loc_addr = ""
 
-                st.text_input("Name", key="m_loc_name")
-                st.text_input("Address", key="m_loc_addr")
-                
-                def map_ac_callback():
-                    if st.session_state.m_loc_addr:
-                        suggestion = suggest_address_with_gemini(st.session_state.m_loc_addr)
-                        if suggestion:
-                            st.session_state.m_loc_addr = suggestion
-                
-                st.button("✨ Auto-Complete", key="map_ac_btn", on_click=map_ac_callback)
-                
-                if st.button("Save Location", key="map_save_btn"):
-                    l_name = st.session_state.m_loc_name
-                    l_addr = st.session_state.m_loc_addr
+                    st.text_input("Name", key="m_loc_name")
+                    st.text_input("Address", key="m_loc_addr")
                     
-                    if l_name and l_addr:
-                        lat, lon = get_coordinates(l_addr)
-                        if lat and lon:
-                            new_loc = {
-                                'id': f"l{datetime.datetime.now().timestamp()}",
-                                'name': l_name, 
-                                'address': l_addr,
-                                'lat': lat,
-                                'lng': lon,
-                                'mapsUrl': get_google_maps_url(l_addr)
-                            }
-                            st.session_state.locations.append(new_loc)
-                            st.session_state.m_loc_name = ""
-                            st.session_state.m_loc_addr = ""
-                            save_state()
-                            st.success(f"Added {l_name}!")
-                            st.rerun()
+                    def map_ac_callback():
+                        if st.session_state.m_loc_addr:
+                            suggestion = suggest_address_with_gemini(st.session_state.m_loc_addr)
+                            if suggestion:
+                                st.session_state.m_loc_addr = suggestion
+                    
+                    st.button("✨ Auto-Complete", key="map_ac_btn", on_click=map_ac_callback)
+                    
+                    def save_map_location_callback():
+                        l_name = st.session_state.m_loc_name
+                        l_addr = st.session_state.m_loc_addr
+                        
+                        if l_name and l_addr:
+                            lat, lon = get_coordinates(l_addr)
+                            if lat and lon:
+                                new_loc = {
+                                    'id': f"l{datetime.datetime.now().timestamp()}",
+                                    'name': l_name, 
+                                    'address': l_addr,
+                                    'lat': lat,
+                                    'lng': lon,
+                                    'mapsUrl': get_google_maps_url(l_addr)
+                                }
+                                st.session_state.locations.append(new_loc)
+                                st.session_state.m_loc_name = ""
+                                st.session_state.m_loc_addr = ""
+                                save_state()
+                                st.toast(f"Added {l_name}!", icon="✅")
+                            else:
+                                st.error("Could not geocode address.")
                         else:
-                            st.error("Could not geocode address.")
-                    else:
-                        st.warning("Name and Address required.")
+                            st.warning("Name and Address required.")
+                    
+                    st.button("Save Location", key="map_save_btn", on_click=save_map_location_callback)
 
         with c_map:
             # Prepare data
@@ -1724,6 +1729,10 @@ def main():
             need_save = False
             
             active_jobs = [j for j in filtered_jobs if j['status'] != 'Completed']
+            
+            # Local Map Search Filter
+            if map_search_query:
+                active_jobs = [j for j in active_jobs if map_search_query.lower() in j['title'].lower() or map_search_query.lower() in j['description'].lower()]
             
             # Progress bar if we need to geocode many items
             progress_bar = None
