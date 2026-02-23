@@ -545,6 +545,20 @@ def generate_job_pdf(job, tech, location, report):
         p.drawText(text_object)
         y -= (line_count * 14) + 10 # Adjust Y based on lines drawn
         
+    # Completion Checklist
+    checklist = report.get('completion_checklist')
+    if checklist:
+        y -= 20
+        p.setFont("Helvetica-Bold", 12)
+        p.drawString(50, y, "COMPLETION CHECKLIST")
+        p.line(50, y-5, width-50, y-5)
+        y -= 20
+        p.setFont("Helvetica", 10)
+        
+        for item in checklist:
+            p.drawString(50, y, f"[x] {item}")
+            y -= 15
+
     # Content/Notes
     y -= 20
     p.setFont("Helvetica-Bold", 12)
@@ -1015,6 +1029,56 @@ def edit_job_dialog(job_id):
             else:
                 st.error("Title is required.")
 
+@st.dialog("Confirm Job Completion")
+def confirm_completion_dialog(job_index, report_payload):
+    job = st.session_state.jobs[job_index]
+    st.write(f"**Job:** {job['title']}")
+    st.warning("You are marking this job as **Completed**. This will archive the job and notify admins.")
+    
+    st.write("#### ✅ Completion Checklist")
+    with st.form("completion_checklist_form"):
+        c1 = st.checkbox("🧹 Messes Cleaned")
+        c2 = st.checkbox("🧱 Tiles Replaced")
+        c3 = st.checkbox("🗑️ Trash Taken Out")
+        c4 = st.checkbox("✍️ Customer Signed Off")
+        
+        st.write("#### 📝 Final Notes")
+        final_note = st.text_area("Add any final closing notes (optional):")
+        
+        if st.form_submit_button("Confirm & Close Job", type="primary"):
+            # Update report payload with checklist
+            checklist = []
+            if c1: checklist.append("Messes Cleaned")
+            if c2: checklist.append("Tiles Replaced")
+            if c3: checklist.append("Trash Taken Out")
+            if c4: checklist.append("Customer Signed Off")
+            
+            report_payload['completion_checklist'] = checklist
+            
+            if final_note:
+                report_payload['content'] += f"\n\n[Closing Note]: {final_note}"
+            
+            # Generate AI Summary if content exists
+            if report_payload.get('content'):
+                 with st.spinner("Generating AI Summary..."):
+                     summary = generate_technician_summary(report_payload['content'], job['title'])
+                     if summary:
+                         report_payload['ai_summary'] = summary
+
+            # Update Job State
+            st.session_state.jobs[job_index]['reports'].append(report_payload)
+            st.session_state.jobs[job_index]['status'] = 'Completed'
+            st.session_state.briefing = "Data required to generate briefing."
+            
+            # Send Email
+            tech = get_tech(job['techId'])
+            loc = get_location(job['locationId'])
+            send_completion_email(job, tech, loc, report_payload)
+            
+            save_state()
+            st.success("Job Completed & Closed!")
+            st.rerun()
+
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
     # Find job directly from session state
@@ -1241,27 +1305,19 @@ def job_details_dialog(job_id):
                     'photos': todays_photos # Photos handled in other tab
                 }
 
-                # If status is completing, try generating AI summary
-                if new_status == "Completed" and content:
-                    with st.spinner("Generating AI Summary for Report..."):
-                        summary = generate_technician_summary(content, job['title'])
-                        if summary:
-                             report_payload['ai_summary'] = summary
-
-                st.session_state.jobs[job_index]['reports'].append(report_payload)
-                changes_made = True
-
-                # Update Status
-                if new_status != job['status']:
-                    st.session_state.jobs[job_index]['status'] = new_status
-                    st.session_state.briefing = "Data required to generate briefing."
+                if new_status == "Completed":
+                    confirm_completion_dialog(job_index, report_payload)
+                else:
+                    st.session_state.jobs[job_index]['reports'].append(report_payload)
                     
-                    if new_status == "Completed":
-                        send_completion_email(job, tech, loc, report_payload)
-                
-                save_state()
-                st.success("Daily Report Submitted!")
-                st.rerun()
+                    # Update Status
+                    if new_status != job['status']:
+                        st.session_state.jobs[job_index]['status'] = new_status
+                        st.session_state.briefing = "Data required to generate briefing."
+                    
+                    save_state()
+                    st.success("Daily Report Submitted!")
+                    st.rerun()
 
 # --- UI COMPONENTS ---
 
