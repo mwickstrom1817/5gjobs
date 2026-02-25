@@ -187,14 +187,19 @@ def save_state(invalidate_briefing=True):
         st.error(f"Failed to save data: {e}")
 
 # --- SESSION STATE INITIALIZATION ---
-# Load persistent data immediately on every rerun to sync state
-db_data = load_data()
-st.session_state.jobs = db_data['jobs']
-st.session_state.techs = db_data['techs']
-st.session_state.locations = db_data['locations']
-st.session_state.briefing = db_data['briefing']
-st.session_state.adminEmails = db_data['adminEmails']
-st.session_state.last_reminder_date = db_data.get('last_reminder_date')
+# Load persistent data only if not present or forced
+if 'jobs' not in st.session_state or st.session_state.get('force_reload'):
+    db_data = load_data()
+    st.session_state.jobs = db_data['jobs']
+    st.session_state.techs = db_data['techs']
+    st.session_state.locations = db_data['locations']
+    st.session_state.briefing = db_data['briefing']
+    st.session_state.adminEmails = db_data['adminEmails']
+    st.session_state.last_reminder_date = db_data.get('last_reminder_date')
+    
+    if st.session_state.get('force_reload'):
+        del st.session_state['force_reload']
+        st.toast("Data reloaded from disk!", icon="🔄")
 
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = [
@@ -332,7 +337,11 @@ def keep_awake():
     def run():
         while True:
             time.sleep(60 * 15) # 15 minutes
-            print("Keep awake ping...")
+            try:
+                requests.get("http://localhost:3000")
+                print("Keep awake ping sent.")
+            except Exception as e:
+                print(f"Keep awake ping failed: {e}")
             
     # Check if thread is already running to avoid duplicates on rerun
     for t in threading.enumerate():
@@ -485,6 +494,25 @@ def suggest_address_with_gemini(partial_address):
         return response.text.strip()
     except:
         return partial_address
+
+def download_data_as_csv():
+    # Convert jobs to CSV
+    if st.session_state.jobs:
+        df = pd.DataFrame(st.session_state.jobs)
+        return df.to_csv(index=False).encode('utf-8')
+    return None
+
+def download_data_as_json():
+    # Dump current state to JSON
+    data = {
+        "jobs": st.session_state.jobs,
+        "techs": st.session_state.techs,
+        "locations": st.session_state.locations,
+        "briefing": st.session_state.briefing,
+        "adminEmails": st.session_state.adminEmails,
+        "last_reminder_date": st.session_state.get("last_reminder_date")
+    }
+    return json.dumps(data, indent=2)
 
 # --- PDF GENERATION ---
 def generate_job_pdf(job, tech, location, report):
@@ -1474,13 +1502,6 @@ def preview_job_dialog(job_id):
     
     c1, c2 = st.columns(2)
     if c1.button("📄 Full Details", use_container_width=True):
-        st.rerun() # Close this dialog first? 
-        # Actually, calling another dialog usually replaces the current one or stacks.
-        # But since we are in a dialog, we might need to close it to open the other one cleanly, 
-        # or just call it. Let's try calling it.
-        # However, Streamlit dialogs are a bit new. 
-        # A safer bet is to set a session state flag and rerun, 
-        # but let's try direct call first.
         job_details_dialog(job['id'])
         
     if loc:
@@ -1590,11 +1611,65 @@ def render_admin_panel():
     c_db1, c_db2 = st.columns(2)
     with c_db1:
         if st.button("🔄 Reload Data from Disk"):
+            st.session_state.force_reload = True
             st.rerun()
     with c_db2:
         if st.button("💾 Force Save State"):
             save_state()
+            st.toast("State saved to disk.", icon="💾")
             
+    st.divider()
+    
+    # Backup / Restore
+    st.subheader("Backup & Restore")
+    c_bk1, c_bk2 = st.columns(2)
+    
+    with c_bk1:
+        # CSV Export
+        csv_data = download_data_as_csv()
+        if csv_data:
+            st.download_button(
+                label="📥 Download Jobs CSV",
+                data=csv_data,
+                file_name=f"jobs_export_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv"
+            )
+        else:
+            st.button("📥 Download Jobs CSV", disabled=True)
+            
+        # JSON Export
+        json_data = download_data_as_json()
+        st.download_button(
+            label="📦 Download Full Backup (JSON)",
+            data=json_data,
+            file_name=f"backup_{datetime.datetime.now().strftime('%Y%m%d')}.json",
+            mime="application/json"
+        )
+
+    with c_bk2:
+        # Restore
+        uploaded_file = st.file_uploader("Restore Backup (JSON)", type=['json'])
+        if uploaded_file is not None:
+            if st.button("⚠️ Restore from Backup"):
+                try:
+                    data = json.load(uploaded_file)
+                    # Validate keys
+                    required_keys = ["jobs", "techs", "locations"]
+                    if all(k in data for k in required_keys):
+                        st.session_state.jobs = data['jobs']
+                        st.session_state.techs = data['techs']
+                        st.session_state.locations = data['locations']
+                        st.session_state.briefing = data.get('briefing', "")
+                        st.session_state.adminEmails = data.get('adminEmails', [])
+                        st.session_state.last_reminder_date = data.get('last_reminder_date')
+                        save_state()
+                        st.success("Data restored successfully!")
+                        st.rerun()
+                    else:
+                        st.error("Invalid backup file format.")
+                except Exception as e:
+                    st.error(f"Error restoring file: {e}")
+        
     st.divider()
     
     # --- ANALYTICS SECTION ---
