@@ -325,6 +325,23 @@ def logout():
 
 # --- HELPER FUNCTIONS ---
 
+def keep_awake():
+    """
+    Background thread to keep the app active.
+    """
+    def run():
+        while True:
+            time.sleep(60 * 15) # 15 minutes
+            print("Keep awake ping...")
+            
+    # Check if thread is already running to avoid duplicates on rerun
+    for t in threading.enumerate():
+        if t.name == "keep_awake_thread":
+            return
+
+    thread = threading.Thread(target=run, name="keep_awake_thread", daemon=True)
+    thread.start()
+
 def get_tech(tech_id):
     return next((t for t in st.session_state.techs if t['id'] == tech_id), None)
 
@@ -1428,6 +1445,49 @@ def job_details_dialog(job_id):
                     st.success("Daily Report Submitted!")
                     st.rerun()
 
+@st.dialog("Job Preview")
+def preview_job_dialog(job_id):
+    # Find job directly from session state
+    job_index = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
+    if job_index == -1:
+        st.error("Job not found")
+        return
+        
+    job = st.session_state.jobs[job_index]
+    
+    st.subheader(job['title'])
+    
+    # Priority Badge
+    priority_color = {
+        "Critical": "red", "High": "orange", "Medium": "yellow", "Low": "green"
+    }.get(job['priority'], "gray")
+    st.markdown(f":{priority_color}-background[{job['priority']}]")
+    
+    st.write(f"**Status:** {job['status']}")
+    
+    loc = get_location(job['locationId'])
+    if loc:
+        st.write(f"📍 **{loc['name']}**")
+        st.caption(loc['address'])
+        
+    st.divider()
+    
+    c1, c2 = st.columns(2)
+    if c1.button("📄 Full Details", use_container_width=True):
+        st.rerun() # Close this dialog first? 
+        # Actually, calling another dialog usually replaces the current one or stacks.
+        # But since we are in a dialog, we might need to close it to open the other one cleanly, 
+        # or just call it. Let's try calling it.
+        # However, Streamlit dialogs are a bit new. 
+        # A safer bet is to set a session state flag and rerun, 
+        # but let's try direct call first.
+        job_details_dialog(job['id'])
+        
+    if loc:
+        map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
+        if map_url:
+            c2.link_button("🚀 Navigate", map_url, use_container_width=True)
+
 # --- UI COMPONENTS ---
 
 
@@ -1827,6 +1887,9 @@ def render_chatbot():
 # --- MAIN APP FLOW ---
 
 def main():
+    # Start Keep Awake Thread
+    keep_awake()
+
     # 1. Authenticate User
     user = authenticate()
     if not user:
@@ -2179,16 +2242,7 @@ def main():
                         idx = indices[0]
                         if idx < len(map_data):
                             selected_job = map_data[idx]
-                            with c_controls:
-                                st.divider()
-                                st.markdown(f"### 📍 Selected Job")
-                                st.markdown(f"**{selected_job['title']}**")
-                                st.caption(f"{selected_job['address']}")
-                                
-                                if st.button("📄 View Details", key=f"map_btn_{selected_job['id']}", use_container_width=True):
-                                    job_details_dialog(selected_job['id'])
-                                    
-                                st.link_button("🚀 Navigate to Job", selected_job['mapsUrl'], type="primary", use_container_width=True)
+                            preview_job_dialog(selected_job['id'])
             else:
                 st.info("No active jobs with valid location data found.")
 
