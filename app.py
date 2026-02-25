@@ -8,7 +8,6 @@ import smtplib
 import urllib.parse
 import requests
 import pandas as pd
-import pydeck as pdk
 import calendar
 import numpy as np
 import threading
@@ -386,21 +385,6 @@ def get_google_maps_url(address):
     """Generates a Google Maps Search URL based on address."""
     if not address: return None
     return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(address)}"
-
-def get_coordinates(address):
-    """Geocodes an address using OpenStreetMap Nominatim API."""
-    try:
-        url = 'https://nominatim.openstreetmap.org/search'
-        params = {'q': address, 'format': 'json', 'limit': 1}
-        headers = {'User-Agent': '5GSecurityJobBoard/1.0'}
-        response = requests.get(url, params=params, headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            if data:
-                return float(data[0]['lat']), float(data[0]['lon'])
-    except Exception as e:
-        print(f"Geocoding error: {e}")
-    return None, None
 
 def get_api_key():
     # Try getting from Streamlit secrets, then Env, then return None
@@ -1473,42 +1457,6 @@ def job_details_dialog(job_id):
                     st.success("Daily Report Submitted!")
                     st.rerun()
 
-@st.dialog("Job Preview")
-def preview_job_dialog(job_id):
-    # Find job directly from session state
-    job_index = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
-    if job_index == -1:
-        st.error("Job not found")
-        return
-        
-    job = st.session_state.jobs[job_index]
-    
-    st.subheader(job['title'])
-    
-    # Priority Badge
-    priority_color = {
-        "Critical": "red", "High": "orange", "Medium": "yellow", "Low": "green"
-    }.get(job['priority'], "gray")
-    st.markdown(f":{priority_color}-background[{job['priority']}]")
-    
-    st.write(f"**Status:** {job['status']}")
-    
-    loc = get_location(job['locationId'])
-    if loc:
-        st.write(f"📍 **{loc['name']}**")
-        st.caption(loc['address'])
-        
-    st.divider()
-    
-    c1, c2 = st.columns(2)
-    if c1.button("📄 Full Details", use_container_width=True):
-        job_details_dialog(job['id'])
-        
-    if loc:
-        map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
-        if map_url:
-            c2.link_button("🚀 Navigate", map_url, use_container_width=True)
-
 # --- UI COMPONENTS ---
 
 
@@ -1797,7 +1745,6 @@ def render_admin_panel():
             
             if l_name and l_addr:
                 map_url = get_google_maps_url(l_addr)
-                lat, lon = get_coordinates(l_addr) # Fetch coordinates
 
                 new_loc = {
                     'id': f"l{datetime.datetime.now().timestamp()}",
@@ -1805,10 +1752,6 @@ def render_admin_panel():
                     'address': l_addr,
                     'mapsUrl': map_url
                 }
-                
-                if lat and lon:
-                    new_loc['lat'] = lat
-                    new_loc['lng'] = lon
 
                 st.session_state.locations.append(new_loc)
                 # Clear inputs
@@ -2015,7 +1958,7 @@ def main():
         filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
 
     # Navigation Tabs
-    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "📍 Map View", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
     if is_admin:
         tabs_list.append("🛡️ Admin")
     
@@ -2149,202 +2092,30 @@ def main():
                         if not day_jobs:
                             st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
-    # 4. Map View
+    # 4. Service Calls
     with tabs[3]:
-        st.subheader("📍 Live Job Map")
-        
-        c_controls, c_map = st.columns([1, 3])
-        
-        with c_controls:
-            st.markdown("### 🛠️ Map Tools")
-            
-            # --- Search Jobs (Local) ---
-            st.write("**🔍 Search Jobs on Map**")
-            map_search_query = st.text_input("Search title or description", key="map_search_query")
-            
-            st.divider()
-            
-            # --- Add Location (Admin Only) ---
-            if is_admin:
-                with st.expander("➕ Add New Location"):
-                    # Initialize session state for map location inputs if not present
-                    if 'm_loc_name' not in st.session_state:
-                        st.session_state.m_loc_name = ""
-                    if 'm_loc_addr' not in st.session_state:
-                        st.session_state.m_loc_addr = ""
-
-                    st.text_input("Name", key="m_loc_name")
-                    st.text_input("Address", key="m_loc_addr")
-                    
-                    def map_ac_callback():
-                        if st.session_state.m_loc_addr:
-                            suggestion = suggest_address_with_gemini(st.session_state.m_loc_addr)
-                            if suggestion:
-                                st.session_state.m_loc_addr = suggestion
-                    
-                    st.button("✨ Auto-Complete", key="map_ac_btn", on_click=map_ac_callback)
-                    
-                    def save_map_location_callback():
-                        l_name = st.session_state.m_loc_name
-                        l_addr = st.session_state.m_loc_addr
-                        
-                        if l_name and l_addr:
-                            lat, lon = get_coordinates(l_addr)
-                            if lat and lon:
-                                new_loc = {
-                                    'id': f"l{datetime.datetime.now().timestamp()}",
-                                    'name': l_name, 
-                                    'address': l_addr,
-                                    'lat': lat,
-                                    'lng': lon,
-                                    'mapsUrl': get_google_maps_url(l_addr)
-                                }
-                                st.session_state.locations.append(new_loc)
-                                st.session_state.m_loc_name = ""
-                                st.session_state.m_loc_addr = ""
-                                save_state()
-                                st.toast(f"Added {l_name}!", icon="✅")
-                            else:
-                                st.error("Could not geocode address.")
-                        else:
-                            st.warning("Name and Address required.")
-                    
-                    st.button("Save Location", key="map_save_btn", on_click=save_map_location_callback)
-
-        with c_map:
-            # Prepare data
-            map_data = []
-            need_save = False
-            
-            active_jobs = [j for j in filtered_jobs if j['status'] != 'Completed']
-            
-            # Local Map Search Filter
-            if map_search_query:
-                active_jobs = [j for j in active_jobs if map_search_query.lower() in j['title'].lower() or map_search_query.lower() in j['description'].lower()]
-            
-            # Progress bar if we need to geocode many items
-            progress_bar = None
-            
-            for i, job in enumerate(active_jobs):
-                loc = get_location(job['locationId'])
-                if loc:
-                    # Check if loc has coordinates
-                    if 'lat' not in loc or 'lng' not in loc:
-                        # Try to fetch
-                        if not progress_bar:
-                            progress_bar = st.progress(0, text="Geocoding locations...")
-                        
-                        lat, lng = get_coordinates(loc['address'])
-                        if lat and lng:
-                            loc['lat'] = lat
-                            loc['lng'] = lng
-                            need_save = True
-                        else:
-                            continue # Skip if can't geocode
-                        
-                        if progress_bar:
-                            progress_bar.progress((i + 1) / len(active_jobs), text=f"Geocoding {loc['name']}...")
-                    
-                    # Add to map data
-                    tech = get_tech(job['techId'])
-                    tech_name = tech['name'] if tech else "Unassigned"
-                    
-                    # Color based on priority (R, G, B, A)
-                    color = [200, 200, 200, 200] # Default grey
-                    if job['priority'] == 'Critical': color = [239, 68, 68, 255] # Red
-                    elif job['priority'] == 'High': color = [220, 38, 38, 255] # Dark Red
-                    elif job['priority'] == 'Medium': color = [245, 158, 11, 255] # Amber
-                    elif job['priority'] == 'Low': color = [16, 185, 129, 255] # Green
-                    
-                    map_data.append({
-                        'id': job['id'],
-                        'lat': loc['lat'],
-                        'lon': loc['lng'],
-                        'title': job['title'],
-                        'priority': job['priority'],
-                        'tech': tech_name,
-                        'status': job['status'],
-                        'color': color,
-                        'address': loc['address'],
-                        'mapsUrl': loc.get('mapsUrl') or get_google_maps_url(loc['address'])
-                    })
-            
-            if progress_bar:
-                progress_bar.empty()
-                
-            if need_save:
-                save_state(invalidate_briefing=False)
-                
-            if map_data:
-                df = pd.DataFrame(map_data)
-                
-                # Determine View State
-                view_lat = df['lat'].mean()
-                view_lon = df['lon'].mean()
-                view_zoom = 10
-                
-                # Pydeck Layer
-                layer = pdk.Layer(
-                    "ScatterplotLayer",
-                    df,
-                    get_position='[lon, lat]',
-                    get_color='color',
-                    get_radius=3000,
-                    pickable=True,
-                    auto_highlight=True,
-                    id="jobs-layer"
-                )
-                
-                view_state = pdk.ViewState(
-                    latitude=view_lat,
-                    longitude=view_lon,
-                    zoom=view_zoom,
-                    pitch=0
-                )
-                
-                # Render Map with Selection
-                event = st.pydeck_chart(pdk.Deck(
-                    map_style=None,
-                    initial_view_state=view_state,
-                    layers=[layer],
-                    tooltip={"text": "{title}\nPriority: {priority}\nTech: {tech}\nStatus: {status}"}
-                ), on_select="rerun", selection_mode="single-object", key="map_chart")
-                
-                # Handle Selection
-                if event.selection:
-                    indices = event.selection.get("jobs-layer", [])
-                    if indices:
-                        idx = indices[0]
-                        if idx < len(map_data):
-                            selected_job = map_data[idx]
-                            preview_job_dialog(selected_job['id'])
-            else:
-                st.info("No active jobs with valid location data found.")
-
-    # 5. Service Calls
-    with tabs[4]:
         service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
         if not service_jobs: st.info("No active service calls.")
         for job in service_jobs:
             render_job_card(job, key_suffix="service", allow_delete=is_admin)
 
-    # 6. Projects
-    with tabs[5]:
+    # 5. Projects
+    with tabs[4]:
         proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
         if not proj_jobs: st.info("No active projects.")
         for job in proj_jobs:
             render_job_card(job, key_suffix="project", allow_delete=is_admin)
 
-    # 7. Archive
-    with tabs[6]:
+    # 6. Archive
+    with tabs[5]:
         archived = [j for j in filtered_jobs if j['status'] == 'Completed']
         if not archived: st.info("No archived jobs.")
         for job in archived:
             render_job_card(job, key_suffix="archive", allow_delete=is_admin)
 
-    # 8. Admin (Only if Admin)
+    # 7. Admin (Only if Admin)
     if is_admin:
-        with tabs[7]:
+        with tabs[6]:
             render_admin_panel()
 
     # Sidebar Chatbot
