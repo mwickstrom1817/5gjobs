@@ -356,18 +356,28 @@ def keep_awake():
     """
     def run():
         logger = get_logger()
+        # Wait a bit for server to fully start
+        time.sleep(10)
+        
         while True:
-            time.sleep(120) # 2 minutes
             try:
-                # Ping the Streamlit health endpoint to keep the server active
-                requests.get("http://localhost:3000/_stcore/health", timeout=10)
+                # Use 127.0.0.1 explicitly to avoid localhost resolution issues
+                # Ping health endpoint
+                requests.get("http://127.0.0.1:3000/_stcore/health", timeout=10)
+                
                 msg = "Keep-awake ping sent successfully."
-                print(f"{datetime.datetime.now()}: {msg}")
+                # Only log to console periodically to reduce noise, but always to system log
+                if datetime.datetime.now().minute % 10 == 0:
+                    print(f"{datetime.datetime.now()}: {msg}")
                 logger.log(msg)
+                
             except Exception as e:
                 msg = f"Keep-awake ping failed: {e}"
                 print(f"{datetime.datetime.now()}: {msg}")
                 logger.log(msg)
+            
+            # Wait for next ping
+            time.sleep(120) 
             
     # Check if thread is already running to avoid duplicates on rerun
     for t in threading.enumerate():
@@ -1657,6 +1667,19 @@ def render_admin_panel():
     st.subheader("📝 System Logs")
     with st.expander("View Background Activity", expanded=False):
         st.caption("Recent keep-awake pings and system events.")
+        
+        c_log1, c_log2 = st.columns([3, 1])
+        with c_log2:
+            if st.button("⚡ Test Ping Now"):
+                try:
+                    requests.get("http://127.0.0.1:3000/_stcore/health", timeout=5)
+                    get_logger().log("Manual ping successful.")
+                    st.toast("Ping successful!", icon="✅")
+                except Exception as e:
+                    get_logger().log(f"Manual ping failed: {e}")
+                    st.error(f"Ping failed: {e}")
+                st.rerun()
+        
         logger = get_logger()
         logs = logger.get_logs()
         if logs:
