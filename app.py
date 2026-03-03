@@ -332,15 +332,17 @@ def logout():
 def keep_awake():
     """
     Background thread to keep the app active.
+    Pings the server every 2 minutes to prevent idle timeouts.
     """
     def run():
         while True:
-            time.sleep(60 * 15) # 15 minutes
+            time.sleep(120) # 2 minutes
             try:
-                requests.get("http://localhost:3000")
-                print("Keep awake ping sent.")
+                # Ping the Streamlit health endpoint to keep the server active
+                requests.get("http://localhost:3000/_stcore/health", timeout=10)
+                print(f"Keep-awake ping sent: {datetime.datetime.now()}")
             except Exception as e:
-                print(f"Keep awake ping failed: {e}")
+                print(f"Keep-awake ping failed: {e}")
             
     # Check if thread is already running to avoid duplicates on rerun
     for t in threading.enumerate():
