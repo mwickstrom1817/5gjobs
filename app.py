@@ -359,20 +359,32 @@ def keep_awake():
         # Wait a bit for server to fully start
         time.sleep(10)
         
+        # List of potential endpoints to try
+        endpoints = [
+            "http://localhost:3000/_stcore/health",
+            "http://127.0.0.1:3000/_stcore/health",
+            "http://0.0.0.0:3000/_stcore/health",
+            "http://localhost:8501/_stcore/health",
+            "http://127.0.0.1:8501/_stcore/health"
+        ]
+        
         while True:
-            try:
-                # Use 127.0.0.1 explicitly to avoid localhost resolution issues
-                # Ping health endpoint
-                requests.get("http://127.0.0.1:3000/_stcore/health", timeout=10)
-                
-                msg = "Keep-awake ping sent successfully."
-                # Only log to console periodically to reduce noise, but always to system log
-                if datetime.datetime.now().minute % 10 == 0:
-                    print(f"{datetime.datetime.now()}: {msg}")
-                logger.log(msg)
-                
-            except Exception as e:
-                msg = f"Keep-awake ping failed: {e}"
+            success = False
+            for url in endpoints:
+                try:
+                    requests.get(url, timeout=5)
+                    msg = f"Keep-awake ping successful to {url}"
+                    # Only log to console periodically
+                    if datetime.datetime.now().minute % 10 == 0:
+                        print(f"{datetime.datetime.now()}: {msg}")
+                    logger.log(msg)
+                    success = True
+                    break # Stop trying other endpoints if one works
+                except Exception:
+                    continue # Try next endpoint
+            
+            if not success:
+                msg = "Keep-awake ping failed on all attempted endpoints."
                 print(f"{datetime.datetime.now()}: {msg}")
                 logger.log(msg)
             
@@ -1671,13 +1683,27 @@ def render_admin_panel():
         c_log1, c_log2 = st.columns([3, 1])
         with c_log2:
             if st.button("⚡ Test Ping Now"):
-                try:
-                    requests.get("http://127.0.0.1:3000/_stcore/health", timeout=5)
-                    get_logger().log("Manual ping successful.")
-                    st.toast("Ping successful!", icon="✅")
-                except Exception as e:
-                    get_logger().log(f"Manual ping failed: {e}")
-                    st.error(f"Ping failed: {e}")
+                endpoints = [
+                    "http://localhost:3000/_stcore/health",
+                    "http://127.0.0.1:3000/_stcore/health",
+                    "http://0.0.0.0:3000/_stcore/health",
+                    "http://localhost:8501/_stcore/health",
+                    "http://127.0.0.1:8501/_stcore/health"
+                ]
+                success = False
+                for url in endpoints:
+                    try:
+                        requests.get(url, timeout=2)
+                        get_logger().log(f"Manual ping successful to {url}")
+                        st.toast(f"Ping successful to {url}!", icon="✅")
+                        success = True
+                        break
+                    except Exception as e:
+                        pass
+                
+                if not success:
+                    get_logger().log("Manual ping failed on all endpoints.")
+                    st.error("Ping failed on all endpoints.")
                 st.rerun()
         
         logger = get_logger()
