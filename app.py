@@ -329,20 +329,45 @@ def logout():
 
 # --- HELPER FUNCTIONS ---
 
+@st.cache_resource
+class SystemLogger:
+    def __init__(self):
+        self.logs = []
+        self.lock = threading.Lock()
+        
+    def log(self, message):
+        with self.lock:
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.logs.insert(0, f"[{ts}] {message}")
+            if len(self.logs) > 50:
+                self.logs.pop()
+    
+    def get_logs(self):
+        with self.lock:
+            return list(self.logs)
+
+def get_logger():
+    return SystemLogger()
+
 def keep_awake():
     """
     Background thread to keep the app active.
     Pings the server every 2 minutes to prevent idle timeouts.
     """
     def run():
+        logger = get_logger()
         while True:
             time.sleep(120) # 2 minutes
             try:
                 # Ping the Streamlit health endpoint to keep the server active
                 requests.get("http://localhost:3000/_stcore/health", timeout=10)
-                print(f"Keep-awake ping sent: {datetime.datetime.now()}")
+                msg = "Keep-awake ping sent successfully."
+                print(f"{datetime.datetime.now()}: {msg}")
+                logger.log(msg)
             except Exception as e:
-                print(f"Keep-awake ping failed: {e}")
+                msg = f"Keep-awake ping failed: {e}"
+                print(f"{datetime.datetime.now()}: {msg}")
+                logger.log(msg)
             
     # Check if thread is already running to avoid duplicates on rerun
     for t in threading.enumerate():
@@ -1626,6 +1651,21 @@ def render_admin_panel():
     with st.expander("📊 View Analytics Dashboard", expanded=False):
         render_analytics_dashboard()
         
+    st.divider()
+
+    # --- SYSTEM LOGS ---
+    st.subheader("📝 System Logs")
+    with st.expander("View Background Activity", expanded=False):
+        st.caption("Recent keep-awake pings and system events.")
+        logger = get_logger()
+        logs = logger.get_logs()
+        if logs:
+            st.code("\n".join(logs), language="text")
+            if st.button("Refresh Logs"):
+                st.rerun()
+        else:
+            st.info("No logs recorded yet.")
+
     st.divider()
 
     # --- ADMIN ACCESS MANAGEMENT ---
