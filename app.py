@@ -678,6 +678,55 @@ def generate_job_pdf(job, tech, location, report):
         p.drawString(50, y-10, "Customer Digital Signature")
         y -= 20
 
+    # Photos Section
+    photos = report.get('photos', [])
+    if photos:
+        p.showPage() # Finish text page, start photo page
+        
+        # Reset Y for new page
+        y = height - 50
+        p.setFont("Helvetica-Bold", 14)
+        p.drawString(50, y, "SITE PHOTOS")
+        y -= 30
+        
+        # Grid settings
+        x_start = 50
+        img_width = 250
+        img_height = 200
+        gap_x = 20
+        gap_y = 20
+        
+        col = 0
+        
+        for photo_path in photos:
+            if os.path.exists(photo_path):
+                try:
+                    # Check for page break
+                    if y - img_height < 50:
+                        p.showPage()
+                        y = height - 50
+                        p.setFont("Helvetica-Bold", 14)
+                        p.drawString(50, y, "SITE PHOTOS (Cont.)")
+                        y -= 30
+                        col = 0 # Reset column
+                    
+                    x = x_start + (col * (img_width + gap_x))
+                    
+                    # Draw Image (y is bottom-left of image in reportlab)
+                    # We want to draw *downwards*, so we subtract height from current y
+                    draw_y = y - img_height
+                    
+                    p.drawImage(photo_path, x, draw_y, width=img_width, height=img_height, preserveAspectRatio=True, anchor='c')
+                    
+                    # Move column
+                    col += 1
+                    if col > 1: # 2 columns (0, 1)
+                        col = 0
+                        y -= (img_height + gap_y)
+                        
+                except Exception as e:
+                    print(f"Error adding photo to PDF: {e}")
+
     p.showPage()
     p.save()
     
