@@ -827,6 +827,79 @@ def send_completion_email(job, tech, location, report_data):
         print(f"Email Error: {str(e)}")
         st.error(f"Failed to send email: {str(e)}")
 
+def send_daily_report_email(job, tech, location, report_data):
+    """Sends a Daily Report email to Admins with PDF attachment."""
+    # Helper to resolve config priority: Session > Secrets > Env
+    def get_config_val(key, default=None):
+        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
+            return st.session_state.smtp_settings[key]
+        if key in st.secrets:
+            return st.secrets[key]
+        return os.getenv(key) or default
+
+    smtp_server = get_config_val("SMTP_SERVER")
+    smtp_port = get_config_val("SMTP_PORT", 587)
+    sender_email = get_config_val("SMTP_EMAIL")
+    sender_password = get_config_val("SMTP_PASSWORD")
+    
+    # Get Admin Emails
+    recipients = st.session_state.adminEmails
+    if not recipients:
+        st.warning("No admin emails configured.")
+        return
+
+    # Generate PDF
+    pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+
+    # Prepare email content
+    subject = f"📝 Daily Report: {job['title']}"
+    body = f"""
+   DAILY FIELD REPORT
+   
+   Job:      {job['title']}
+   Tech:     {tech['name'] if tech else 'Unknown'}
+   Location: {location['name'] if location else 'Unknown'}
+   Date:     {datetime.datetime.now().strftime('%Y-%m-%d')}
+   
+   Please see the attached PDF report for today's details.
+   """
+
+    if not (smtp_server and sender_email and sender_password):
+        st.error("SMTP not configured.")
+        return
+
+    try:
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+
+        server.login(sender_email, sender_password)
+        
+        for recipient in recipients:
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
+            msg['To'] = recipient
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            
+            if pdf_bytes:
+                attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+                attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf")
+                msg.attach(attachment)
+
+            server.send_message(msg)
+            
+        server.quit()
+        st.toast("📧 Daily Report sent to Admins", icon="✅")
+    except Exception as e:
+        print(f"Email Error: {str(e)}")
+        st.error(f"Failed to send email: {str(e)}")
+
 def send_daily_reminders():
     """Sends daily reminder emails to techs with active assignments (Mon-Fri only)."""
     
@@ -1428,6 +1501,41 @@ def job_details_dialog(job_id):
                     st.warning("Please add a note or photo.")
 
     with tab_daily:
+        # Check for confirmation state for emailing report
+        confirm_key = f"confirm_daily_send_{job['id']}"
+        if confirm_key in st.session_state:
+            payload = st.session_state[confirm_key]
+            
+            st.warning("⚠️ **Review & Confirm Daily Report**")
+            st.info("Please double-check your times, photos, and notes below before sending to Admins.")
+            
+            with st.container(border=True):
+                st.markdown(f"**Time:** {payload['timeArrived']} - {payload['timeDeparted']} ({payload['hoursWorked']} hrs)")
+                st.markdown(f"**Techs:** {payload['techsOnSite']}")
+                st.markdown(f"**Notes:** {payload['content']}")
+                if payload.get('photos'):
+                    st.markdown(f"**Photos:** {len(payload['photos'])} attached")
+            
+            c_yes, c_no = st.columns(2)
+            if c_yes.button("✅ Yes, Send Email", key="conf_yes", type="primary"):
+                # Send Email
+                send_daily_report_email(job, tech, loc, payload)
+                
+                # Also save to history if not already there (optional, but good practice)
+                # We'll append it as a report so there's a record
+                st.session_state.jobs[job_index]['reports'].append(payload)
+                save_state()
+                
+                del st.session_state[confirm_key]
+                st.success("Report Sent & Saved!")
+                st.rerun()
+                
+            if c_no.button("❌ Cancel", key="conf_no"):
+                del st.session_state[confirm_key]
+                st.rerun()
+            
+            st.divider()
+
         st.write("#### 📝 Daily Field Report")
         st.caption("End of day reporting. Submit labor hours, parts, and finalize status.")
         
@@ -1468,7 +1576,11 @@ def job_details_dialog(job_id):
             else:
                 st.info("ℹ️ No photos found for today. Use the 'In-Progress' tab to add photos before submitting.")
 
-            if st.form_submit_button("Submit Daily Report"):
+            f_c1, f_c2 = st.columns(2)
+            submit_btn = f_c1.form_submit_button("Submit Daily Report")
+            email_btn = f_c2.form_submit_button("📧 Email Report to Admins")
+
+            if submit_btn or email_btn:
                 # Construct Report Data (No Photos)
                 report_payload = {
                     'id': f"r{datetime.datetime.now().timestamp()}",
@@ -1484,21 +1596,27 @@ def job_details_dialog(job_id):
                     'photos': todays_photos # Photos handled in other tab
                 }
 
-                if new_status == "Completed":
-                    # Set pending state and rerun to show confirmation UI
-                    st.session_state[f"completion_pending_{job['id']}"] = report_payload
+                if email_btn:
+                    # Trigger confirmation flow
+                    st.session_state[f"confirm_daily_send_{job['id']}"] = report_payload
                     st.rerun()
-                else:
-                    st.session_state.jobs[job_index]['reports'].append(report_payload)
-                    
-                    # Update Status
-                    if new_status != job['status']:
-                        st.session_state.jobs[job_index]['status'] = new_status
-                        st.session_state.briefing = "Data required to generate briefing."
-                    
-                    save_state()
-                    st.success("Daily Report Submitted!")
-                    st.rerun()
+
+                if submit_btn:
+                    if new_status == "Completed":
+                        # Set pending state and rerun to show confirmation UI
+                        st.session_state[f"completion_pending_{job['id']}"] = report_payload
+                        st.rerun()
+                    else:
+                        st.session_state.jobs[job_index]['reports'].append(report_payload)
+                        
+                        # Update Status
+                        if new_status != job['status']:
+                            st.session_state.jobs[job_index]['status'] = new_status
+                            st.session_state.briefing = "Data required to generate briefing."
+                        
+                        save_state()
+                        st.success("Daily Report Submitted!")
+                        st.rerun()
 
 # --- UI COMPONENTS ---
 
