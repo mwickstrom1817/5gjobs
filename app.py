@@ -386,11 +386,18 @@ def keep_awake():
             time.sleep(120) 
             
     # Check if thread is already running to avoid duplicates on rerun
+    # We use a new name to ensure we don't conflict with old zombie threads if any
+    thread_name = "keep_awake_v2"
+    
+    # Check for old threads and log them (we can't kill them easily, but good to know)
     for t in threading.enumerate():
         if t.name == "keep_awake_thread":
+            print(f"WARNING: Found zombie thread '{t.name}' still running.")
+        if t.name == thread_name:
             return
 
-    thread = threading.Thread(target=run, name="keep_awake_thread", daemon=True)
+    print(f"Starting {thread_name} background thread...")
+    thread = threading.Thread(target=run, name=thread_name, daemon=True)
     thread.start()
 
 def get_tech(tech_id):
@@ -1621,16 +1628,24 @@ def job_details_dialog(job_id):
                         todays_photos.extend(r['photos'])
             
             if todays_photos:
-                st.info(f"📸 {len(todays_photos)} photos taken today will be automatically attached to this report.")
-            else:
-                st.info("ℹ️ No photos found for today. Use the 'In-Progress' tab to add photos before submitting.")
+                st.info(f"📸 {len(todays_photos)} photos taken today via 'In-Progress' updates will be automatically attached.")
+            
+            # Allow adding more photos directly here
+            daily_photos = st.file_uploader("Attach Additional Photos (Optional)", accept_multiple_files=True, type=['png', 'jpg'], key=f"daily_up_{job_id}")
 
             f_c1, f_c2 = st.columns(2)
             submit_btn = f_c1.form_submit_button("Submit Daily Report")
             email_btn = f_c2.form_submit_button("📧 Email Report to Admins")
 
             if submit_btn or email_btn:
-                # Construct Report Data (No Photos)
+                # Process any new photos uploaded directly in this form
+                if daily_photos:
+                    for up_file in daily_photos:
+                        path = save_image_locally(up_file)
+                        if path:
+                            todays_photos.append(path)
+
+                # Construct Report Data
                 report_payload = {
                     'id': f"r{datetime.datetime.now().timestamp()}",
                     'techId': job['techId'] or 'unknown',
