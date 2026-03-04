@@ -359,34 +359,28 @@ def keep_awake():
         # Wait a bit for server to fully start
         time.sleep(10)
         
-        # List of potential endpoints to try
-        endpoints = [
-            "http://localhost:3000/_stcore/health",
-            "http://127.0.0.1:3000/_stcore/health",
-            "http://0.0.0.0:3000/_stcore/health",
-            "http://localhost:8501/_stcore/health",
-            "http://127.0.0.1:8501/_stcore/health"
-        ]
+        # Primary endpoint that we know works
+        primary_url = "http://localhost:8501/_stcore/health"
         
         while True:
-            success = False
-            for url in endpoints:
-                try:
-                    requests.get(url, timeout=5)
-                    msg = f"Keep-awake ping successful to {url}"
-                    # Only log to console periodically
-                    if datetime.datetime.now().minute % 10 == 0:
-                        print(f"{datetime.datetime.now()}: {msg}")
-                    logger.log(msg)
-                    success = True
-                    break # Stop trying other endpoints if one works
-                except Exception:
-                    continue # Try next endpoint
-            
-            if not success:
-                msg = "Keep-awake ping failed on all attempted endpoints."
-                print(f"{datetime.datetime.now()}: {msg}")
+            try:
+                requests.get(primary_url, timeout=5)
+                msg = f"Keep-awake ping successful to {primary_url}"
+                # Only log to console periodically
+                if datetime.datetime.now().minute % 10 == 0:
+                    print(f"{datetime.datetime.now()}: {msg}")
                 logger.log(msg)
+            except Exception as e:
+                # Fallback only if primary fails
+                try:
+                    fallback_url = "http://127.0.0.1:8501/_stcore/health"
+                    requests.get(fallback_url, timeout=5)
+                    msg = f"Primary ping failed, fallback successful to {fallback_url}"
+                    logger.log(msg)
+                except Exception:
+                    msg = f"Keep-awake ping failed: {e}"
+                    print(f"{datetime.datetime.now()}: {msg}")
+                    logger.log(msg)
             
             # Wait for next ping
             time.sleep(120) 
