@@ -1678,9 +1678,9 @@ def render_admin_panel():
         with c_log2:
             if st.button("⚡ Test Ping Now"):
                 endpoints = [
-                    "http://localhost:3000/_stcore/health",
-                    "http://127.0.0.1:3000/_stcore/health",
-                    "http://0.0.0.0:3000/_stcore/health",
+                    "http://localhost:8501/_stcore/health",
+                    "http://127.0.0.1:8501/_stcore/health",
+                    "http://0.0.0.0:8501/_stcore/health",
                     "http://localhost:8501/_stcore/health",
                     "http://127.0.0.1:8501/_stcore/health"
                 ]
