@@ -1843,7 +1843,7 @@ st.toast("State saved to disk.", icon="💾")
 st.divider()
     
     # Backup / Restore
-    st.subheader("Backup & Restore")
+st.subheader("Backup & Restore")
     c_bk1, c_bk2 = st.columns(2)
     
     with c_bk1:
