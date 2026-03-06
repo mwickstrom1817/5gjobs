@@ -306,7 +306,7 @@ if code:
                 st.experimental_set_query_params()
             except Exception:
                 pass
-        return None
+            return None
 
     # 4. Show Login Button
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
