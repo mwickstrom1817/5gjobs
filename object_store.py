@@ -28,6 +28,13 @@ def get_r2_client():
         if not endpoint_url:
             endpoint_url = os.environ.get("AWS_ENDPOINT_URL") or st.secrets.get("AWS_ENDPOINT_URL")
 
+    # Fallback to S3_ prefix (User specific config)
+    if not access_key_id:
+        access_key_id = os.environ.get("S3_ACCESS_KEY_ID") or st.secrets.get("S3_ACCESS_KEY_ID")
+        secret_access_key = os.environ.get("S3_SECRET_ACCESS_KEY") or st.secrets.get("S3_SECRET_ACCESS_KEY")
+        if not endpoint_url:
+            endpoint_url = os.environ.get("S3_ENDPOINT_URL") or st.secrets.get("S3_ENDPOINT_URL")
+
     if not (access_key_id and secret_access_key):
         return None
     
@@ -54,7 +61,9 @@ def get_r2_client():
     )
 
 def get_bucket_name():
-    return os.environ.get("R2_BUCKET_NAME") or st.secrets.get("R2_BUCKET_NAME") or os.environ.get("AWS_BUCKET_NAME") or st.secrets.get("AWS_BUCKET_NAME")
+    return os.environ.get("R2_BUCKET_NAME") or st.secrets.get("R2_BUCKET_NAME") or \
+           os.environ.get("AWS_BUCKET_NAME") or st.secrets.get("AWS_BUCKET_NAME") or \
+           os.environ.get("S3_BUCKET") or st.secrets.get("S3_BUCKET")
 
 def upload_bytes(data, key, content_type):
     """Uploads bytes to R2/S3."""
