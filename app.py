@@ -1787,16 +1787,16 @@ with c_bk2:
                 st.session_state.adminEmails = data.get("adminEmails", [])
                 st.session_state.last_reminder_date = data.get("last_reminder_date")
 
-            ensure_loaded_into_session()  # ✅ REQUIRED
-            _sync_session_to_db()
-            force_overwrite_from_session(invalidate_briefing=False)
+                ensure_loaded_into_session()  # ✅ REQUIRED
+                _sync_session_to_db()
+                force_overwrite_from_session(invalidate_briefing=False)
 
-            st.success("Data restored successfully (DB overwritten).")
-            st.rerun()
+                st.success("Data restored successfully (DB overwritten).")
+                st.rerun()
         else:
-            st.error("Invalid backup file format.")
-    except Exception as e:
-        st.error(f"Error restoring file: {e}")
+                st.error("Invalid backup file format.")
+        except Exception as e:
+            st.error(f"Error restoring file: {e}")
 
 st.divider()
     
