@@ -106,8 +106,27 @@ def init_db():
             
     except Exception as e:
         conn.rollback()
-        # Re-raise to ensure we know if initialization failed
-        raise e
+        # If migration failed, try nuclear option: Drop and Recreate
+        # This is a fallback for the specific error "column value does not exist" persisting
+        try:
+            with conn.cursor() as cur:
+                cur.execute("DROP TABLE IF EXISTS app_state;")
+                cur.execute("""
+                    CREATE TABLE app_state (
+                        key TEXT PRIMARY KEY,
+                        value JSONB,
+                        version SERIAL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute(
+                    "INSERT INTO app_state (key, value) VALUES (%s, %s)",
+                    ('global_state', json.dumps(DEFAULT_DATA))
+                )
+            conn.commit()
+        except Exception as e2:
+            conn.rollback()
+            raise e2
     finally:
         conn.close()
 
