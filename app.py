@@ -182,7 +182,7 @@ def save_state(invalidate_briefing=True):
         st.session_state.briefing = "Data required to generate briefing."
     _sync_session_to_db()
     commit_from_session(invalidate_briefing=invalidate_briefing)
-
+st.write("save_state is:", save_state.__code__.co_filename, save_state.__code__.co_firstlineno)
 # --- SESSION STATE INITIALIZATION ---
 if "jobs" not in st.session_state:
     db_data = load_data()
