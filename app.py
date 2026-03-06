@@ -220,44 +220,26 @@ TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12',
 # --- AUTHENTICATION ---
 
 def authenticate():
-    """Handles Google OAuth2 Flow. Returns user_info dict if logged in, else None."""
-    
-    # 1. If already logged in, return user info
-    if "user_info" in st.session_state:
-        return st.session_state.user_info
-
-    # 2. Setup OAuth Config
-    # Retrieve from secrets or env
-    client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
-    client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
-    redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI")
-
-    if not (client_id and client_secret and redirect_uri):
-        st.error("🔒 Google OAuth is not configured. Please add `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to `.streamlit/secrets.toml`.")
-        return None
-
-    # 3. Check for Auth Code from Google Redirect
-    # Compatibility with different Streamlit versions for query params
-    code = None
+# --- 3) Check for Auth Code from Google Redirect ---
+code = None
+try:
+    if "code" in st.query_params:
+        code = st.query_params["code"]
+except Exception:
     try:
-        if "code" in st.query_params:
-            code = st.query_params["code"]
-    except:
-        # Fallback for older Streamlit versions
-        try:
-            query_params = st.experimental_get_query_params()
-            code = query_params.get("code", [None])[0]
-        except:
-            pass
-
-if code:
-    # Prevent infinite loops if the URL keeps the same code param
-    if st.session_state.get("_oauth_last_code") == code:
-        st.warning("OAuth code already processed; ignoring to prevent rerun loop.")
+        query_params = st.experimental_get_query_params()
+        code = query_params.get("code", [None])[0]
+    except Exception:
         code = None
-    else:
-        st.session_state["_oauth_last_code"] = code
 
+# Prevent infinite loops if the URL keeps the same code param
+if code and st.session_state.get("_oauth_last_code") == code:
+    st.warning("OAuth code already processed; ignoring to prevent rerun loop.")
+    code = None
+elif code:
+    st.session_state["_oauth_last_code"] = code
+
+# If we have a code, try to exchange it for a token and fetch user info
 if code:
     try:
         token_url = "https://oauth2.googleapis.com/token"
@@ -268,7 +250,7 @@ if code:
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",
         }
-        r = requests.post(token_url, data=data)
+        r = requests.post(token_url, data=data, timeout=15)
         r.raise_for_status()
         tokens = r.json()
         access_token = tokens["access_token"]
@@ -283,7 +265,7 @@ if code:
 
         st.session_state.user_info = user_info
 
-        # Clear query params (new + old API) without exploding
+        # Clear query params so refresh doesn't keep re-processing the code
         try:
             st.query_params.clear()
         except Exception:
@@ -292,13 +274,12 @@ if code:
             except Exception:
                 pass
 
-        # Only rerun ONCE after successful login
         st.rerun()
 
     except Exception as e:
         st.error(f"Authentication Failed: {e}")
-        # Important: do NOT keep rerunning with the same bad code
-        # Clear query params so we can show the login button again
+
+        # Clear query params so we can show login again
         try:
             st.query_params.clear()
         except Exception:
@@ -306,47 +287,52 @@ if code:
                 st.experimental_set_query_params()
             except Exception:
                 pass
-    return None
 
-    # 4. Show Login Button
+        # Important: allow the function to continue to the login button UI
+        # (do NOT rerun here)
+        code = None
+
+# --- 4) Show Login Button ---
 auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
 params = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "openid email profile",
-        "access_type": "online", # Use online to avoid refresh token complexity unless needed
-        "prompt": "select_account" # Force account selection to avoid auto-selecting wrong account
+    "client_id": client_id,
+    "redirect_uri": redirect_uri,
+    "response_type": "code",
+    "scope": "openid email profile",
+    "access_type": "online",
+    "prompt": "select_account",
 }
-    
 login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
-st.markdown(f"""
-       <div class="login-container">
-           <div class="login-box">
-               <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
-               <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
-               <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
-                   display: inline-block;
-                   background-color: #DB4437; 
-                   color: white; 
-                   padding: 12px 24px; 
-                   text-decoration: none; 
-                   border-radius: 6px; 
-                   font-weight: bold;
-                   font-family: sans-serif;
-                   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-               ">
-                   Sign in with Google
-               </a>
-               <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
-                   Ensure <code>{redirect_uri}</code> is added to <br/>
-                   "Authorized redirect URIs" in Google Cloud Console.
-               </p>
-           </div>
-       </div>
-   """, unsafe_allow_html=True)
-    
+st.markdown(
+    f"""
+    <div class="login-container">
+        <div class="login-box">
+            <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
+            <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
+            <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
+                display: inline-block;
+                background-color: #DB4437;
+                color: white;
+                padding: 12px 24px;
+                text-decoration: none;
+                border-radius: 6px;
+                font-weight: bold;
+                font-family: sans-serif;
+                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            ">
+                Sign in with Google
+            </a>
+            <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
+                Ensure <code>{redirect_uri}</code> is added to <br/>
+                "Authorized redirect URIs" in Google Cloud Console.
+            </p>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 return None
 
 def logout():
