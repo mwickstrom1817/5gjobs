@@ -168,73 +168,23 @@ def save_state(invalidate_briefing=True):
     _sync_session_to_db()
     commit_from_session(invalidate_briefing=invalidate_briefing)
 
-# Define Image Storage Directory
-IMAGES_DIR = os.path.join(os.getcwd(), "job_photos")
-os.makedirs(IMAGES_DIR, exist_ok=True)
-
-def load_data():
-    """Loads data from the local JSON file."""
-    default_data = {
-        "jobs": [],
-        "techs": [],
-        "locations": [],
-        "briefing": "Data required to generate briefing.",
-        "adminEmails": [],
-        "last_reminder_date": None
-    }
-    
-    if not os.path.exists(DB_FILE):
-        return default_data
-        
-    try:
-        with open(DB_FILE, "r") as f:
-            data = json.load(f)
-            # Ensure all keys exist
-            for k, v in default_data.items():
-                if k not in data:
-                    data[k] = v
-            return data
-    except (json.JSONDecodeError, IOError):
-        return default_data
-
-def save_state(invalidate_briefing=True):
-    """Saves the current session state (relevant parts) to JSON."""
-    if invalidate_briefing:
-        st.session_state.briefing = "Data required to generate briefing."
-
-    data = {
-        "jobs": st.session_state.jobs,
-        "techs": st.session_state.techs,
-        "locations": st.session_state.locations,
-        "briefing": st.session_state.briefing,
-        "adminEmails": st.session_state.adminEmails,
-        "last_reminder_date": st.session_state.get("last_reminder_date")
-    }
-    try:
-        with open(DB_FILE, "w") as f:
-            json.dump(data, f, indent=2)
-    except IOError as e:
-        st.error(f"Failed to save data: {e}")
-
 # --- SESSION STATE INITIALIZATION ---
-if 'jobs' not in st.session_state:
+if "jobs" not in st.session_state:
     db_data = load_data()
-    st.session_state.jobs = db_data['jobs']
-    st.session_state.techs = db_data['techs']
-    st.session_state.locations = db_data['locations']
-    st.session_state.briefing = db_data['briefing']
-    st.session_state.adminEmails = db_data['adminEmails']
-    st.session_state.last_reminder_date = db_data.get('last_reminder_date')
-    
-    if st.session_state.get('force_reload'):
-        del st.session_state['force_reload']
-        st.toast("Data reloaded from disk!", icon="🔄")
+    st.session_state.jobs = db_data["jobs"]
+    st.session_state.techs = db_data["techs"]
+    st.session_state.locations = db_data["locations"]
+    st.session_state.briefing = db_data["briefing"]
+    st.session_state.adminEmails = db_data["adminEmails"]
+    st.session_state.last_reminder_date = db_data.get("last_reminder_date")
 
-if 'chat_history' not in st.session_state:
+if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
-        {"role": "model", "parts": ["Hello! I have access to your database. Ask me about active jobs, tech locations, or history."]}
+        {
+            "role": "model",
+            "parts": ["Hello! I have access to your database. Ask me about active jobs, tech locations, or history."]
+        }
     ]
-
 # Tech Colors for UI
 TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12', '#292524']
 
@@ -460,26 +410,6 @@ def resolve_image_source(photo_source: str):
 def save_image_locally(uploaded_file):
     """Uploads an uploaded file/camera input to R2 and returns the object key."""
     return upload_streamlit_file(uploaded_file, folder="photos")
-    
-    # Determine extension
-    if hasattr(uploaded_file, 'name') and uploaded_file.name:
-         file_ext = os.path.splitext(uploaded_file.name)[1]
-         if not file_ext: file_ext = ".jpg"
-    else:
-         file_ext = ".jpg" # Default for camera input
-    
-    # Create unique filename
-    file_id = f"img_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.urandom(4).hex()}{file_ext}"
-    file_path = os.path.join(IMAGES_DIR, file_id)
-    
-    # Save to disk
-    try:
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        return file_path
-    except Exception as e:
-        st.error(f"Failed to save image: {e}")
-        return None
 
 def get_google_maps_url(address):
     """Generates a Google Maps Search URL based on address."""
@@ -603,26 +533,26 @@ def generate_job_pdf(job, tech, location, report):
     """Generates a PDF bytes object for the completed job."""
     if not HAS_REPORTLAB:
         return None
-        
+
     buffer = BytesIO()
     p = canvas.Canvas(buffer, pagesize=letter)
     width, height = letter
-    
+
     # Title
     p.setFillColor(colors.darkred)
     p.setFont("Helvetica-Bold", 20)
     p.drawString(50, height - 50, "5G Security - Job Completion Report")
-    
+
     p.setFillColor(colors.black)
     p.setFont("Helvetica", 10)
     p.drawString(50, height - 65, f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    
+
     # Job Info
     y = height - 100
     p.setFont("Helvetica-Bold", 12)
     p.drawString(50, y, "JOB DETAILS")
-    p.line(50, y-5, width-50, y-5)
-    
+    p.line(50, y - 5, width - 50, y - 5)
+
     y -= 25
     p.setFont("Helvetica", 11)
     p.drawString(50, y, f"Title: {job['title']}")
@@ -632,69 +562,69 @@ def generate_job_pdf(job, tech, location, report):
     p.drawString(50, y, f"Tech Assigned: {tech['name'] if tech else 'Unassigned'}")
     y -= 15
     p.drawString(50, y, f"Status: {job['status']}")
-    
+
     # Report Data
     y -= 40
     p.setFont("Helvetica-Bold", 12)
     p.drawString(50, y, "FIELD REPORT DATA")
-    p.line(50, y-5, width-50, y-5)
-    
+    p.line(50, y - 5, width - 50, y - 5)
+
     y -= 25
     p.setFont("Helvetica", 11)
-    
+
     data_points = [
         f"Techs On Site: {report.get('techsOnSite', 'N/A')}",
         f"Time Arrived: {report.get('timeArrived', 'N/A')}",
         f"Time Finished: {report.get('timeDeparted', 'N/A')}",
         f"Hours Worked: {report.get('hoursWorked', 'N/A')}",
         f"Parts Used: {report.get('partsUsed', 'N/A')}",
-        f"Billable Items: {report.get('billableItems', 'N/A')}"
+        f"Billable Items: {report.get('billableItems', 'N/A')}",
     ]
-    
+
     for point in data_points:
         p.drawString(50, y, point)
         y -= 20
 
     # AI Summary
-    ai_summary = report.get('ai_summary')
+    ai_summary = report.get("ai_summary")
     if ai_summary:
         y -= 20
         p.setFont("Helvetica-Bold", 12)
         p.drawString(50, y, "WORK SUMMARY (AI Generated)")
-        p.line(50, y-5, width-50, y-5)
+        p.line(50, y - 5, width - 50, y - 5)
         y -= 20
         p.setFont("Helvetica-Oblique", 10)
-        
-        # Wrapping logic for summary
+
         text_object = p.beginText(50, y)
-        max_width = 80  # approx characters
+        max_width = 80
         words = ai_summary.split()
         current_line = []
         line_count = 0
-        
+
         for word in words:
             current_line.append(word)
             if len(" ".join(current_line)) > max_width:
                 text_object.textLine(" ".join(current_line[:-1]))
                 current_line = [word]
                 line_count += 1
+
         if current_line:
             text_object.textLine(" ".join(current_line))
             line_count += 1
-            
+
         p.drawText(text_object)
-        y -= (line_count * 14) + 10 # Adjust Y based on lines drawn
-        
+        y -= (line_count * 14) + 10
+
     # Completion Checklist
-    checklist = report.get('completion_checklist')
+    checklist = report.get("completion_checklist")
     if checklist:
         y -= 20
         p.setFont("Helvetica-Bold", 12)
         p.drawString(50, y, "COMPLETION CHECKLIST")
-        p.line(50, y-5, width-50, y-5)
+        p.line(50, y - 5, width - 50, y - 5)
         y -= 20
         p.setFont("Helvetica", 10)
-        
+
         for item in checklist:
             p.drawString(50, y, f"[x] {item}")
             y -= 15
@@ -703,84 +633,101 @@ def generate_job_pdf(job, tech, location, report):
     y -= 20
     p.setFont("Helvetica-Bold", 12)
     p.drawString(50, y, "TECHNICIAN NOTES")
-    p.line(50, y-5, width-50, y-5)
+    p.line(50, y - 5, width - 50, y - 5)
     y -= 25
     p.setFont("Helvetica", 10)
-    
-    notes = report.get('content', '')
-    # Basic wrapping
+
+    notes = report.get("content", "")
     text_object = p.beginText(50, y)
     text_object.setFont("Helvetica", 10)
-    
-    max_width = 80  # approx characters
+
+    max_width = 80
     words = notes.split()
     current_line = []
-    
+
     for word in words:
         current_line.append(word)
         if len(" ".join(current_line)) > max_width:
             text_object.textLine(" ".join(current_line))
             current_line = []
+
     if current_line:
         text_object.textLine(" ".join(current_line))
-        
+
     p.drawText(text_object)
-    
+
     # Signature
-    signature_key = report.get('signature_key')
-if signature_key:
-    try:
-        sig_url = get_view_url(signature_key, expires_seconds=3600)
-        sig_bytes = requests.get(sig_url, timeout=10).content
-        sig_reader = ImageReader(BytesIO(sig_bytes))
+    signature_key = report.get("signature_key")
+    if signature_key:
+        try:
+            sig_url = get_view_url(signature_key, expires_seconds=3600)
+            sig_bytes = requests.get(sig_url, timeout=10).content
+            sig_reader = ImageReader(BytesIO(sig_bytes))
 
-        y -= 60
-        p.drawImage(sig_reader, 50, y, width=150, height=50, mask='auto')
-        p.setFont("Helvetica-Oblique", 8)
-        p.drawString(50, y-10, "Customer Digital Signature")
-        y -= 20
-    except Exception as e:
-        print(f"Error adding signature to PDF: {e}")
+            y -= 60
+            p.drawImage(sig_reader, 50, y, width=150, height=50, mask="auto")
+            p.setFont("Helvetica-Oblique", 8)
+            p.drawString(50, y - 10, "Customer Digital Signature")
+            y -= 20
+        except Exception as e:
+            print(f"Error adding signature to PDF: {e}")
 
-for photo_key in photos:
-    try:
-        photo_url = get_view_url(photo_key, expires_seconds=3600)
-        img_bytes = requests.get(photo_url, timeout=15).content
-        img_reader = ImageReader(BytesIO(img_bytes))
+    # Photos Section
+    photos = report.get("photos", [])
+    if photos:
+        p.showPage()
 
-        # Check for page break
-        if y - img_height < 50:
-            p.showPage()
-            y = height - 50
-            p.setFont("Helvetica-Bold", 14)
-            p.drawString(50, y, "SITE PHOTOS (Cont.)")
-            y -= 30
-            col = 0
+        y = height - 50
+        p.setFont("Helvetica-Bold", 14)
+        p.drawString(50, y, "SITE PHOTOS")
+        y -= 30
 
-        x = x_start + (col * (img_width + gap_x))
-        draw_y = y - img_height
+        x_start = 50
+        img_width = 250
+        img_height = 200
+        gap_x = 20
+        gap_y = 20
 
-        p.drawImage(
-            img_reader,
-            x,
-            draw_y,
-            width=img_width,
-            height=img_height,
-            preserveAspectRatio=True,
-            anchor='c'
-        )
+        col = 0
 
-        col += 1
-        if col > 1:  # 2 columns
-            col = 0
-            y -= (img_height + gap_y)
+        for photo_key in photos:
+            try:
+                photo_url = get_view_url(photo_key, expires_seconds=3600)
+                img_bytes = requests.get(photo_url, timeout=15).content
+                img_reader = ImageReader(BytesIO(img_bytes))
 
-    except Exception as e:
-        print(f"Error adding remote photo to PDF: {e}")
+                if y - img_height < 50:
+                    p.showPage()
+                    y = height - 50
+                    p.setFont("Helvetica-Bold", 14)
+                    p.drawString(50, y, "SITE PHOTOS (Cont.)")
+                    y -= 30
+                    col = 0
+
+                x = x_start + (col * (img_width + gap_x))
+                draw_y = y - img_height
+
+                p.drawImage(
+                    img_reader,
+                    x,
+                    draw_y,
+                    width=img_width,
+                    height=img_height,
+                    preserveAspectRatio=True,
+                    anchor="c",
+                )
+
+                col += 1
+                if col > 1:
+                    col = 0
+                    y -= (img_height + gap_y)
+
+            except Exception as e:
+                print(f"Error adding remote photo to PDF: {e}")
 
     p.showPage()
     p.save()
-    
+
     buffer.seek(0)
     return buffer.getvalue()
 
@@ -1325,24 +1272,19 @@ def render_completion_confirmation(job_index, report_payload):
     job = st.session_state.jobs[job_index]
     st.write(f"**Job:** {job['title']}")
     st.warning("You are marking this job as **Completed**. This will archive the job and notify admins.")
-    
+
     st.write("#### ✅ Completion Checklist")
-    
-    # We use a form for the checklist and notes, but the canvas needs to be outside 
-    # because custom components inside forms can be tricky with state updates.
-    # However, for simplicity, we'll try to keep it together or manage state carefully.
-    
+
     c1 = st.checkbox("🧹 Messes Cleaned")
     c2 = st.checkbox("🧱 Tiles Replaced")
     c3 = st.checkbox("🗑️ Trash Taken Out")
-    
+
     st.write("#### ✍️ Customer Signature")
     signature_data = None
-    
+
     if HAS_CANVAS:
-        # Canvas for signature
         canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",  # Fixed fill color with some opacity
+            fill_color="rgba(255, 165, 0, 0.3)",
             stroke_width=2,
             stroke_color="#000000",
             background_color="#ffffff",
@@ -1351,82 +1293,78 @@ def render_completion_confirmation(job_index, report_payload):
             drawing_mode="freedraw",
             key=f"sig_canvas_{job['id']}",
         )
-        
+
         if canvas_result.image_data is not None:
             signature_data = canvas_result.image_data
     else:
         st.warning("Signature pad not available (library missing). Please type name below.")
         signed_name = st.text_input("Customer Name (Signed)")
-    
+
     st.write("#### 📝 Final Notes")
     final_note = st.text_area("Add any final closing notes (optional):")
-    
+
     c_confirm, c_cancel = st.columns(2)
-    
+
     if c_confirm.button("Confirm & Close Job", type="primary"):
-        # Update report payload with checklist
         checklist = []
-        if c1: checklist.append("Messes Cleaned")
-        if c2: checklist.append("Tiles Replaced")
-        if c3: checklist.append("Trash Taken Out")
-        
-       # Handle Signature (R2)
-if HAS_CANVAS and signature_data is not None:
-    # Basic "not empty" check
-    if signature_data.sum() > 0:
-        try:
-            # signature_data is a numpy array (H, W, 4) RGBA
-            img = Image.fromarray(signature_data.astype("uint8"), "RGBA")
+        if c1:
+            checklist.append("Messes Cleaned")
+        if c2:
+            checklist.append("Tiles Replaced")
+        if c3:
+            checklist.append("Trash Taken Out")
 
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            buf.seek(0)
+        # Handle Signature (R2)
+        if HAS_CANVAS and signature_data is not None:
+            if signature_data.sum() > 0:
+                try:
+                    img = Image.fromarray(signature_data.astype("uint8"), "RGBA")
+                    buf = io.BytesIO()
+                    img.save(buf, format="PNG")
+                    buf.seek(0)
 
-            sig_key = f"signatures/{job['id']}_{datetime.datetime.utcnow().timestamp()}.png"
-            upload_bytes(buf.getvalue(), sig_key, content_type="image/png")
+                    sig_key = f"signatures/{job['id']}_{datetime.datetime.utcnow().timestamp()}.png"
+                    upload_bytes(buf.getvalue(), sig_key, content_type="image/png")
 
-            report_payload["signature_key"] = sig_key
-            checklist.append("Customer Signed (Digital)")
-        except Exception as e:
-            st.error(f"Error uploading signature: {e}")
+                    report_payload["signature_key"] = sig_key
+                    checklist.append("Customer Signed (Digital)")
+                except Exception as e:
+                    st.error(f"Error uploading signature: {e}")
+        elif not HAS_CANVAS and "signed_name" in locals() and signed_name:
+            checklist.append(f"Customer Signed: {signed_name}")
 
-        report_payload['completion_checklist'] = checklist
-        
+        report_payload["completion_checklist"] = checklist
+
         if final_note:
-            report_payload['content'] += f"\n\n[Closing Note]: {final_note}"
-        
-        # Generate AI Summary if content exists
-        if report_payload.get('content'):
-             with st.spinner("Generating AI Summary..."):
-                 summary = generate_technician_summary(report_payload['content'], job['title'])
-                 if summary:
-                     report_payload['ai_summary'] = summary
+            report_payload["content"] += f"\n\n[Closing Note]: {final_note}"
 
-        # Update Job State
-        st.session_state.jobs[job_index]['reports'].append(report_payload)
-        st.session_state.jobs[job_index]['status'] = 'Completed'
+        if report_payload.get("content"):
+            with st.spinner("Generating AI Summary..."):
+                summary = generate_technician_summary(report_payload["content"], job["title"])
+                if summary:
+                    report_payload["ai_summary"] = summary
+
+        st.session_state.jobs[job_index]["reports"].append(report_payload)
+        st.session_state.jobs[job_index]["status"] = "Completed"
         st.session_state.briefing = "Data required to generate briefing."
-        
-        # Send Email
-        tech = get_tech(job['techId'])
-        loc = get_location(job['locationId'])
+
+        tech = get_tech(job["techId"])
+        loc = get_location(job["locationId"])
         send_completion_email(job, tech, loc, report_payload)
-        
+
         save_state()
-        
-        # Clear pending state
+
         if f"completion_pending_{job['id']}" in st.session_state:
             del st.session_state[f"completion_pending_{job['id']}"]
-            
+
         st.success("Job Completed & Closed!")
         st.rerun()
-        
+
     if c_cancel.button("Cancel"):
-        # Clear pending state
         if f"completion_pending_{job['id']}" in st.session_state:
             del st.session_state[f"completion_pending_{job['id']}"]
         st.rerun()
-
+        
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
     # Find job directly from session state
@@ -1772,57 +1710,6 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
                 job_details_dialog(job['id'])
 
-def render_analytics_dashboard():
-    st.subheader("📊 Analytics Dashboard")
-    
-    if not st.session_state.jobs:
-        st.info("No job data available for analytics.")
-        return
-
-    # Prepare DataFrames
-    df_jobs = pd.DataFrame(st.session_state.jobs)
-    
-    # 1. High-Level Metrics
-    c1, c2, c3, c4 = st.columns(4)
-    total_jobs = len(df_jobs)
-    completed_jobs = len(df_jobs[df_jobs['status'] == 'Completed'])
-    active_jobs = total_jobs - completed_jobs
-    completion_rate = int((completed_jobs / total_jobs) * 100) if total_jobs > 0 else 0
-    
-    c1.metric("Total Jobs", total_jobs)
-    c2.metric("Active", active_jobs)
-    c3.metric("Completed", completed_jobs)
-    c4.metric("Completion Rate", f"{completion_rate}%")
-    
-    st.divider()
-    
-    c_charts1, c_charts2 = st.columns(2)
-    
-    with c_charts1:
-        st.markdown("**Jobs by Status**")
-        status_counts = df_jobs['status'].value_counts()
-        st.bar_chart(status_counts, color="#b91c1c")
-        
-    with c_charts2:
-        st.markdown("**Jobs by Priority**")
-        priority_counts = df_jobs['priority'].value_counts()
-        # Custom color mapping if possible, else default
-        st.bar_chart(priority_counts, color="#ea580c")
-
-    st.divider()
-    
-    # Tech Performance
-    st.markdown("**Technician Performance (Completed Jobs)**")
-    
-    tech_perf = []
-    for tech in st.session_state.techs:
-        count = len([j for j in st.session_state.jobs if j['techId'] == tech['id'] and j['status'] == 'Completed'])
-        tech_perf.append({"Technician": tech['name'], "Completed Jobs": count})
-    
-    if tech_perf:
-        df_tech = pd.DataFrame(tech_perf).set_index("Technician")
-        st.bar_chart(df_tech, color="#15803d")
-
 def render_admin_panel():
     st.subheader("Database Management")
     st.info(f"📁 **Data File Location:** `{DB_FILE}`")
@@ -1940,9 +1827,92 @@ st.subheader("Backup & Restore")
     st.divider()
 
     # --- ADMIN ACCESS MANAGEMENT ---
+def render_admin_panel():
+    st.subheader("Database Management")
+
+    c_db1, c_db2 = st.columns(2)
+
+    with c_db1:
+        if st.button("🔄 Reload Data from DB"):
+            state, ver = load_state()
+            st.session_state.db = state
+            st.session_state._db_version = ver
+            st.session_state.jobs = state["jobs"]
+            st.session_state.techs = state["techs"]
+            st.session_state.locations = state["locations"]
+            st.session_state.briefing = state["briefing"]
+            st.session_state.adminEmails = state["adminEmails"]
+            st.session_state.last_reminder_date = state.get("last_reminder_date")
+            st.toast("Reloaded from DB.", icon="🔄")
+            st.rerun()
+
+    with c_db2:
+        if st.button("💾 Save to DB"):
+            _sync_session_to_db()
+            commit_from_session(invalidate_briefing=False)
+            st.toast("Saved to DB.", icon="💾")
+
+    st.divider()
+
+    st.subheader("Backup & Restore")
+    c_bk1, c_bk2 = st.columns(2)
+
+    with c_bk1:
+        csv_data = download_data_as_csv()
+        if csv_data:
+            st.download_button(
+                label="📥 Download Jobs CSV",
+                data=csv_data,
+                file_name=f"jobs_export_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+            )
+        else:
+            st.button("📥 Download Jobs CSV", disabled=True)
+
+        json_data = download_data_as_json()
+        st.download_button(
+            label="📦 Download Full Backup (JSON)",
+            data=json_data,
+            file_name=f"backup_{datetime.datetime.now().strftime('%Y%m%d')}.json",
+            mime="application/json",
+        )
+
+    with c_bk2:
+        uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"])
+        if uploaded_file is not None:
+            if st.button("⚠️ Restore from Backup"):
+                try:
+                    data = json.load(uploaded_file)
+                    required_keys = ["jobs", "techs", "locations"]
+
+                    if all(k in data for k in required_keys):
+                        st.session_state.jobs = data["jobs"]
+                        st.session_state.techs = data["techs"]
+                        st.session_state.locations = data["locations"]
+                        st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
+                        st.session_state.adminEmails = data.get("adminEmails", [])
+                        st.session_state.last_reminder_date = data.get("last_reminder_date")
+
+                        _sync_session_to_db()
+                        force_overwrite_from_session(invalidate_briefing=False)
+
+                        st.success("Data restored successfully (DB overwritten).")
+                        st.rerun()
+                    else:
+                        st.error("Invalid backup file format.")
+                except Exception as e:
+                    st.error(f"Error restoring file: {e}")
+
+    st.divider()
+
+    with st.expander("📊 View Analytics Dashboard", expanded=False):
+        render_analytics_dashboard()
+
+    st.divider()
+
     st.subheader("🛡️ Admin Access")
     st.caption("Users listed here have full access to settings and can create jobs.")
-    
+
     with st.form("add_admin_form"):
         col_ad1, col_ad2 = st.columns([3, 1])
         new_admin = col_ad1.text_input("New Admin Email", placeholder="user@company.com")
@@ -1954,7 +1924,7 @@ st.subheader("Backup & Restore")
                 st.rerun()
             elif new_admin in st.session_state.adminEmails:
                 st.warning("Email already exists.")
-    
+
     for email in st.session_state.adminEmails:
         c_e1, c_e2 = st.columns([4, 1])
         c_e1.write(f"• {email}")
@@ -1968,16 +1938,17 @@ st.subheader("Backup & Restore")
 
     st.divider()
 
-    # --- EMAIL CONFIGURATION SECTION ---
     st.subheader("📧 Email Configuration")
     with st.expander("Configure SMTP Settings", expanded=False):
         st.info("Settings entered here apply to the current session only. For permanent setup, add to `.streamlit/secrets.toml`.")
-        
-        # Helper to get current value for display
-        session_config = st.session_state.get('smtp_settings', {})
+
+        session_config = st.session_state.get("smtp_settings", {})
+
         def get_val(key, default=""):
-            if session_config.get(key): return session_config.get(key)
-            if key in st.secrets: return st.secrets[key]
+            if session_config.get(key):
+                return session_config.get(key)
+            if key in st.secrets:
+                return st.secrets[key]
             return os.getenv(key) or default
 
         with st.form("smtp_config_form"):
@@ -1986,21 +1957,20 @@ st.subheader("Backup & Restore")
             new_port = c_smtp2.text_input("SMTP Port", value=get_val("SMTP_PORT", "587"))
             new_email = st.text_input("Sender Email", value=get_val("SMTP_EMAIL"))
             new_pass = st.text_input("Sender Password", type="password", value=get_val("SMTP_PASSWORD"))
-            
+
             if st.form_submit_button("Save Email Settings"):
                 st.session_state.smtp_settings = {
                     "SMTP_SERVER": new_server,
                     "SMTP_PORT": new_port,
                     "SMTP_EMAIL": new_email,
-                    "SMTP_PASSWORD": new_pass
+                    "SMTP_PASSWORD": new_pass,
                 }
                 st.success("Email settings updated for this session!")
 
     st.divider()
-    
+
     c1, c2 = st.columns(2)
-    
-    # Tech Management
+
     with c1:
         st.subheader("Manage Technicians")
         with st.form("add_tech"):
@@ -2010,83 +1980,84 @@ st.subheader("Backup & Restore")
                 if t_name and t_email:
                     initials = "".join([n[0] for n in t_name.split()]).upper()[:2]
                     color = TECH_COLORS[len(st.session_state.techs) % len(TECH_COLORS)]
-                    st.session_state.techs.append({
-                        'id': f"t{datetime.datetime.now().timestamp()}",
-                        'name': t_name, 'email': t_email, 'initials': initials, 'color': color
-                    })
-                    save_state() # Save changes
+                    st.session_state.techs.append(
+                        {
+                            "id": f"t{datetime.datetime.now().timestamp()}",
+                            "name": t_name,
+                            "email": t_email,
+                            "initials": initials,
+                            "color": color,
+                        }
+                    )
+                    save_state()
                     st.rerun()
-        
+
         st.markdown("---")
         for t in st.session_state.techs:
             st.markdown(f"**{t['name']}** ({t['email']})")
             if st.button("Remove", key=f"rm_t_{t['id']}"):
                 st.session_state.techs.remove(t)
-                save_state() # Save changes
+                save_state()
                 st.rerun()
 
-    # Location Management
     with c2:
         st.subheader("Manage Locations")
-        
-        # Initialize session state for new location inputs if not present
-        if 'new_loc_name' not in st.session_state:
+
+        if "new_loc_name" not in st.session_state:
             st.session_state.new_loc_name = ""
-        if 'new_loc_addr' not in st.session_state:
+        if "new_loc_addr" not in st.session_state:
             st.session_state.new_loc_addr = ""
 
         st.text_input("Location Name", key="new_loc_name")
-        
+
         col_addr, col_btn = st.columns([3, 1])
         with col_addr:
             st.text_input("Address", key="new_loc_addr")
         with col_btn:
-            st.write("") # Spacer
-            st.write("") # Spacer
-            
+            st.write("")
+            st.write("")
+
             def auto_complete_callback():
                 if st.session_state.new_loc_addr:
                     suggestion = suggest_address_with_gemini(st.session_state.new_loc_addr)
                     if suggestion:
                         st.session_state.new_loc_addr = suggestion
-            
+
             st.button("✨ Auto-Complete", help="Use AI to complete address", on_click=auto_complete_callback)
 
         def add_location_callback():
             l_name = st.session_state.new_loc_name
             l_addr = st.session_state.new_loc_addr
-            
+
             if l_name and l_addr:
                 map_url = get_google_maps_url(l_addr)
-
                 new_loc = {
-                    'id': f"l{datetime.datetime.now().timestamp()}",
-                    'name': l_name, 
-                    'address': l_addr,
-                    'mapsUrl': map_url
+                    "id": f"l{datetime.datetime.now().timestamp()}",
+                    "name": l_name,
+                    "address": l_addr,
+                    "mapsUrl": map_url,
                 }
 
                 st.session_state.locations.append(new_loc)
-                # Clear inputs
                 st.session_state.new_loc_name = ""
                 st.session_state.new_loc_addr = ""
-                save_state() # Save changes
+                save_state()
                 st.toast(f"Added location: {l_name}", icon="✅")
             else:
                 st.toast("Please enter both Name and Address.", icon="⚠️")
 
         st.button("Add Location", type="primary", on_click=add_location_callback)
-        
+
         st.markdown("---")
         for l in st.session_state.locations:
-            if l.get('mapsUrl'):
+            if l.get("mapsUrl"):
                 st.markdown(f"**[{l['name']}]({l['mapsUrl']})** - {l['address']}")
             else:
                 st.markdown(f"**{l['name']}** - {l['address']}")
 
             if st.button("Remove", key=f"rm_l_{l['id']}"):
                 st.session_state.locations.remove(l)
-                save_state() # Save changes
+                save_state()
                 st.rerun()
 
 def render_analytics_dashboard():
