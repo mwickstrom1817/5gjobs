@@ -2042,6 +2042,35 @@ def render_admin_panel():
 
     st.divider()
 
+    # --- STORAGE DEBUGGER ---
+    st.subheader("☁️ Storage Debugger (R2/S3)")
+    with st.expander("Test Storage Connection", expanded=False):
+        st.caption("Use this to troubleshoot photo upload issues.")
+        
+        from object_store import get_r2_client, get_bucket_name, HAS_BOTO3
+        
+        if not HAS_BOTO3:
+            st.error("❌ `boto3` library is missing. Cannot connect to storage.")
+        else:
+            if st.button("Test Connection"):
+                try:
+                    s3 = get_r2_client()
+                    bucket = get_bucket_name()
+                    
+                    if not s3:
+                        st.error("❌ Failed to initialize S3 client. Check credentials (R2_ACCESS_KEY_ID, etc).")
+                    elif not bucket:
+                        st.error("❌ Bucket name is missing (R2_BUCKET_NAME).")
+                    else:
+                        # Try listing objects (lightweight check)
+                        s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
+                        st.success(f"✅ Successfully connected to bucket: `{bucket}`")
+                        st.toast("Storage connection verified!", icon="✅")
+                except Exception as e:
+                    st.error(f"❌ Connection failed: {e}")
+
+    st.divider()
+
     # --- ANALYTICS ---
     with st.expander("📊 View Analytics Dashboard", expanded=False):
         render_analytics_dashboard()
