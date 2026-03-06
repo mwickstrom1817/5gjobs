@@ -1842,6 +1842,39 @@ def render_admin_panel():
                 seen.add(l['id'])
             save_state(invalidate_briefing=False)
 
+    # --- ADMIN ACCESS MANAGEMENT ---
+    st.subheader("🔑 Admin Access Management")
+    with st.expander("Manage Admin Emails", expanded=False):
+        st.write("Add emails that are allowed to access this Admin Panel.")
+        
+        # Add Admin
+        with st.form("add_admin_form"):
+            new_admin_email = st.text_input("New Admin Email")
+            if st.form_submit_button("Add Admin"):
+                if new_admin_email and "@" in new_admin_email:
+                    if new_admin_email not in st.session_state.adminEmails:
+                        st.session_state.adminEmails.append(new_admin_email)
+                        save_state(invalidate_briefing=False)
+                        st.success(f"Added {new_admin_email}")
+                        st.rerun()
+                    else:
+                        st.warning("Email already exists.")
+                else:
+                    st.error("Invalid email.")
+
+        # List / Remove Admins
+        if st.session_state.adminEmails:
+            st.write("###### Current Admins")
+            for email in st.session_state.adminEmails:
+                c1, c2 = st.columns([4, 1])
+                c1.write(email)
+                if c2.button("🗑️", key=f"del_admin_{email}"):
+                    st.session_state.adminEmails.remove(email)
+                    save_state(invalidate_briefing=False)
+                    st.rerun()
+
+    st.divider()
+
     # --- SMTP CONFIG ---
     st.subheader("📧 SMTP Configuration")
     with st.expander("Configure Email Settings", expanded=False):
