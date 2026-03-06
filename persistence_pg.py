@@ -41,6 +41,27 @@ def init_db():
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            # Check if table exists
+            cur.execute("SELECT to_regclass('app_state');")
+            if cur.fetchone()[0]:
+                # Table exists, check for 'key' column
+                cur.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name='app_state' AND column_name='key';
+                """)
+                if not cur.fetchone():
+                    # 'key' column missing. Check for 'id'
+                    cur.execute("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name='app_state' AND column_name='id';
+                    """)
+                    if cur.fetchone():
+                        # Rename 'id' to 'key'
+                        cur.execute("ALTER TABLE app_state RENAME COLUMN id TO key;")
+                        conn.commit()
+
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS app_state (
                     key TEXT PRIMARY KEY,
