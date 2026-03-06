@@ -147,7 +147,10 @@ st.markdown("""
 def init_db_session():
     """Ensures st.session_state.db and st.session_state._db_version exist."""
     try:
-        ensure_loaded_into_session()
+        ensure_loaded_into_session()  # <-- add this line
+        _sync_session_to_db()
+        force_overwrite_from_session(invalidate_briefing=False)
+        
     except Exception as e:
         # If DB is down, app can still run in a degraded mode
         print(f"DB init warning: {e}")
@@ -162,10 +165,6 @@ def load_data():
     # make a copy to avoid accidental reference weirdness
     data = dict(st.session_state.db)
     return data
-
-ensure_loaded_into_session()  # <-- add this line
-_sync_session_to_db()
-force_overwrite_from_session(invalidate_briefing=False)
 
 def _sync_session_to_db():
     """Push your convenience session_state fields into st.session_state.db before saving."""
