@@ -250,45 +250,63 @@ def authenticate():
         except:
             pass
 
-    if code:
+if code:
+    # Prevent infinite loops if the URL keeps the same code param
+    if st.session_state.get("_oauth_last_code") == code:
+        st.warning("OAuth code already processed; ignoring to prevent rerun loop.")
+        code = None
+    else:
+        st.session_state["_oauth_last_code"] = code
+
+if code:
+    try:
+        token_url = "https://oauth2.googleapis.com/token"
+        data = {
+            "code": code,
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        }
+        r = requests.post(token_url, data=data)
+        r.raise_for_status()
+        tokens = r.json()
+        access_token = tokens["access_token"]
+
+        user_r = requests.get(
+            "https://www.googleapis.com/oauth2/v1/userinfo",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        user_r.raise_for_status()
+        user_info = user_r.json()
+
+        st.session_state.user_info = user_info
+
+        # Clear query params (new + old API) without exploding
         try:
-            # Exchange code for token
-            token_url = "https://oauth2.googleapis.com/token"
-            data = {
-                "code": code,
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "redirect_uri": redirect_uri,
-                "grant_type": "authorization_code"
-            }
-            r = requests.post(token_url, data=data)
-            r.raise_for_status()
-            tokens = r.json()
-            access_token = tokens["access_token"]
-            
-            # Get User Info
-            user_r = requests.get("https://www.googleapis.com/oauth2/v1/userinfo", 
-                                  headers={"Authorization": f"Bearer {access_token}"})
-            user_r.raise_for_status()
-            user_info = user_r.json()
-            
-            # Set Session
-            st.session_state.user_info = user_info
-            
-            # Clear Query Params to clean URL
+            st.query_params.clear()
+        except Exception:
             try:
-                st.query_params.clear()
-            except:
                 st.experimental_set_query_params()
-                
-            st.rerun()
-            
-        except Exception as e:
-            st.error(f"Authentication Failed: {e}")
-            # Optional: Print response text for debugging 403s during token exchange
-            if 'r' in locals() and r:
-                print(f"Token Exchange Error: {r.text}")
-            return None
+            except Exception:
+                pass
+
+        # Only rerun ONCE after successful login
+        st.rerun()
+
+    except Exception as e:
+        st.error(f"Authentication Failed: {e}")
+        # Important: do NOT keep rerunning with the same bad code
+        # Clear query params so we can show the login button again
+        try:
+            st.query_params.clear()
+        except Exception:
+            try:
+                st.experimental_set_query_params()
+            except Exception:
+                pass
+        return None
 
     # 4. Show Login Button
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
