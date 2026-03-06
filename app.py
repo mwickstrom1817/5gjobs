@@ -764,9 +764,9 @@ if signature_key:
         
         for photo_key in photos:
             try:
-        photo_url = get_view_url(photo_key, expires_seconds=3600)
-        img_bytes = requests.get(photo_url, timeout=15).content
-        img_reader = ImageReader(BytesIO(img_bytes))
+            photo_url = get_view_url(photo_key, expires_seconds=3600)
+            img_bytes = requests.get(photo_url, timeout=15).content
+            img_reader = ImageReader(BytesIO(img_bytes))
 
         if y - img_height < 50:
             p.showPage()
