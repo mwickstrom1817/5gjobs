@@ -163,6 +163,10 @@ def load_data():
     data = dict(st.session_state.db)
     return data
 
+ensure_loaded_into_session()  # <-- add this line
+_sync_session_to_db()
+force_overwrite_from_session(invalidate_briefing=False)
+
 def _sync_session_to_db():
     """Push your convenience session_state fields into st.session_state.db before saving."""
     ensure_loaded_into_session()
