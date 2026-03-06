@@ -1728,58 +1728,59 @@ st.rerun()
 st.toast("State saved to disk.", icon="💾")
             
 st.divider()
-    
-    # Backup / Restore
+
+# Backup / Restore
 st.subheader("Backup & Restore")
 c_bk1, c_bk2 = st.columns(2)
-    
-    with c_bk1:
-        # CSV Export
-        csv_data = download_data_as_csv()
-        if csv_data:
-            st.download_button(
-                label="📥 Download Jobs CSV",
-                data=csv_data,
-                file_name=f"jobs_export_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
-        else:
-            st.button("📥 Download Jobs CSV", disabled=True)
-            
-        # JSON Export
-        json_data = download_data_as_json()
-        st.download_button(
-            label="📦 Download Full Backup (JSON)",
-            data=json_data,
-            file_name=f"backup_{datetime.datetime.now().strftime('%Y%m%d')}.json",
-            mime="application/json"
-        )
 
-    with c_bk2:
-        # Restore
-        uploaded_file = st.file_uploader("Restore Backup (JSON)", type=['json'])
-        if uploaded_file is not None:
-            if st.button("⚠️ Restore from Backup"):
-                try:
-                    data = json.load(uploaded_file)
-                    # Validate keys
-                    required_keys = ["jobs", "techs", "locations"]
-                    if all(k in data for k in required_keys):
-                        st.session_state.jobs = data['jobs']
-                        st.session_state.techs = data['techs']
-                        st.session_state.locations = data['locations']
-                        st.session_state.briefing = data.get('briefing', "")
-                        st.session_state.adminEmails = data.get('adminEmails', [])
-                        st.session_state.last_reminder_date = data.get('last_reminder_date')
-                        save_state()
-                        st.success("Data restored successfully!")
-                        st.rerun()
-                    else:
-                        st.error("Invalid backup file format.")
-                except Exception as e:
-                    st.error(f"Error restoring file: {e}")
-        
-    st.divider()
+with c_bk1:
+    # CSV Export
+    csv_data = download_data_as_csv()
+    if csv_data:
+        st.download_button(
+            label="📥 Download Jobs CSV",
+            data=csv_data,
+            file_name=f"jobs_export_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+        )
+    else:
+        st.button("📥 Download Jobs CSV", disabled=True)
+
+    # JSON Export
+    json_data = download_data_as_json()
+    st.download_button(
+        label="📦 Download Full Backup (JSON)",
+        data=json_data,
+        file_name=f"backup_{datetime.datetime.now().strftime('%Y%m%d')}.json",
+        mime="application/json",
+    )
+
+with c_bk2:
+    # Restore
+    uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"])
+    if uploaded_file is not None:
+        if st.button("⚠️ Restore from Backup"):
+            try:
+                data = json.load(uploaded_file)
+
+                required_keys = ["jobs", "techs", "locations"]
+                if all(k in data for k in required_keys):
+                    st.session_state.jobs = data["jobs"]
+                    st.session_state.techs = data["techs"]
+                    st.session_state.locations = data["locations"]
+                    st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
+                    st.session_state.adminEmails = data.get("adminEmails", [])
+                    st.session_state.last_reminder_date = data.get("last_reminder_date")
+
+                    save_state()
+                    st.success("Data restored successfully!")
+                    st.rerun()
+                else:
+                    st.error("Invalid backup file format.")
+            except Exception as e:
+                st.error(f"Error restoring file: {e}")
+
+st.divider()
     
     # --- ANALYTICS SECTION ---
     with st.expander("📊 View Analytics Dashboard", expanded=False):
