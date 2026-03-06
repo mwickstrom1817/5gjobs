@@ -1863,7 +1863,7 @@ def render_admin_panel():
                     })
                     save_state(invalidate_briefing=False)
                     st.success(f"Added {new_tech_name}")
-                    st.rerun()
+                    # Removed st.rerun() to prevent thread error
                 else:
                     st.error("All fields required.")
 
