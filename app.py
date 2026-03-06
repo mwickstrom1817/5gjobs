@@ -338,7 +338,7 @@ return None
 def logout():code = None
 if "user_info" in st.session_state:
         del st.session_state.user_info
-    st.rerun()
+st.rerun()
 
 # --- HELPER FUNCTIONS ---
 
