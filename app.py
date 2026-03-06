@@ -1775,17 +1775,17 @@ with c_bk2:
     uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"])
     if uploaded_file is not None:
         if st.button("⚠️ Restore from Backup"):
-    try:
-        data = json.load(uploaded_file)
-        required_keys = ["jobs", "techs", "locations"]
+        try:
+            data = json.load(uploaded_file)
+            required_keys = ["jobs", "techs", "locations"]
 
-        if all(k in data for k in required_keys):
-            st.session_state.jobs = data["jobs"]
-            st.session_state.techs = data["techs"]
-            st.session_state.locations = data["locations"]
-            st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
-            st.session_state.adminEmails = data.get("adminEmails", [])
-            st.session_state.last_reminder_date = data.get("last_reminder_date")
+            if all(k in data for k in required_keys):
+                st.session_state.jobs = data["jobs"]
+                st.session_state.techs = data["techs"]
+                st.session_state.locations = data["locations"]
+                st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
+                st.session_state.adminEmails = data.get("adminEmails", [])
+                st.session_state.last_reminder_date = data.get("last_reminder_date")
 
             ensure_loaded_into_session()  # ✅ REQUIRED
             _sync_session_to_db()
