@@ -1,18 +1,4 @@
 import streamlit as st
-import traceback
-
-# --- DEBUG: trap reruns so we can see who is calling them ---
-if st.session_state.get("_debug_trap_rerun", True):
-    _real_rerun = st.rerun
-
-    def _debug_rerun():
-        stack = "".join(traceback.format_stack(limit=25))
-        st.session_state["_last_rerun_stack"] = stack
-        st.error("DEBUG: st.rerun() was called. Stack trace below:")
-        st.code(stack)
-        st.stop()
-
-    st.rerun = _debug_rerun
 import google.generativeai as genai
 import datetime
 import base64
