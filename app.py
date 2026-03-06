@@ -143,31 +143,12 @@ st.markdown("""
    </style>
 """, unsafe_allow_html=True)
 
-# --- DB SESSION INITIALIZER (Neon/Postgres persistence) ---
-def init_db_session():
-    """Ensures st.session_state.db and st.session_state._db_version exist."""
-    try:
-        ensure_loaded_into_session()  # <-- add this line
-        _sync_session_to_db()
-        force_overwrite_from_session(invalidate_briefing=False)
-        
-    except Exception as e:
-        # If DB is down, app can still run in a degraded mode
-        print(f"DB init warning: {e}")
-
-init_db_session()
-
-
 # --- PERSISTENCE LAYER (Neon Postgres) ---
 def load_data():
-    """Loads data from Neon (app_state row)."""
     ensure_loaded_into_session()
-    # make a copy to avoid accidental reference weirdness
-    data = dict(st.session_state.db)
-    return data
+    return dict(st.session_state.db)
 
 def _sync_session_to_db():
-    """Push your convenience session_state fields into st.session_state.db before saving."""
     ensure_loaded_into_session()
     st.session_state.db["jobs"] = st.session_state.jobs
     st.session_state.db["techs"] = st.session_state.techs
@@ -177,12 +158,20 @@ def _sync_session_to_db():
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
 def save_state(invalidate_briefing=True):
-    """Saves current session state to Neon (conflict-safe)."""
     if invalidate_briefing:
         st.session_state.briefing = "Data required to generate briefing."
     _sync_session_to_db()
     commit_from_session(invalidate_briefing=invalidate_briefing)
-st.write("save_state is:", save_state.__code__.co_filename, save_state.__code__.co_firstlineno)
+
+# --- DB SESSION INITIALIZER (safe) ---
+def init_db_session():
+    try:
+        ensure_loaded_into_session()
+    except Exception as e:
+        print(f"DB init warning: {e}")
+
+init_db_session()
+
 # --- SESSION STATE INITIALIZATION ---
 if "jobs" not in st.session_state:
     db_data = load_data()
@@ -195,10 +184,7 @@ if "jobs" not in st.session_state:
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
-        {
-            "role": "model",
-            "parts": ["Hello! I have access to your database. Ask me about active jobs, tech locations, or history."]
-        }
+        {"role": "model", "parts": ["Hello! I have access to your database. Ask me about active jobs, tech locations, or history."]}
     ]
 # Tech Colors for UI
 TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12', '#292524']
@@ -1746,23 +1732,6 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         else:
             if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
                 job_details_dialog(job['id'])
-
-def render_admin_panel():
-    st.subheader("Database Management")
-    st.info(f"📁 **Data File Location:** `{DB_FILE}`")
-    
-    c_db1, c_db2 = st.columns(2)
-    with c_db1:
-        if st.button("🔄 Reload Data from Disk"):
-            st.session_state.force_reload = True
-            st.rerun()
-    with c_db2:
-        if st.button("💾 Force Save State"):
-            _sync_session_to_db()
-            force_overwrite_from_session(invalidate_briefing=False)
-            st.success("Data restored successfully (DB overwritten).")
-            st.rerun()
-st.toast("State saved to disk.", icon="💾")
             
 st.divider()
 
@@ -2236,7 +2205,7 @@ def render_chatbot():
 
 def main():
     # Start Keep Awake Thread
-    keep_awake()
+    # keep_awake()
 
     # 1. Authenticate User
     user = authenticate()
