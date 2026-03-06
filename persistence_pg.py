@@ -43,25 +43,48 @@ def init_db():
         with conn.cursor() as cur:
             # Check if table exists
             cur.execute("SELECT to_regclass('app_state');")
-            if cur.fetchone()[0]:
-                # Table exists, check for 'key' column
-                cur.execute("""
-                    SELECT column_name 
-                    FROM information_schema.columns 
-                    WHERE table_name='app_state' AND column_name='key';
-                """)
+            table_oid = cur.fetchone()[0]
+            
+            if table_oid:
+                # Table exists. Perform migration if needed.
+                
+                # 1. Ensure 'key' column exists
+                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'key' AND NOT attisdropped", (table_oid,))
                 if not cur.fetchone():
-                    # 'key' column missing. Check for 'id'
-                    cur.execute("""
-                        SELECT column_name 
-                        FROM information_schema.columns 
-                        WHERE table_name='app_state' AND column_name='id';
-                    """)
+                    # 'key' missing. Check for 'id'
+                    cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'id' AND NOT attisdropped", (table_oid,))
                     if cur.fetchone():
                         # Rename 'id' to 'key'
                         cur.execute("ALTER TABLE app_state RENAME COLUMN id TO key;")
-                        conn.commit()
+                        # Change type to TEXT if needed
+                        cur.execute("ALTER TABLE app_state ALTER COLUMN key TYPE TEXT;")
+                    else:
+                        # Neither 'key' nor 'id' exists. Add 'key'.
+                        cur.execute("ALTER TABLE app_state ADD COLUMN key TEXT PRIMARY KEY;")
 
+                # 2. Ensure 'value' column exists
+                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'value' AND NOT attisdropped", (table_oid,))
+                if not cur.fetchone():
+                    # 'value' missing. Check for 'data'
+                    cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'data' AND NOT attisdropped", (table_oid,))
+                    if cur.fetchone():
+                        # Rename 'data' to 'value'
+                        cur.execute("ALTER TABLE app_state RENAME COLUMN data TO value;")
+                    else:
+                        # Add 'value' column
+                        cur.execute("ALTER TABLE app_state ADD COLUMN value JSONB;")
+
+                # 3. Ensure 'version' column exists
+                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'version' AND NOT attisdropped", (table_oid,))
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE app_state ADD COLUMN version SERIAL;")
+
+                # 4. Ensure 'updated_at' column exists
+                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'updated_at' AND NOT attisdropped", (table_oid,))
+                if not cur.fetchone():
+                    cur.execute("ALTER TABLE app_state ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
+
+            # Create table if it doesn't exist
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS app_state (
                     key TEXT PRIMARY KEY,
@@ -70,6 +93,7 @@ def init_db():
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            
             # Insert default if not exists
             cur.execute("SELECT key FROM app_state WHERE key = 'global_state'")
             if not cur.fetchone():
@@ -77,9 +101,13 @@ def init_db():
                     "INSERT INTO app_state (key, value) VALUES (%s, %s)",
                     ('global_state', json.dumps(DEFAULT_DATA))
                 )
-        conn.commit()
+            
+            conn.commit()
+            
     except Exception as e:
         conn.rollback()
+        # Re-raise to ensure we know if initialization failed
+        raise e
     finally:
         conn.close()
 
