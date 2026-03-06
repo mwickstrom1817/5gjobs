@@ -1,102 +1,132 @@
 import os
-from typing import Any, Dict, Tuple
-
+import json
 import streamlit as st
-import psycopg2
-from psycopg2.extras import Json
 
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+    HAS_PSYCOPG2 = True
+except ImportError:
+    HAS_PSYCOPG2 = False
+
+# Default data structure
 DEFAULT_DATA = {
     "jobs": [],
     "techs": [],
     "locations": [],
     "briefing": "Data required to generate briefing.",
     "adminEmails": [],
-    "last_reminder_date": None,
+    "last_reminder_date": None
 }
 
-def _db_url() -> str:
-    if "DATABASE_URL" in st.secrets:
-        return st.secrets["DATABASE_URL"]
-    if "DATABASE_URL" in os.environ:
-        return os.environ["DATABASE_URL"]
-    raise RuntimeError("DATABASE_URL missing (Streamlit secrets or env var).")
+def get_connection():
+    if not HAS_PSYCOPG2:
+        raise ImportError("psycopg2 module not found. Please install it.")
+        
+    db_url = os.environ.get("DATABASE_URL") or os.environ.get("NEON_DB_URL")
+    if not db_url:
+        # Fallback to streamlit secrets if available
+        if "DATABASE_URL" in st.secrets:
+            db_url = st.secrets["DATABASE_URL"]
+        elif "NEON_DB_URL" in st.secrets:
+            db_url = st.secrets["NEON_DB_URL"]
+            
+    if not db_url:
+        raise ValueError("DATABASE_URL or NEON_DB_URL not found in environment or secrets.")
+        
+    return psycopg2.connect(db_url)
 
-def _state_id() -> str:
-    return st.secrets.get("APP_STATE_ID", "prod")
-
-def load_state() -> Tuple[Dict[str, Any], int]:
-    with psycopg2.connect(_db_url()) as conn:
+def init_db():
+    """Initialize the table if it doesn't exist."""
+    conn = get_connection()
+    try:
         with conn.cursor() as cur:
-            cur.execute("select state_json, version from app_state where id=%s", (_state_id(),))
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS app_state (
+                    key TEXT PRIMARY KEY,
+                    value JSONB,
+                    version SERIAL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            # Insert default if not exists
+            cur.execute("SELECT key FROM app_state WHERE key = 'global_state'")
+            if not cur.fetchone():
+                cur.execute(
+                    "INSERT INTO app_state (key, value) VALUES (%s, %s)",
+                    ('global_state', json.dumps(DEFAULT_DATA))
+                )
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+    finally:
+        conn.close()
+
+# Initialize on module load (or first use)
+try:
+    init_db()
+except Exception as e:
+    pass
+
+def load_state():
+    """Returns (data_dict, version_int)."""
+    conn = get_connection()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT value, version FROM app_state WHERE key = 'global_state'")
             row = cur.fetchone()
-            if not row:
-                return dict(DEFAULT_DATA), 0
+            if row:
+                return row['value'], row['version']
+            return DEFAULT_DATA.copy(), 0
+    finally:
+        conn.close()
 
-            state = row[0] or {}
-            for k, v in DEFAULT_DATA.items():
-                state.setdefault(k, v)
-            return state, int(row[1])
-
-def try_save_state(state: Dict[str, Any], expected_version: int) -> Tuple[bool, int]:
-    with psycopg2.connect(_db_url()) as conn:
+def save_state_to_db(data):
+    """Saves data to DB, incrementing version."""
+    conn = get_connection()
+    try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                update app_state
-                   set state_json = %s,
-                       version = version + 1,
-                       updated_at = now()
-                 where id = %s
-                   and version = %s
-                 returning version
+                INSERT INTO app_state (key, value) 
+                VALUES ('global_state', %s)
+                ON CONFLICT (key) 
+                DO UPDATE SET value = EXCLUDED.value, version = app_state.version + 1, updated_at = CURRENT_TIMESTAMP
+                RETURNING version;
                 """,
-                (Json(state), _state_id(), expected_version),
+                (json.dumps(data),)
             )
-            row = cur.fetchone()
-            if row:
-                conn.commit()
-                return True, int(row[0])
+            new_version = cur.fetchone()[0]
+        conn.commit()
+        return new_version
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
-            cur.execute("select version from app_state where id=%s", (_state_id(),))
-            row2 = cur.fetchone()
-            return False, int(row2[0]) if row2 else expected_version
+def ensure_loaded_into_session():
+    """Ensures st.session_state.db is populated."""
+    if 'db' not in st.session_state:
+        data, version = load_state()
+        st.session_state.db = data
+        st.session_state._db_version = version
 
-def ensure_loaded_into_session() -> None:
-    if "db" not in st.session_state or "_db_version" not in st.session_state:
-        state, ver = load_state()
-        st.session_state.db = state
-        st.session_state._db_version = ver
-
-def commit_from_session(invalidate_briefing: bool = True) -> None:
-    if invalidate_briefing:
-        st.session_state.db["briefing"] = "Data required to generate briefing."
-
-    ok, new_ver = try_save_state(st.session_state.db, st.session_state._db_version)
-    if ok:
-        st.session_state._db_version = new_ver
+def commit_from_session(invalidate_briefing=True):
+    """Saves st.session_state.db to DB."""
+    if 'db' not in st.session_state:
         return
-
-    st.warning(
-        "Another admin saved changes while you were editing. "
-        "Reloaded latest data to prevent overwriting. Please re-apply your change."
-    )
-    state, ver = load_state()
-    st.session_state.db = state
-    st.session_state._db_version = ver
-    st.stop()
-
-def force_overwrite_from_session(invalidate_briefing: bool = True) -> None:
+        
+    # Update briefing if needed
     if invalidate_briefing:
-        st.session_state.db["briefing"] = "Data required to generate briefing."
-
-    _, ver = load_state()
-    st.session_state._db_version = ver
-    ok, new_ver = try_save_state(st.session_state.db, st.session_state._db_version)
-    if ok:
+        st.session_state.db['briefing'] = "Data required to generate briefing."
+        
+    try:
+        new_ver = save_state_to_db(st.session_state.db)
         st.session_state._db_version = new_ver
-        return
+    except Exception as e:
+        st.error(f"Failed to save to DB: {e}")
 
-    state2, ver2 = load_state()
-    st.session_state.db = state2
-    st.session_state._db_version = ver2
-    st.stop()
+def force_overwrite_from_session(invalidate_briefing=False):
+    """Same as commit but explicitly named for restore operations."""
+    commit_from_session(invalidate_briefing=invalidate_briefing)
