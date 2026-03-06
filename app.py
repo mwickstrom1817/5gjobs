@@ -309,7 +309,7 @@ if code:
 return None
 
     # 4. Show Login Button
-    auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
