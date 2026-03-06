@@ -11,31 +11,45 @@ except ImportError:
 
 def get_r2_client():
     if not HAS_BOTO3:
+        st.error("❌ `boto3` library not found. Please add it to `requirements.txt`.")
         return None
         
+    # Try R2 config first
     endpoint_url = os.environ.get("R2_ENDPOINT_URL") or st.secrets.get("R2_ENDPOINT_URL")
     access_key_id = os.environ.get("R2_ACCESS_KEY_ID") or st.secrets.get("R2_ACCESS_KEY_ID")
     secret_access_key = os.environ.get("R2_SECRET_ACCESS_KEY") or st.secrets.get("R2_SECRET_ACCESS_KEY")
     
-    if not (endpoint_url and access_key_id and secret_access_key):
+    # Fallback to standard AWS config if R2 not set
+    if not access_key_id:
+        access_key_id = os.environ.get("AWS_ACCESS_KEY_ID") or st.secrets.get("AWS_ACCESS_KEY_ID")
+        secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY") or st.secrets.get("AWS_SECRET_ACCESS_KEY")
+        # Endpoint might be None for standard AWS
+        if not endpoint_url:
+            endpoint_url = os.environ.get("AWS_ENDPOINT_URL") or st.secrets.get("AWS_ENDPOINT_URL")
+
+    if not (access_key_id and secret_access_key):
         return None
         
     return boto3.client(
         's3',
-        endpoint_url=endpoint_url,
+        endpoint_url=endpoint_url, # Can be None for standard AWS
         aws_access_key_id=access_key_id,
         aws_secret_access_key=secret_access_key
     )
 
 def get_bucket_name():
-    return os.environ.get("R2_BUCKET_NAME") or st.secrets.get("R2_BUCKET_NAME")
+    return os.environ.get("R2_BUCKET_NAME") or st.secrets.get("R2_BUCKET_NAME") or os.environ.get("AWS_BUCKET_NAME") or st.secrets.get("AWS_BUCKET_NAME")
 
 def upload_bytes(data, key, content_type):
-    """Uploads bytes to R2."""
+    """Uploads bytes to R2/S3."""
     s3 = get_r2_client()
     bucket = get_bucket_name()
     
-    if not s3 or not bucket:
+    if not s3:
+        st.error("⚠️ Storage Client not available. Check credentials.")
+        return None
+    if not bucket:
+        st.error("⚠️ Bucket name not configured.")
         return None
         
     try:
@@ -47,17 +61,22 @@ def upload_bytes(data, key, content_type):
         )
         return key
     except ClientError as e:
+        st.error(f"❌ Upload Failed: {e}")
         return None
 
 def upload_streamlit_file(uploaded_file, folder="photos"):
-    """Uploads a Streamlit UploadedFile to R2."""
+    """Uploads a Streamlit UploadedFile to R2/S3."""
     if uploaded_file is None:
         return None
         
     s3 = get_r2_client()
     bucket = get_bucket_name()
     
-    if not s3 or not bucket:
+    if not s3:
+        st.error("⚠️ Storage Client not available. Check credentials.")
+        return None
+    if not bucket:
+        st.error("⚠️ Bucket name not configured.")
         return None
         
     # Generate key
@@ -75,6 +94,7 @@ def upload_streamlit_file(uploaded_file, folder="photos"):
         )
         return key
     except ClientError as e:
+        st.error(f"❌ Upload Failed: {e}")
         return None
 
 def get_view_url(key, expires_seconds=3600):
