@@ -1841,6 +1841,68 @@ with st.expander("View Background Activity", expanded=False):
 
 st.divider()
 
+def render_analytics_dashboard():
+    st.subheader("📊 Operational Analytics")
+    
+    if not st.session_state.jobs:
+        st.info("No job data available.")
+        return
+
+    df = pd.DataFrame(st.session_state.jobs)
+    
+    # Metrics
+    total = len(df)
+    completed = len(df[df['status'] == 'Completed'])
+    active = total - completed
+    critical = len(df[df['priority'] == 'Critical'])
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Jobs", total)
+    m2.metric("Active", active)
+    m3.metric("Completed", completed)
+    m4.metric("Critical", critical)
+    
+    st.divider()
+    
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.markdown("#### Jobs by Status")
+        if not df.empty:
+            status_counts = df['status'].value_counts()
+            st.bar_chart(status_counts, color="#2563eb")
+            
+    with c2:
+        st.markdown("#### Jobs by Priority")
+        if not df.empty:
+            prio_counts = df['priority'].value_counts()
+            # Custom color mapping if possible, otherwise default
+            st.bar_chart(prio_counts, color="#dc2626")
+            
+    st.divider()
+    
+    c3, c4 = st.columns(2)
+    
+    with c3:
+        st.markdown("#### Tech Workload (Active)")
+        active_jobs = df[df['status'] != 'Completed']
+        if not active_jobs.empty:
+            tech_map = {t['id']: t['name'] for t in st.session_state.techs}
+            tech_map[None] = "Unassigned"
+            # Map techId to Name
+            workload = active_jobs['techId'].map(tech_map).fillna("Unassigned").value_counts()
+            st.bar_chart(workload, horizontal=True, color="#4b5563")
+        else:
+            st.info("No active jobs.")
+            
+    with c4:
+        st.markdown("#### Jobs by Type")
+        if not df.empty:
+            type_counts = df['type'].value_counts()
+            st.bar_chart(type_counts, color="#16a34a")
+
+
+
     # --- ADMIN ACCESS MANAGEMENT ---
 def render_admin_panel():
     st.subheader("Database Management")
@@ -2074,66 +2136,6 @@ def render_admin_panel():
                 st.session_state.locations.remove(l)
                 save_state()
                 st.rerun()
-
-def render_analytics_dashboard():
-    st.subheader("📊 Operational Analytics")
-    
-    if not st.session_state.jobs:
-        st.info("No job data available.")
-        return
-
-    df = pd.DataFrame(st.session_state.jobs)
-    
-    # Metrics
-    total = len(df)
-    completed = len(df[df['status'] == 'Completed'])
-    active = total - completed
-    critical = len(df[df['priority'] == 'Critical'])
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total Jobs", total)
-    m2.metric("Active", active)
-    m3.metric("Completed", completed)
-    m4.metric("Critical", critical)
-    
-    st.divider()
-    
-    c1, c2 = st.columns(2)
-    
-    with c1:
-        st.markdown("#### Jobs by Status")
-        if not df.empty:
-            status_counts = df['status'].value_counts()
-            st.bar_chart(status_counts, color="#2563eb")
-            
-    with c2:
-        st.markdown("#### Jobs by Priority")
-        if not df.empty:
-            prio_counts = df['priority'].value_counts()
-            # Custom color mapping if possible, otherwise default
-            st.bar_chart(prio_counts, color="#dc2626")
-            
-    st.divider()
-    
-    c3, c4 = st.columns(2)
-    
-    with c3:
-        st.markdown("#### Tech Workload (Active)")
-        active_jobs = df[df['status'] != 'Completed']
-        if not active_jobs.empty:
-            tech_map = {t['id']: t['name'] for t in st.session_state.techs}
-            tech_map[None] = "Unassigned"
-            # Map techId to Name
-            workload = active_jobs['techId'].map(tech_map).fillna("Unassigned").value_counts()
-            st.bar_chart(workload, horizontal=True, color="#4b5563")
-        else:
-            st.info("No active jobs.")
-            
-    with c4:
-        st.markdown("#### Jobs by Type")
-        if not df.empty:
-            type_counts = df['type'].value_counts()
-            st.bar_chart(type_counts, color="#16a34a")
 
 def render_chatbot():
     st.sidebar.title("🤖 Tech Assistant")
