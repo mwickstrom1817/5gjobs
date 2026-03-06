@@ -319,7 +319,7 @@ params = {
         "prompt": "select_account" # Force account selection to avoid auto-selecting wrong account
 }
     
-    login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
+login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
     st.markdown(f"""
        <div class="login-container">
