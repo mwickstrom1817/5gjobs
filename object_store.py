@@ -1,72 +1,99 @@
 import os
-import uuid
-import datetime
-from typing import Optional
-
 import streamlit as st
-import boto3
-from botocore.config import Config
+import mimetypes
 
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    HAS_BOTO3 = True
+except ImportError:
+    HAS_BOTO3 = False
 
-def _s3_client():
+def get_r2_client():
+    if not HAS_BOTO3:
+        return None
+        
+    endpoint_url = os.environ.get("R2_ENDPOINT_URL") or st.secrets.get("R2_ENDPOINT_URL")
+    access_key_id = os.environ.get("R2_ACCESS_KEY_ID") or st.secrets.get("R2_ACCESS_KEY_ID")
+    secret_access_key = os.environ.get("R2_SECRET_ACCESS_KEY") or st.secrets.get("R2_SECRET_ACCESS_KEY")
+    
+    if not (endpoint_url and access_key_id and secret_access_key):
+        return None
+        
     return boto3.client(
-        "s3",
-        endpoint_url=st.secrets["S3_ENDPOINT_URL"],
-        aws_access_key_id=st.secrets["S3_ACCESS_KEY_ID"],
-        aws_secret_access_key=st.secrets["S3_SECRET_ACCESS_KEY"],
-        config=Config(signature_version="s3v4"),
+        's3',
+        endpoint_url=endpoint_url,
+        aws_access_key_id=access_key_id,
+        aws_secret_access_key=secret_access_key
     )
 
+def get_bucket_name():
+    return os.environ.get("R2_BUCKET_NAME") or st.secrets.get("R2_BUCKET_NAME")
 
-def upload_streamlit_file(uploaded_file, folder: str) -> Optional[str]:
-    """
-    Uploads a Streamlit UploadedFile (st.file_uploader or st.camera_input).
-    Returns the object key (NOT a URL).
-    """
-    if uploaded_file is None:
+def upload_bytes(data, key, content_type):
+    """Uploads bytes to R2."""
+    s3 = get_r2_client()
+    bucket = get_bucket_name()
+    
+    if not s3 or not bucket:
+        return None
+        
+    try:
+        s3.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=data,
+            ContentType=content_type
+        )
+        return key
+    except ClientError as e:
         return None
 
-    bucket = st.secrets["S3_BUCKET"]
+def upload_streamlit_file(uploaded_file, folder="photos"):
+    """Uploads a Streamlit UploadedFile to R2."""
+    if uploaded_file is None:
+        return None
+        
+    s3 = get_r2_client()
+    bucket = get_bucket_name()
+    
+    if not s3 or not bucket:
+        return None
+        
+    # Generate key
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = uploaded_file.name
+    key = f"{folder}/{timestamp}_{filename}"
+    
+    try:
+        s3.upload_fileobj(
+            uploaded_file,
+            bucket,
+            key,
+            ExtraArgs={'ContentType': uploaded_file.type}
+        )
+        return key
+    except ClientError as e:
+        return None
 
-    name = getattr(uploaded_file, "name", "") or ""
-    _, ext = os.path.splitext(name)
-    if not ext:
-        ext = ".jpg"
-
-    ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    key = f"{folder}/{ts}_{uuid.uuid4().hex}{ext}"
-
-    content_type = getattr(uploaded_file, "type", None) or "application/octet-stream"
-
-    s3 = _s3_client()
-    s3.put_object(
-        Bucket=bucket,
-        Key=key,
-        Body=uploaded_file.getbuffer(),
-        ContentType=content_type,
-    )
-    return key
-
-
-def upload_bytes(data: bytes, key: str, content_type: str) -> str:
-    bucket = st.secrets["S3_BUCKET"]
-    s3 = _s3_client()
-    s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
-    return key
-
-
-def get_view_url(key: str, expires_seconds: int = 3600) -> str:
-    """
-    Returns either a public URL (if configured) or a signed URL for temporary viewing.
-    """
-    public_base = st.secrets.get("S3_PUBLIC_BASE_URL", "").strip()
-    if public_base:
-        return f"{public_base.rstrip('/')}/{key}"
-
-    bucket = st.secrets["S3_BUCKET"]
-    s3 = _s3_client()
-    return s3.generate_presigned_url(
-        ClientMethod="get_object",
-        Params={"Bucket": bucket, "Key": key},
-        ExpiresIn=expires_seconds,
-    )
+def get_view_url(key, expires_seconds=3600):
+    """Generates a presigned URL for viewing the object."""
+    if not key:
+        return None
+        
+    s3 = get_r2_client()
+    bucket = get_bucket_name()
+    
+    if not s3 or not bucket:
+        return None
+        
+    try:
+        url = s3.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket, 'Key': key},
+            ExpiresIn=expires_seconds
+        )
+        return url
+    except ClientError as e:
+        return None
