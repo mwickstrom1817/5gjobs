@@ -1,4 +1,6 @@
 streamlit
 google-generativeai
 reportlab
+boto3
+botocore
 psycopg2-binary
