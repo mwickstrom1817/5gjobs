@@ -1840,7 +1840,7 @@ st.success("Data restored successfully (DB overwritten).")
 st.rerun()
 st.toast("State saved to disk.", icon="💾")
             
-    st.divider()
+st.divider()
     
     # Backup / Restore
     st.subheader("Backup & Restore")
