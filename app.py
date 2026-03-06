@@ -317,7 +317,7 @@ def authenticate():
             <div class="login-box">
                 <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
                 <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
-                <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
+                <a href="{login_url}" target="_blank" rel="noopener noreferrer" style="
                     display: inline-block;
                     background-color: #DB4437;
                     color: white;
