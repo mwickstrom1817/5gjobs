@@ -143,6 +143,18 @@ st.markdown("""
    </style>
 """, unsafe_allow_html=True)
 
+# --- DB SESSION INITIALIZER (Neon/Postgres persistence) ---
+def init_db_session():
+    """Ensures st.session_state.db and st.session_state._db_version exist."""
+    try:
+        ensure_loaded_into_session()
+    except Exception as e:
+        # If DB is down, app can still run in a degraded mode
+        print(f"DB init warning: {e}")
+
+init_db_session()
+
+
 # --- PERSISTENCE LAYER (Neon Postgres) ---
 def load_data():
     """Loads data from Neon (app_state row)."""
