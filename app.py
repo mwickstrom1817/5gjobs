@@ -347,7 +347,7 @@ st.markdown(f"""
        </div>
    """, unsafe_allow_html=True)
     
-    return None
+return None
 
 def logout():
     if "user_info" in st.session_state:
