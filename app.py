@@ -179,7 +179,7 @@ def init_db_session():
     try:
         ensure_loaded_into_session()
     except Exception as e:
-        pass # print(f"DB init warning: {e}")
+        pass
 
 init_db_session()
 
@@ -403,7 +403,8 @@ def keep_awake():
                     logger.log(msg)
                 except Exception:
                     msg = f"Keep-awake ping failed: {e}"
-                    # print(f"{datetime.datetime.now()}: {msg}")
+                    # 
+
                     logger.log(msg)
             
             # Wait for next ping
@@ -416,11 +417,12 @@ def keep_awake():
     # Check for old threads and log them (we can't kill them easily, but good to know)
     for t in threading.enumerate():
         if t.name == "keep_awake_thread":
-            pass # print(f"WARNING: Found zombie thread '{t.name}' still running.")
+            pass
         if t.name == thread_name:
             return
 
-    # print(f"Starting {thread_name} background thread...")
+    # 
+
     thread = threading.Thread(target=run, name=thread_name, daemon=True)
     thread.start()
 
@@ -710,7 +712,7 @@ def generate_job_pdf(job, tech, location, report):
             p.drawString(50, y - 10, "Customer Digital Signature")
             y -= 20
         except Exception as e:
-            pass # print(f"Error adding signature to PDF: {e}")
+            pass
 
     # Photos Section
     photos = report.get("photos", [])
@@ -763,7 +765,7 @@ def generate_job_pdf(job, tech, location, report):
                     y -= (img_height + gap_y)
 
             except Exception as e:
-                pass # print(f"Error adding remote photo to PDF: {e}")
+                pass
 
     p.showPage()
     p.save()
@@ -813,7 +815,8 @@ def send_assignment_email(job, tech, location):
 
     # If no credentials, we return False to trigger fallback UI
     if not (smtp_server and sender_email and sender_password):
-        # print(f"SMTP not configured. Skipping auto-email for: {tech['email']}")
+        # 
+
         return False
 
     msg = MIMEMultipart()
@@ -839,7 +842,6 @@ def send_assignment_email(job, tech, location):
         return True
     except Exception as e:
         st.error(f"Failed to send email: {str(e)}")
-        # print(f"Email Error: {str(e)}")
         return False
 
 def send_completion_email(job, tech, location, report_data):
@@ -879,7 +881,8 @@ def send_completion_email(job, tech, location, report_data):
    """
 
     if not (smtp_server and sender_email and sender_password):
-        # print("SMTP not configured. Skipping admin completion email.")
+        # 
+
         return
 
     try:
@@ -911,7 +914,6 @@ def send_completion_email(job, tech, location, report_data):
         server.quit()
         st.toast("📧 Completion notification sent to Admins", icon="✅")
     except Exception as e:
-        # print(f"Email Error: {str(e)}")
         st.error(f"Failed to send email: {str(e)}")
 
 def send_daily_report_email(job, tech, location, report_data):
@@ -984,7 +986,6 @@ def send_daily_report_email(job, tech, location, report_data):
         server.quit()
         st.toast("📧 Daily Report sent to Admins", icon="✅")
     except Exception as e:
-        # print(f"Email Error: {str(e)}")
         st.error(f"Failed to send email: {str(e)}")
 
 def send_daily_reminders():
@@ -1084,7 +1085,7 @@ Please check the 5G Security Job Board for full details and to log your work.
             st.toast(f"📧 Sent daily reminders to {techs_emailed} technicians.", icon="✅")
             
     except Exception as e:
-        pass # print(f"Daily Reminder Error: {e}")
+        pass
 
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
@@ -1806,6 +1807,41 @@ def render_analytics_dashboard():
 
     # --- ADMIN ACCESS MANAGEMENT ---
 def render_admin_panel():
+    # --- DEDUPLICATE IDs (Fix for existing corrupted state) ---
+    if st.session_state.techs:
+        seen_t_ids = set()
+        # We must iterate over a copy or indices if we were modifying the list structure, 
+        # but here we modify objects inside the list, which is safe.
+        # However, to check for global uniqueness, we need to be careful.
+        # Simple approach: Re-assign ALL IDs if duplicates found? No, that breaks references.
+        # Only re-assign duplicates.
+        # First pass: collect all IDs.
+        all_ids = [t['id'] for t in st.session_state.techs]
+        if len(all_ids) != len(set(all_ids)):
+            # Duplicates exist.
+            seen = set()
+            for t in st.session_state.techs:
+                if t['id'] in seen:
+                    # This is a duplicate. Assign new ID.
+                    # Find max ID number.
+                    existing_nums = [int(x['id'][1:]) for x in st.session_state.techs if x['id'].startswith('t') and x['id'][1:].isdigit()]
+                    next_num = (max(existing_nums) if existing_nums else 0) + 1
+                    t['id'] = f"t{next_num}"
+                seen.add(t['id'])
+            save_state(invalidate_briefing=False)
+
+    if st.session_state.locations:
+        all_l_ids = [l['id'] for l in st.session_state.locations]
+        if len(all_l_ids) != len(set(all_l_ids)):
+            seen = set()
+            for l in st.session_state.locations:
+                if l['id'] in seen:
+                    existing_nums = [int(x['id'][1:]) for x in st.session_state.locations if x['id'].startswith('l') and x['id'][1:].isdigit()]
+                    next_num = (max(existing_nums) if existing_nums else 0) + 1
+                    l['id'] = f"l{next_num}"
+                seen.add(l['id'])
+            save_state(invalidate_briefing=False)
+
     # --- SMTP CONFIG ---
     st.subheader("📧 SMTP Configuration")
     with st.expander("Configure Email Settings", expanded=False):
@@ -1850,7 +1886,9 @@ def render_admin_panel():
             
             if st.form_submit_button("Add Technician"):
                 if new_tech_name and new_tech_email and new_tech_initials:
-                    new_id = f"t{len(st.session_state.techs) + 1}"
+                    existing_ids = [int(t['id'][1:]) for t in st.session_state.techs if t['id'].startswith('t') and t['id'][1:].isdigit()]
+                    next_id = (max(existing_ids) if existing_ids else 0) + 1
+                    new_id = f"t{next_id}"
                     import random
                     color = random.choice(TECH_COLORS)
                     
@@ -1896,8 +1934,11 @@ def render_admin_panel():
                     # Auto-suggest address if API key exists
                     final_addr = suggest_address_with_gemini(l_addr)
                     
+                    existing_ids = [int(l['id'][1:]) for l in st.session_state.locations if l['id'].startswith('l') and l['id'][1:].isdigit()]
+                    next_id = (max(existing_ids) if existing_ids else 0) + 1
+                    
                     new_loc = {
-                        "id": f"l{len(st.session_state.locations) + 1}",
+                        "id": f"l{next_id}",
                         "name": l_name,
                         "address": final_addr,
                         "mapsUrl": l_maps
