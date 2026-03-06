@@ -72,7 +72,11 @@ def init_db():
                         cur.execute("ALTER TABLE app_state RENAME COLUMN data TO value;")
                     else:
                         # Add 'value' column
-                        cur.execute("ALTER TABLE app_state ADD COLUMN value JSONB;")
+                        try:
+                            cur.execute("ALTER TABLE app_state ADD COLUMN value JSONB;")
+                        except Exception:
+                            # If adding column fails (e.g. weird state), force drop
+                            raise Exception("ForceRecreate")
 
                 # 3. Ensure 'version' column exists
                 cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'version' AND NOT attisdropped", (table_oid,))
