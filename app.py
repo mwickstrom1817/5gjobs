@@ -2282,8 +2282,8 @@ def main():
             if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
                 with st.spinner("🤖 AI is preparing your morning briefing..."):
                     st.session_state.briefing = generate_morning_briefing()
-                    save_state(invalidate_briefing=False) # Save new briefing
-                    st.rerun()
+                    save_state(invalidate_briefing=False)
+                 # NO st.rerun() here
             
             st.container(border=True).markdown(st.session_state.briefing)
             
