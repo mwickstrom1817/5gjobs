@@ -1843,63 +1843,53 @@ st.divider()
 
 def render_analytics_dashboard():
     st.subheader("📊 Operational Analytics")
-    
+
     if not st.session_state.jobs:
         st.info("No job data available.")
         return
 
     df = pd.DataFrame(st.session_state.jobs)
-    
-    # Metrics
+
     total = len(df)
-    completed = len(df[df['status'] == 'Completed'])
+    completed = len(df[df["status"] == "Completed"])
     active = total - completed
-    critical = len(df[df['priority'] == 'Critical'])
-    
+    critical = len(df[df["priority"] == "Critical"])
+
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Total Jobs", total)
     m2.metric("Active", active)
     m3.metric("Completed", completed)
     m4.metric("Critical", critical)
-    
+
     st.divider()
-    
+
     c1, c2 = st.columns(2)
-    
     with c1:
         st.markdown("#### Jobs by Status")
-        if not df.empty:
-            status_counts = df['status'].value_counts()
-            st.bar_chart(status_counts, color="#2563eb")
-            
+        status_counts = df["status"].value_counts()
+        st.bar_chart(status_counts)  # remove color param if it errors
+
     with c2:
         st.markdown("#### Jobs by Priority")
-        if not df.empty:
-            prio_counts = df['priority'].value_counts()
-            # Custom color mapping if possible, otherwise default
-            st.bar_chart(prio_counts, color="#dc2626")
-            
+        prio_counts = df["priority"].value_counts()
+        st.bar_chart(prio_counts)  # remove color param if it errors
+
     st.divider()
-    
+
     c3, c4 = st.columns(2)
-    
     with c3:
         st.markdown("#### Tech Workload (Active)")
-        active_jobs = df[df['status'] != 'Completed']
+        active_jobs = df[df["status"] != "Completed"]
         if not active_jobs.empty:
-            tech_map = {t['id']: t['name'] for t in st.session_state.techs}
+            tech_map = {t["id"]: t["name"] for t in st.session_state.techs}
             tech_map[None] = "Unassigned"
-            # Map techId to Name
-            workload = active_jobs['techId'].map(tech_map).fillna("Unassigned").value_counts()
-            st.bar_chart(workload, horizontal=True, color="#4b5563")
-        else:
-            st.info("No active jobs.")
-            
+            workload = active_jobs["techId"].map(tech_map).fillna("Unassigned").value_counts()
+            st.bar_chart(workload)
+
     with c4:
         st.markdown("#### Jobs by Type")
-        if not df.empty:
-            type_counts = df['type'].value_counts()
-            st.bar_chart(type_counts, color="#16a34a")
+        type_counts = df["type"].value_counts()
+        st.bar_chart(type_counts)
 
 
 
@@ -1908,7 +1898,6 @@ def render_admin_panel():
     st.subheader("Database Management")
 
     c_db1, c_db2 = st.columns(2)
-
     with c_db1:
         if st.button("🔄 Reload Data from DB"):
             state, ver = load_state()
@@ -1931,6 +1920,7 @@ def render_admin_panel():
 
     st.divider()
 
+    # --- BACKUP / RESTORE ---
     st.subheader("Backup & Restore")
     c_bk1, c_bk2 = st.columns(2)
 
@@ -1955,14 +1945,16 @@ def render_admin_panel():
         )
 
     with c_bk2:
-        uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"])
+        uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"], key="restore_json")
         if uploaded_file is not None:
-            if st.button("⚠️ Restore from Backup"):
+            if st.button("⚠️ Restore from Backup", key="restore_btn"):
                 try:
                     data = json.load(uploaded_file)
                     required_keys = ["jobs", "techs", "locations"]
 
-                    if all(k in data for k in required_keys):
+                    if not all(k in data for k in required_keys):
+                        st.error("Invalid backup file format.")
+                    else:
                         st.session_state.jobs = data["jobs"]
                         st.session_state.techs = data["techs"]
                         st.session_state.locations = data["locations"]
@@ -1970,173 +1962,60 @@ def render_admin_panel():
                         st.session_state.adminEmails = data.get("adminEmails", [])
                         st.session_state.last_reminder_date = data.get("last_reminder_date")
 
+                        ensure_loaded_into_session()
                         _sync_session_to_db()
                         force_overwrite_from_session(invalidate_briefing=False)
 
                         st.success("Data restored successfully (DB overwritten).")
                         st.rerun()
-                    else:
-                        st.error("Invalid backup file format.")
                 except Exception as e:
                     st.error(f"Error restoring file: {e}")
 
     st.divider()
 
+    # --- ANALYTICS ---
     with st.expander("📊 View Analytics Dashboard", expanded=False):
         render_analytics_dashboard()
 
     st.divider()
 
-    st.subheader("🛡️ Admin Access")
-    st.caption("Users listed here have full access to settings and can create jobs.")
+    # --- SYSTEM LOGS (optional) ---
+    st.subheader("📝 System Logs")
+    with st.expander("View Background Activity", expanded=False):
+        st.caption("Recent keep-awake pings and system events.")
 
-    with st.form("add_admin_form"):
-        col_ad1, col_ad2 = st.columns([3, 1])
-        new_admin = col_ad1.text_input("New Admin Email", placeholder="user@company.com")
-        if col_ad2.form_submit_button("Add Admin"):
-            if new_admin and new_admin not in st.session_state.adminEmails:
-                st.session_state.adminEmails.append(new_admin)
-                save_state()
-                st.success(f"Added {new_admin}")
-                st.rerun()
-            elif new_admin in st.session_state.adminEmails:
-                st.warning("Email already exists.")
+        c_log1, c_log2 = st.columns([3, 1])
+        with c_log2:
+            if st.button("⚡ Test Ping Now"):
+                endpoints = [
+                    "http://localhost:8501/_stcore/health",
+                    "http://127.0.0.1:8501/_stcore/health",
+                ]
+                success = False
+                for url in endpoints:
+                    try:
+                        requests.get(url, timeout=2)
+                        get_logger().log(f"Manual ping successful to {url}")
+                        st.toast(f"Ping successful to {url}!", icon="✅")
+                        success = True
+                        break
+                    except Exception:
+                        pass
 
-    for email in st.session_state.adminEmails:
-        c_e1, c_e2 = st.columns([4, 1])
-        c_e1.write(f"• {email}")
-        if c_e2.button("Remove", key=f"rm_admin_{email}"):
-            if len(st.session_state.adminEmails) > 1:
-                st.session_state.adminEmails.remove(email)
-                save_state()
-                st.rerun()
-            else:
-                st.error("Cannot remove the last admin.")
+                if not success:
+                    get_logger().log("Manual ping failed on all endpoints.")
+                    st.error("Ping failed on all endpoints.")
 
-    st.divider()
-
-    st.subheader("📧 Email Configuration")
-    with st.expander("Configure SMTP Settings", expanded=False):
-        st.info("Settings entered here apply to the current session only. For permanent setup, add to `.streamlit/secrets.toml`.")
-
-        session_config = st.session_state.get("smtp_settings", {})
-
-        def get_val(key, default=""):
-            if session_config.get(key):
-                return session_config.get(key)
-            if key in st.secrets:
-                return st.secrets[key]
-            return os.getenv(key) or default
-
-        with st.form("smtp_config_form"):
-            c_smtp1, c_smtp2 = st.columns(2)
-            new_server = c_smtp1.text_input("SMTP Server", value=get_val("SMTP_SERVER"))
-            new_port = c_smtp2.text_input("SMTP Port", value=get_val("SMTP_PORT", "587"))
-            new_email = st.text_input("Sender Email", value=get_val("SMTP_EMAIL"))
-            new_pass = st.text_input("Sender Password", type="password", value=get_val("SMTP_PASSWORD"))
-
-            if st.form_submit_button("Save Email Settings"):
-                st.session_state.smtp_settings = {
-                    "SMTP_SERVER": new_server,
-                    "SMTP_PORT": new_port,
-                    "SMTP_EMAIL": new_email,
-                    "SMTP_PASSWORD": new_pass,
-                }
-                st.success("Email settings updated for this session!")
-
-    st.divider()
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.subheader("Manage Technicians")
-        with st.form("add_tech"):
-            t_name = st.text_input("Name")
-            t_email = st.text_input("Email")
-            if st.form_submit_button("Add Technician"):
-                if t_name and t_email:
-                    initials = "".join([n[0] for n in t_name.split()]).upper()[:2]
-                    color = TECH_COLORS[len(st.session_state.techs) % len(TECH_COLORS)]
-                    st.session_state.techs.append(
-                        {
-                            "id": f"t{datetime.datetime.now().timestamp()}",
-                            "name": t_name,
-                            "email": t_email,
-                            "initials": initials,
-                            "color": color,
-                        }
-                    )
-                    save_state()
-                    st.rerun()
-
-        st.markdown("---")
-        for t in st.session_state.techs:
-            st.markdown(f"**{t['name']}** ({t['email']})")
-            if st.button("Remove", key=f"rm_t_{t['id']}"):
-                st.session_state.techs.remove(t)
-                save_state()
                 st.rerun()
 
-    with c2:
-        st.subheader("Manage Locations")
-
-        if "new_loc_name" not in st.session_state:
-            st.session_state.new_loc_name = ""
-        if "new_loc_addr" not in st.session_state:
-            st.session_state.new_loc_addr = ""
-
-        st.text_input("Location Name", key="new_loc_name")
-
-        col_addr, col_btn = st.columns([3, 1])
-        with col_addr:
-            st.text_input("Address", key="new_loc_addr")
-        with col_btn:
-            st.write("")
-            st.write("")
-
-            def auto_complete_callback():
-                if st.session_state.new_loc_addr:
-                    suggestion = suggest_address_with_gemini(st.session_state.new_loc_addr)
-                    if suggestion:
-                        st.session_state.new_loc_addr = suggestion
-
-            st.button("✨ Auto-Complete", help="Use AI to complete address", on_click=auto_complete_callback)
-
-        def add_location_callback():
-            l_name = st.session_state.new_loc_name
-            l_addr = st.session_state.new_loc_addr
-
-            if l_name and l_addr:
-                map_url = get_google_maps_url(l_addr)
-                new_loc = {
-                    "id": f"l{datetime.datetime.now().timestamp()}",
-                    "name": l_name,
-                    "address": l_addr,
-                    "mapsUrl": map_url,
-                }
-
-                st.session_state.locations.append(new_loc)
-                st.session_state.new_loc_name = ""
-                st.session_state.new_loc_addr = ""
-                save_state()
-                st.toast(f"Added location: {l_name}", icon="✅")
-            else:
-                st.toast("Please enter both Name and Address.", icon="⚠️")
-
-        st.button("Add Location", type="primary", on_click=add_location_callback)
-
-        st.markdown("---")
-        for l in st.session_state.locations:
-            if l.get("mapsUrl"):
-                st.markdown(f"**[{l['name']}]({l['mapsUrl']})** - {l['address']}")
-            else:
-                st.markdown(f"**{l['name']}** - {l['address']}")
-
-            if st.button("Remove", key=f"rm_l_{l['id']}"):
-                st.session_state.locations.remove(l)
-                save_state()
+        logger = get_logger()
+        logs = logger.get_logs()
+        if logs:
+            st.code("\n".join(logs), language="text")
+            if st.button("Refresh Logs"):
                 st.rerun()
-
+        else:
+            st.info("No logs recorded yet.")
 def render_chatbot():
     st.sidebar.title("🤖 Tech Assistant")
     st.sidebar.markdown("Ask about jobs, history, or locations.")
