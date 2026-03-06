@@ -221,73 +221,72 @@ TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12',
 
 def authenticate():
 # --- 3) Check for Auth Code from Google Redirect ---
-    
-def logout():code = None
-try:
-    if "code" in st.query_params:
-        code = st.query_params["code"]
-except Exception:
-    try:
-        query_params = st.experimental_get_query_params()
-        code = query_params.get("code", [None])[0]
-    except Exception:
-        code = None
-
-# Prevent infinite loops if the URL keeps the same code param
-if code and st.session_state.get("_oauth_last_code") == code:
-    st.warning("OAuth code already processed; ignoring to prevent rerun loop.")
     code = None
-elif code:
-    st.session_state["_oauth_last_code"] = code
-
-# If we have a code, try to exchange it for a token and fetch user info
-if code:
     try:
-        token_url = "https://oauth2.googleapis.com/token"
-        data = {
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
+        if "code" in st.query_params:
+            code = st.query_params["code"]
+    except Exception:
+        try:
+            query_params = st.experimental_get_query_params()
+            code = query_params.get("code", [None])[0]
+        except Exception:
+            code = None
+
+    # Prevent infinite loops if the URL keeps the same code param
+    if code and st.session_state.get("_oauth_last_code") == code:
+        st.warning("OAuth code already processed; ignoring to prevent rerun loop.")
+        code = None
+    elif code:
+        st.session_state["_oauth_last_code"] = code
+
+    # If we have a code, try to exchange it for a token and fetch user info
+    if code:
+        try:
+            token_url = "https://oauth2.googleapis.com/token"
+            data = {
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
         }
-        r = requests.post(token_url, data=data, timeout=15)
-        r.raise_for_status()
-        tokens = r.json()
-        access_token = tokens["access_token"]
+            r = requests.post(token_url, data=data, timeout=15)
+            r.raise_for_status()
+            tokens = r.json()
+            access_token = tokens["access_token"]
 
-        user_r = requests.get(
-            "https://www.googleapis.com/oauth2/v1/userinfo",
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=15,
-        )
-        user_r.raise_for_status()
-        user_info = user_r.json()
+            user_r = requests.get(
+                "https://www.googleapis.com/oauth2/v1/userinfo",
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=15,
+            )
+            user_r.raise_for_status()
+            user_info = user_r.json()
 
-        st.session_state.user_info = user_info
+            st.session_state.user_info = user_info
 
-        # Clear query params so refresh doesn't keep re-processing the code
-        try:
-            st.query_params.clear()
-        except Exception:
+            # Clear query params so refresh doesn't keep re-processing the code
             try:
-                st.experimental_set_query_params()
+                st.query_params.clear()
             except Exception:
-                pass
+                try:
+                    st.experimental_set_query_params()
+                except Exception:
+                    pass
 
-        st.rerun()
+            st.rerun()
 
-    except Exception as e:
-        st.error(f"Authentication Failed: {e}")
+        except Exception as e:
+            st.error(f"Authentication Failed: {e}")
 
-        # Clear query params so we can show login again
-        try:
-            st.query_params.clear()
-        except Exception:
+            # Clear query params so we can show login again
             try:
-                st.experimental_set_query_params()
+                st.query_params.clear()
             except Exception:
-                pass
+                try:
+                    st.experimental_set_query_params()
+                except Exception:
+                    pass
 
         # Important: allow the function to continue to the login button UI
         # (do NOT rerun here)
@@ -336,6 +335,7 @@ st.markdown(
 
 return None
 
+def logout():code = None
     if "user_info" in st.session_state:
         del st.session_state.user_info
     st.rerun()
