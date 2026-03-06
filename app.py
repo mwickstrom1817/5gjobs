@@ -1775,9 +1775,9 @@ with c_bk2:
     uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"])
     if uploaded_file is not None:
         if st.button("⚠️ Restore from Backup"):
-        try:
-            data = json.load(uploaded_file)
-            required_keys = ["jobs", "techs", "locations"]
+            try:
+                data = json.load(uploaded_file)
+                required_keys = ["jobs", "techs", "locations"]
 
             if all(k in data for k in required_keys):
                 st.session_state.jobs = data["jobs"]
