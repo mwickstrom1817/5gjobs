@@ -45,64 +45,20 @@ def init_db():
             cur.execute("SELECT to_regclass('app_state');")
             table_oid = cur.fetchone()[0]
             
-            if table_oid:
-                # Table exists. Perform migration if needed.
+            if not table_oid:
+                # Create table if it doesn't exist
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS app_state (
+                        key TEXT PRIMARY KEY,
+                        value JSONB,
+                        version SERIAL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
                 
-                # 1. Ensure 'key' column exists
-                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'key' AND NOT attisdropped", (table_oid,))
-                if not cur.fetchone():
-                    # 'key' missing. Check for 'id'
-                    cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'id' AND NOT attisdropped", (table_oid,))
-                    if cur.fetchone():
-                        # Rename 'id' to 'key'
-                        cur.execute("ALTER TABLE app_state RENAME COLUMN id TO key;")
-                        # Change type to TEXT if needed
-                        cur.execute("ALTER TABLE app_state ALTER COLUMN key TYPE TEXT;")
-                    else:
-                        # Neither 'key' nor 'id' exists. Add 'key'.
-                        cur.execute("ALTER TABLE app_state ADD COLUMN key TEXT PRIMARY KEY;")
-
-                # 2. Ensure 'value' column exists
-                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'value' AND NOT attisdropped", (table_oid,))
-                if not cur.fetchone():
-                    # 'value' missing. Check for 'data'
-                    cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'data' AND NOT attisdropped", (table_oid,))
-                    if cur.fetchone():
-                        # Rename 'data' to 'value'
-                        cur.execute("ALTER TABLE app_state RENAME COLUMN data TO value;")
-                    else:
-                        # Add 'value' column
-                        try:
-                            cur.execute("ALTER TABLE app_state ADD COLUMN value JSONB;")
-                        except Exception:
-                            # If adding column fails (e.g. weird state), force drop
-                            raise Exception("ForceRecreate")
-
-                # 3. Ensure 'version' column exists
-                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'version' AND NOT attisdropped", (table_oid,))
-                if not cur.fetchone():
-                    cur.execute("ALTER TABLE app_state ADD COLUMN version SERIAL;")
-
-                # 4. Ensure 'updated_at' column exists
-                cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = %s AND attname = 'updated_at' AND NOT attisdropped", (table_oid,))
-                if not cur.fetchone():
-                    cur.execute("ALTER TABLE app_state ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP;")
-
-            # Create table if it doesn't exist
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS app_state (
-                    key TEXT PRIMARY KEY,
-                    value JSONB,
-                    version SERIAL,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            
-            # Insert default if not exists
-            cur.execute("SELECT key FROM app_state WHERE key = 'global_state'")
-            if not cur.fetchone():
+                # Insert default if not exists
                 cur.execute(
-                    "INSERT INTO app_state (key, value) VALUES (%s, %s)",
+                    "INSERT INTO app_state (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     ('global_state', json.dumps(DEFAULT_DATA))
                 )
             
@@ -110,27 +66,8 @@ def init_db():
             
     except Exception as e:
         conn.rollback()
-        # If migration failed, try nuclear option: Drop and Recreate
-        # This is a fallback for the specific error "column value does not exist" persisting
-        try:
-            with conn.cursor() as cur:
-                cur.execute("DROP TABLE IF EXISTS app_state;")
-                cur.execute("""
-                    CREATE TABLE app_state (
-                        key TEXT PRIMARY KEY,
-                        value JSONB,
-                        version SERIAL,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                cur.execute(
-                    "INSERT INTO app_state (key, value) VALUES (%s, %s)",
-                    ('global_state', json.dumps(DEFAULT_DATA))
-                )
-            conn.commit()
-        except Exception as e2:
-            conn.rollback()
-            raise e2
+        # Log error but do not drop table
+        print(f"DB Init Error: {e}")
     finally:
         conn.close()
 
