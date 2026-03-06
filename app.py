@@ -1776,27 +1776,27 @@ with c_bk2:
     if uploaded_file is not None:
         if st.button("⚠️ Restore from Backup"):
             try:
-        data = json.load(uploaded_file)
-        required_keys = ["jobs", "techs", "locations"]
+                data = json.load(uploaded_file)
+                required_keys = ["jobs", "techs", "locations"]
 
-        if all(k in data for k in required_keys):
-            st.session_state.jobs = data["jobs"]
-            st.session_state.techs = data["techs"]
-            st.session_state.locations = data["locations"]
-            st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
-            st.session_state.adminEmails = data.get("adminEmails", [])
-            st.session_state.last_reminder_date = data.get("last_reminder_date")
+                if all(k in data for k in required_keys):
+                    st.session_state.jobs = data["jobs"]
+                    st.session_state.techs = data["techs"]
+                    st.session_state.locations = data["locations"]
+                    st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
+                    st.session_state.adminEmails = data.get("adminEmails", [])
+                    st.session_state.last_reminder_date = data.get("last_reminder_date")
 
-            ensure_loaded_into_session()  # ✅ REQUIRED
-            _sync_session_to_db()
-            force_overwrite_from_session(invalidate_briefing=False)
+                    ensure_loaded_into_session()  # ✅ REQUIRED
+                    _sync_session_to_db()
+                    force_overwrite_from_session(invalidate_briefing=False)
 
-            st.success("Data restored successfully (DB overwritten).")
-            st.rerun()
-        else:
-            st.error("Invalid backup file format.")
-    except Exception as e:
-        st.error(f"Error restoring file: {e}")
+                    st.success("Data restored successfully (DB overwritten).")
+                    st.rerun()
+                else:
+                    st.error("Invalid backup file format.")
+            except Exception as e:
+                st.error(f"Error restoring file: {e}")
 
 st.divider()
     
