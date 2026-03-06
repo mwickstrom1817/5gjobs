@@ -310,14 +310,14 @@ return None
 
     # 4. Show Login Button
 auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
-    params = {
+params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": "openid email profile",
         "access_type": "online", # Use online to avoid refresh token complexity unless needed
         "prompt": "select_account" # Force account selection to avoid auto-selecting wrong account
-    }
+}
     
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
