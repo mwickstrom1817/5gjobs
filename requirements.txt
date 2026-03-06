@@ -1,6 +1,10 @@
 streamlit
 google-generativeai
+pandas
+numpy
+requests
+Pillow
 reportlab
-boto3
-botocore
+streamlit-drawable-canvas
 psycopg2-binary
+boto3
