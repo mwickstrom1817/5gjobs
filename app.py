@@ -17,6 +17,16 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from PIL import Image
 from io import BytesIO
+from persistence_pg import (
+    ensure_loaded_into_session,
+    commit_from_session,
+    force_overwrite_from_session,
+    load_state,
+)
+from object_store import upload_streamlit_file, upload_bytes, get_view_url
+
+import io
+from reportlab.lib.utils import ImageReader
 
 # Try importing ReportLab for PDF generation
 try:
@@ -133,9 +143,30 @@ st.markdown("""
    </style>
 """, unsafe_allow_html=True)
 
-# --- PERSISTENCE LAYER ---
-# Use absolute path to ensure we know exactly where the file is
-DB_FILE = os.path.join(os.getcwd(), "service_data.json")
+# --- PERSISTENCE LAYER (Neon Postgres) ---
+def load_data():
+    """Loads data from Neon (app_state row)."""
+    ensure_loaded_into_session()
+    # make a copy to avoid accidental reference weirdness
+    data = dict(st.session_state.db)
+    return data
+
+def _sync_session_to_db():
+    """Push your convenience session_state fields into st.session_state.db before saving."""
+    ensure_loaded_into_session()
+    st.session_state.db["jobs"] = st.session_state.jobs
+    st.session_state.db["techs"] = st.session_state.techs
+    st.session_state.db["locations"] = st.session_state.locations
+    st.session_state.db["briefing"] = st.session_state.briefing
+    st.session_state.db["adminEmails"] = st.session_state.adminEmails
+    st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
+
+def save_state(invalidate_briefing=True):
+    """Saves current session state to Neon (conflict-safe)."""
+    if invalidate_briefing:
+        st.session_state.briefing = "Data required to generate briefing."
+    _sync_session_to_db()
+    commit_from_session(invalidate_briefing=invalidate_briefing)
 
 # Define Image Storage Directory
 IMAGES_DIR = os.path.join(os.getcwd(), "job_photos")
@@ -186,8 +217,7 @@ def save_state(invalidate_briefing=True):
         st.error(f"Failed to save data: {e}")
 
 # --- SESSION STATE INITIALIZATION ---
-# Load persistent data only if not present or forced
-if 'jobs' not in st.session_state or st.session_state.get('force_reload'):
+if 'jobs' not in st.session_state:
     db_data = load_data()
     st.session_state.jobs = db_data['jobs']
     st.session_state.techs = db_data['techs']
@@ -331,6 +361,10 @@ def logout():
 
 @st.cache_resource
 class SystemLogger:
+
+
+
+
     def __init__(self):
         self.logs = []
         self.lock = threading.Lock()
@@ -406,10 +440,26 @@ def get_tech(tech_id):
 def get_location(loc_id):
     return next((l for l in st.session_state.locations if l['id'] == loc_id), None)
 
-def save_image_locally(uploaded_file):
-    """Saves an uploaded file or camera input to disk and returns the relative path."""
-    if uploaded_file is None:
+def resolve_image_source(photo_source: str):
+    """
+    Supports:
+    - R2 object keys like 'photos/...', 'signatures/...'
+    - legacy local paths (if any remain)
+    """
+    if not photo_source:
         return None
+
+    # If it looks like an R2 key, turn into a signed URL
+    if isinstance(photo_source, str) and (photo_source.startswith("photos/") or photo_source.startswith("signatures/")):
+        return get_view_url(photo_source)
+
+    # fallback: local paths or base64 (legacy)
+    return photo_source
+
+
+def save_image_locally(uploaded_file):
+    """Uploads an uploaded file/camera input to R2 and returns the object key."""
+    return upload_streamlit_file(uploaded_file, folder="photos")
     
     # Determine extension
     if hasattr(uploaded_file, 'name') and uploaded_file.name:
@@ -677,13 +727,20 @@ def generate_job_pdf(job, tech, location, report):
     p.drawText(text_object)
     
     # Signature
-    signature_path = report.get('signature_path')
-    if signature_path and os.path.exists(signature_path):
+    signature_key = report.get('signature_key')
+if signature_key:
+    try:
+        sig_url = get_view_url(signature_key, expires_seconds=3600)
+        sig_bytes = requests.get(sig_url, timeout=10).content
+        sig_reader = ImageReader(BytesIO(sig_bytes))
+
         y -= 60
-        p.drawImage(signature_path, 50, y, width=150, height=50, mask='auto')
+        p.drawImage(sig_reader, 50, y, width=150, height=50, mask='auto')
         p.setFont("Helvetica-Oblique", 8)
         p.drawString(50, y-10, "Customer Digital Signature")
         y -= 20
+    except Exception as e:
+        print(f"Error adding signature to PDF: {e}")
 
     # Photos Section
     photos = report.get('photos', [])
@@ -705,34 +762,32 @@ def generate_job_pdf(job, tech, location, report):
         
         col = 0
         
-        for photo_path in photos:
-            if os.path.exists(photo_path):
-                try:
-                    # Check for page break
-                    if y - img_height < 50:
-                        p.showPage()
-                        y = height - 50
-                        p.setFont("Helvetica-Bold", 14)
-                        p.drawString(50, y, "SITE PHOTOS (Cont.)")
-                        y -= 30
-                        col = 0 # Reset column
-                    
-                    x = x_start + (col * (img_width + gap_x))
-                    
-                    # Draw Image (y is bottom-left of image in reportlab)
-                    # We want to draw *downwards*, so we subtract height from current y
-                    draw_y = y - img_height
-                    
-                    p.drawImage(photo_path, x, draw_y, width=img_width, height=img_height, preserveAspectRatio=True, anchor='c')
-                    
-                    # Move column
-                    col += 1
-                    if col > 1: # 2 columns (0, 1)
-                        col = 0
-                        y -= (img_height + gap_y)
-                        
-                except Exception as e:
-                    print(f"Error adding photo to PDF: {e}")
+        for photo_key in photos:
+    try:
+        photo_url = get_view_url(photo_key, expires_seconds=3600)
+        img_bytes = requests.get(photo_url, timeout=15).content
+        img_reader = ImageReader(BytesIO(img_bytes))
+
+        if y - img_height < 50:
+            p.showPage()
+            y = height - 50
+            p.setFont("Helvetica-Bold", 14)
+            p.drawString(50, y, "SITE PHOTOS (Cont.)")
+            y -= 30
+            col = 0
+
+        x = x_start + (col * (img_width + gap_x))
+        draw_y = y - img_height
+        p.drawImage(img_reader, x, draw_y, width=img_width, height=img_height,
+                    preserveAspectRatio=True, anchor='c')
+
+        col += 1
+        if col > 1:
+            col = 0
+            y -= (img_height + gap_y)
+
+    except Exception as e:
+        print(f"Error adding remote photo to PDF: {e}")
 
     p.showPage()
     p.save()
@@ -1326,23 +1381,25 @@ def render_completion_confirmation(job_index, report_payload):
         if c2: checklist.append("Tiles Replaced")
         if c3: checklist.append("Trash Taken Out")
         
-        # Handle Signature
-        if HAS_CANVAS and signature_data is not None:
-            # Check if canvas is not empty (simple check on alpha channel or sum)
-            if signature_data.sum() > 0:
-                # Convert numpy array to image bytes
-                try:
-                    img = Image.fromarray(signature_data.astype('uint8'), 'RGBA')
-                    # Save signature to disk
-                    sig_filename = f"sig_{job['id']}_{datetime.datetime.now().timestamp()}.png"
-                    sig_path = os.path.join(IMAGES_DIR, sig_filename)
-                    img.save(sig_path)
-                    report_payload['signature_path'] = sig_path
-                    checklist.append("Customer Signed (Digital)")
-                except Exception as e:
-                    st.error(f"Error saving signature: {e}")
-        elif not HAS_CANVAS and 'signed_name' in locals() and signed_name:
-             checklist.append(f"Customer Signed: {signed_name}")
+       # Handle Signature (R2)
+if HAS_CANVAS and signature_data is not None:
+    # Basic "not empty" check
+    if signature_data.sum() > 0:
+        try:
+            # signature_data is a numpy array (H, W, 4) RGBA
+            img = Image.fromarray(signature_data.astype("uint8"), "RGBA")
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            buf.seek(0)
+
+            sig_key = f"signatures/{job['id']}_{datetime.datetime.utcnow().timestamp()}.png"
+            upload_bytes(buf.getvalue(), sig_key, content_type="image/png")
+
+            report_payload["signature_key"] = sig_key
+            checklist.append("Customer Signed (Digital)")
+        except Exception as e:
+            st.error(f"Error uploading signature: {e}")
 
         report_payload['completion_checklist'] = checklist
         
@@ -1505,7 +1562,7 @@ def job_details_dialog(job_id):
                     for i, photo_source in enumerate(r['photos']):
                         with cols[i % 4]:
                             # st.image handles both Base64 and File Paths automatically
-                            st.image(photo_source, use_container_width=True)
+                            st.image(resolve_image_source(photo_source), use_container_width=True)
 
     with tab_progress:
         st.write("#### 📸 Quick Update")
@@ -1788,7 +1845,10 @@ def render_admin_panel():
             st.rerun()
     with c_db2:
         if st.button("💾 Force Save State"):
-            save_state()
+            _sync_session_to_db()
+force_overwrite_from_session(invalidate_briefing=False)
+st.success("Data restored successfully (DB overwritten).")
+st.rerun()
             st.toast("State saved to disk.", icon="💾")
             
     st.divider()
