@@ -1806,6 +1806,123 @@ def render_analytics_dashboard():
 
     # --- ADMIN ACCESS MANAGEMENT ---
 def render_admin_panel():
+    # --- SMTP CONFIG ---
+    st.subheader("📧 SMTP Configuration")
+    with st.expander("Configure Email Settings", expanded=False):
+        with st.form("smtp_config_form"):
+            # Load existing from session or secrets
+            current_smtp = st.session_state.get('smtp_settings', {})
+            
+            # Fallback to secrets if not in session
+            if not current_smtp:
+                current_smtp = {
+                    "SMTP_SERVER": st.secrets.get("SMTP_SERVER", ""),
+                    "SMTP_PORT": st.secrets.get("SMTP_PORT", 587),
+                    "SMTP_EMAIL": st.secrets.get("SMTP_EMAIL", ""),
+                    "SMTP_PASSWORD": st.secrets.get("SMTP_PASSWORD", "")
+                }
+
+            s_server = st.text_input("SMTP Server", value=current_smtp.get("SMTP_SERVER", ""))
+            s_port = st.number_input("SMTP Port", value=int(current_smtp.get("SMTP_PORT", 587)))
+            s_email = st.text_input("Sender Email", value=current_smtp.get("SMTP_EMAIL", ""))
+            s_pass = st.text_input("Sender Password", value=current_smtp.get("SMTP_PASSWORD", ""), type="password")
+            
+            if st.form_submit_button("Save SMTP Settings"):
+                st.session_state.smtp_settings = {
+                    "SMTP_SERVER": s_server,
+                    "SMTP_PORT": s_port,
+                    "SMTP_EMAIL": s_email,
+                    "SMTP_PASSWORD": s_pass
+                }
+                st.success("SMTP Settings Saved to Session (Temporary)")
+    
+    st.divider()
+
+    # --- TECH MANAGEMENT ---
+    st.subheader("👷 Manage Technicians")
+    with st.expander("Add / Remove Technicians", expanded=False):
+        # Add Tech
+        with st.form("add_tech_form"):
+            c1, c2, c3 = st.columns([2, 2, 1])
+            new_tech_name = c1.text_input("Name")
+            new_tech_email = c2.text_input("Email")
+            new_tech_initials = c3.text_input("Initials (2 chars)", max_chars=2)
+            
+            if st.form_submit_button("Add Technician"):
+                if new_tech_name and new_tech_email and new_tech_initials:
+                    new_id = f"t{len(st.session_state.techs) + 1}"
+                    import random
+                    color = random.choice(TECH_COLORS)
+                    
+                    st.session_state.techs.append({
+                        "id": new_id,
+                        "name": new_tech_name,
+                        "email": new_tech_email,
+                        "initials": new_tech_initials.upper(),
+                        "color": color
+                    })
+                    save_state(invalidate_briefing=False)
+                    st.success(f"Added {new_tech_name}")
+                    st.rerun()
+                else:
+                    st.error("All fields required.")
+
+        # List / Remove Techs
+        if st.session_state.techs:
+            st.write("###### Current Technicians")
+            for t in st.session_state.techs:
+                c1, c2, c3, c4 = st.columns([1, 3, 4, 1])
+                c1.markdown(f"**{t['initials']}**")
+                c2.write(t['name'])
+                c3.write(t['email'])
+                if c4.button("🗑️", key=f"del_tech_{t['id']}"):
+                    st.session_state.techs.remove(t)
+                    save_state(invalidate_briefing=False)
+                    st.rerun()
+
+    st.divider()
+
+    # --- LOCATION MANAGEMENT ---
+    st.subheader("📍 Manage Locations")
+    with st.expander("Add / Remove Locations", expanded=False):
+        # Add Location
+        with st.form("add_loc_form"):
+            l_name = st.text_input("Location Name")
+            l_addr = st.text_input("Address")
+            l_maps = st.text_input("Google Maps Link (Optional)")
+            
+            if st.form_submit_button("Add Location"):
+                if l_name and l_addr:
+                    # Auto-suggest address if API key exists
+                    final_addr = suggest_address_with_gemini(l_addr)
+                    
+                    new_loc = {
+                        "id": f"l{len(st.session_state.locations) + 1}",
+                        "name": l_name,
+                        "address": final_addr,
+                        "mapsUrl": l_maps
+                    }
+                    st.session_state.locations.append(new_loc)
+                    save_state(invalidate_briefing=False)
+                    st.success(f"Added {l_name}")
+                    st.rerun()
+                else:
+                    st.error("Name and Address required.")
+
+        # List / Remove Locations
+        if st.session_state.locations:
+            st.write("###### Current Locations")
+            for l in st.session_state.locations:
+                c1, c2, c3 = st.columns([3, 4, 1])
+                c1.write(l['name'])
+                c2.caption(l['address'])
+                if c3.button("🗑️", key=f"del_loc_{l['id']}"):
+                    st.session_state.locations.remove(l)
+                    save_state(invalidate_briefing=False)
+                    st.rerun()
+
+    st.divider()
+
     st.subheader("Database Management")
 
     c_db1, c_db2 = st.columns(2)
