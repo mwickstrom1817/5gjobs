@@ -5,6 +5,7 @@ import mimetypes
 try:
     import boto3
     from botocore.exceptions import ClientError
+    from botocore.config import Config
     HAS_BOTO3 = True
 except ImportError:
     HAS_BOTO3 = False
@@ -29,12 +30,27 @@ def get_r2_client():
 
     if not (access_key_id and secret_access_key):
         return None
+    
+    # R2 requires s3v4 signature and often region='auto'
+    config = Config(signature_version='s3v4')
+    region_name = None
+    
+    if endpoint_url:
+        endpoint_url = endpoint_url.strip().rstrip('/')
+        if "r2.cloudflarestorage.com" in endpoint_url:
+            region_name = "auto"
+    
+    # If region is still None, and no env var is set, default to us-east-1 to prevent "NoRegionError"
+    if region_name is None and not os.environ.get("AWS_DEFAULT_REGION") and not os.environ.get("AWS_REGION"):
+        region_name = "us-east-1"
         
     return boto3.client(
         's3',
         endpoint_url=endpoint_url, # Can be None for standard AWS
         aws_access_key_id=access_key_id,
-        aws_secret_access_key=secret_access_key
+        aws_secret_access_key=secret_access_key,
+        config=config,
+        region_name=region_name
     )
 
 def get_bucket_name():
