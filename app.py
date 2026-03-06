@@ -1838,7 +1838,7 @@ def render_admin_panel():
 force_overwrite_from_session(invalidate_briefing=False)
 st.success("Data restored successfully (DB overwritten).")
 st.rerun()
-    st.toast("State saved to disk.", icon="💾")
+st.toast("State saved to disk.", icon="💾")
             
     st.divider()
     
