@@ -220,7 +220,25 @@ TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12',
 # --- AUTHENTICATION ---
 
 def authenticate():
-# --- 3) Check for Auth Code from Google Redirect ---
+    """Handles Google OAuth2 Flow. Returns user_info dict if logged in, else None."""
+
+    # 1) If already logged in, return user info
+    if "user_info" in st.session_state:
+        return st.session_state.user_info
+
+    # 2) Setup OAuth Config
+    client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
+    redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI")
+
+    if not (client_id and client_secret and redirect_uri):
+        st.error(
+            "🔒 Google OAuth is not configured. Please add `GOOGLE_CLIENT_ID`, "
+            "`GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to Streamlit secrets."
+        )
+        return None
+
+    # 3) Check for Auth Code from Google Redirect
     code = None
     try:
         if "code" in st.query_params:
@@ -249,7 +267,8 @@ def authenticate():
                 "client_secret": client_secret,
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
-        }
+            }
+
             r = requests.post(token_url, data=data, timeout=15)
             r.raise_for_status()
             tokens = r.json()
@@ -288,58 +307,57 @@ def authenticate():
                 except Exception:
                     pass
 
-        # Important: allow the function to continue to the login button UI
-        # (do NOT rerun here)
-        code = None
+            # Allow the function to continue to the login button UI (no rerun)
+            code = None
 
-# --- 4) Show Login Button ---
-auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
-params = {
-    "client_id": client_id,
-    "redirect_uri": redirect_uri,
-    "response_type": "code",
-    "scope": "openid email profile",
-    "access_type": "online",
-    "prompt": "select_account",
-}
-login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
+    # 4) Show Login Button
+    auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "access_type": "online",
+        "prompt": "select_account",
+    }
+    login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
-st.markdown(
-    f"""
-    <div class="login-container">
-        <div class="login-box">
-            <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
-            <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
-            <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
-                display: inline-block;
-                background-color: #DB4437;
-                color: white;
-                padding: 12px 24px;
-                text-decoration: none;
-                border-radius: 6px;
-                font-weight: bold;
-                font-family: sans-serif;
-                box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-            ">
-                Sign in with Google
-            </a>
-            <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
-                Ensure <code>{redirect_uri}</code> is added to <br/>
-                "Authorized redirect URIs" in Google Cloud Console.
-            </p>
+    st.markdown(
+        f"""
+        <div class="login-container">
+            <div class="login-box">
+                <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
+                <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
+                <a href="{login_url}" target="_top" rel="noopener noreferrer" style="
+                    display: inline-block;
+                    background-color: #DB4437;
+                    color: white;
+                    padding: 12px 24px;
+                    text-decoration: none;
+                    border-radius: 6px;
+                    font-weight: bold;
+                    font-family: sans-serif;
+                    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                ">
+                    Sign in with Google
+                </a>
+                <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
+                    Ensure <code>{redirect_uri}</code> is added to <br/>
+                    "Authorized redirect URIs" in Google Cloud Console.
+                </p>
+            </div>
         </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+        """,
+        unsafe_allow_html=True,
+    )
 
-return None
+    return None
 
-def logout():code = None
-if "user_info" in st.session_state:
+
+def logout():
+    if "user_info" in st.session_state:
         del st.session_state.user_info
-st.rerun()
-
+    st.rerun()
 # --- HELPER FUNCTIONS ---
 
 @st.cache_resource
