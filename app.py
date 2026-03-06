@@ -179,7 +179,7 @@ def init_db_session():
     try:
         ensure_loaded_into_session()
     except Exception as e:
-        print(f"DB init warning: {e}")
+        pass # print(f"DB init warning: {e}")
 
 init_db_session()
 
@@ -391,8 +391,8 @@ def keep_awake():
                 requests.get(primary_url, timeout=5)
                 msg = f"Keep-awake ping successful to {primary_url}"
                 # Only log to console periodically
-                if datetime.datetime.now().minute % 10 == 0:
-                    print(f"{datetime.datetime.now()}: {msg}")
+                # if datetime.datetime.now().minute % 10 == 0:
+                #     pass
                 logger.log(msg)
             except Exception as e:
                 # Fallback only if primary fails
@@ -403,7 +403,7 @@ def keep_awake():
                     logger.log(msg)
                 except Exception:
                     msg = f"Keep-awake ping failed: {e}"
-                    print(f"{datetime.datetime.now()}: {msg}")
+                    # print(f"{datetime.datetime.now()}: {msg}")
                     logger.log(msg)
             
             # Wait for next ping
@@ -416,11 +416,11 @@ def keep_awake():
     # Check for old threads and log them (we can't kill them easily, but good to know)
     for t in threading.enumerate():
         if t.name == "keep_awake_thread":
-            print(f"WARNING: Found zombie thread '{t.name}' still running.")
+            pass # print(f"WARNING: Found zombie thread '{t.name}' still running.")
         if t.name == thread_name:
             return
 
-    print(f"Starting {thread_name} background thread...")
+    # print(f"Starting {thread_name} background thread...")
     thread = threading.Thread(target=run, name=thread_name, daemon=True)
     thread.start()
 
@@ -710,7 +710,7 @@ def generate_job_pdf(job, tech, location, report):
             p.drawString(50, y - 10, "Customer Digital Signature")
             y -= 20
         except Exception as e:
-            print(f"Error adding signature to PDF: {e}")
+            pass # print(f"Error adding signature to PDF: {e}")
 
     # Photos Section
     photos = report.get("photos", [])
@@ -763,7 +763,7 @@ def generate_job_pdf(job, tech, location, report):
                     y -= (img_height + gap_y)
 
             except Exception as e:
-                print(f"Error adding remote photo to PDF: {e}")
+                pass # print(f"Error adding remote photo to PDF: {e}")
 
     p.showPage()
     p.save()
@@ -813,7 +813,7 @@ def send_assignment_email(job, tech, location):
 
     # If no credentials, we return False to trigger fallback UI
     if not (smtp_server and sender_email and sender_password):
-        print(f"SMTP not configured. Skipping auto-email for: {tech['email']}")
+        # print(f"SMTP not configured. Skipping auto-email for: {tech['email']}")
         return False
 
     msg = MIMEMultipart()
@@ -839,7 +839,7 @@ def send_assignment_email(job, tech, location):
         return True
     except Exception as e:
         st.error(f"Failed to send email: {str(e)}")
-        print(f"Email Error: {str(e)}")
+        # print(f"Email Error: {str(e)}")
         return False
 
 def send_completion_email(job, tech, location, report_data):
@@ -879,7 +879,7 @@ def send_completion_email(job, tech, location, report_data):
    """
 
     if not (smtp_server and sender_email and sender_password):
-        print("SMTP not configured. Skipping admin completion email.")
+        # print("SMTP not configured. Skipping admin completion email.")
         return
 
     try:
@@ -911,7 +911,7 @@ def send_completion_email(job, tech, location, report_data):
         server.quit()
         st.toast("📧 Completion notification sent to Admins", icon="✅")
     except Exception as e:
-        print(f"Email Error: {str(e)}")
+        # print(f"Email Error: {str(e)}")
         st.error(f"Failed to send email: {str(e)}")
 
 def send_daily_report_email(job, tech, location, report_data):
@@ -984,7 +984,7 @@ def send_daily_report_email(job, tech, location, report_data):
         server.quit()
         st.toast("📧 Daily Report sent to Admins", icon="✅")
     except Exception as e:
-        print(f"Email Error: {str(e)}")
+        # print(f"Email Error: {str(e)}")
         st.error(f"Failed to send email: {str(e)}")
 
 def send_daily_reminders():
@@ -1084,7 +1084,7 @@ Please check the 5G Security Job Board for full details and to log your work.
             st.toast(f"📧 Sent daily reminders to {techs_emailed} technicians.", icon="✅")
             
     except Exception as e:
-        print(f"Daily Reminder Error: {e}")
+        pass # print(f"Daily Reminder Error: {e}")
 
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
