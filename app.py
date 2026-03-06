@@ -321,7 +321,7 @@ params = {
     
 login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
- st.markdown(f"""
+st.markdown(f"""
        <div class="login-container">
            <div class="login-box">
                <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
