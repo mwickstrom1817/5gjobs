@@ -1769,9 +1769,9 @@ def render_admin_panel():
     with c_db2:
         if st.button("💾 Force Save State"):
             _sync_session_to_db()
-force_overwrite_from_session(invalidate_briefing=False)
-st.success("Data restored successfully (DB overwritten).")
-st.rerun()
+            force_overwrite_from_session(invalidate_briefing=False)
+            st.success("Data restored successfully (DB overwritten).")
+            st.rerun()
 st.toast("State saved to disk.", icon="💾")
             
 st.divider()
