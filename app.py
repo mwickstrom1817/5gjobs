@@ -1782,50 +1782,55 @@ with c_bk2:
 
 st.divider()
     
-    # --- ANALYTICS SECTION ---
-    with st.expander("📊 View Analytics Dashboard", expanded=False):
-        render_analytics_dashboard()
-        
-    st.divider()
+# --- ANALYTICS SECTION ---
+with st.expander("📊 View Analytics Dashboard", expanded=False):
+    render_analytics_dashboard()
 
-    # --- SYSTEM LOGS ---
-    st.subheader("📝 System Logs")
-    with st.expander("View Background Activity", expanded=False):
-        st.caption("Recent keep-awake pings and system events.")
-        
-        c_log1, c_log2 = st.columns([3, 1])
-        with c_log2:
-            if st.button("⚡ Test Ping Now"):
-                endpoints = [
-                    "http://localhost:8501/_stcore/health",
-                    "http://127.0.0.1:8501/_stcore/health"
-                ]
-                success = False
-                for url in endpoints:
-                    try:
-                        requests.get(url, timeout=2)
-                        get_logger().log(f"Manual ping successful to {url}")
-                        st.toast(f"Ping successful to {url}!", icon="✅")
-                        success = True
-                        break
-                    except Exception as e:
-                        pass
-                
-                if not success:
-                    get_logger().log("Manual ping failed on all endpoints.")
-                    st.error("Ping failed on all endpoints.")
-                st.rerun()
-        
-        logger = get_logger()
-        logs = logger.get_logs()
-        if logs:
-            st.code("\n".join(logs), language="text")
-            if st.button("Refresh Logs"):
-                st.rerun()
-        else:
-            st.info("No logs recorded yet.")
+st.divider()
 
-    st.divider()
+# --- SYSTEM LOGS ---
+st.subheader("📝 System Logs")
+with st.expander("View Background Activity", expanded=False):
+    st.caption("Recent keep-awake pings and system events.")
+
+    c_log1, c_log2 = st.columns([3, 1])
+
+    with c_log2:
+        if st.button("⚡ Test Ping Now"):
+            endpoints = [
+                "http://localhost:8501/_stcore/health",
+                "http://127.0.0.1:8501/_stcore/health"
+            ]
+
+            success = False
+
+            for url in endpoints:
+                try:
+                    requests.get(url, timeout=2)
+                    get_logger().log(f"Manual ping successful to {url}")
+                    st.toast(f"Ping successful to {url}!", icon="✅")
+                    success = True
+                    break
+                except Exception:
+                    pass
+
+            if not success:
+                get_logger().log("Manual ping failed on all endpoints.")
+                st.error("Ping failed on all endpoints.")
+
+            st.rerun()
+
+    logger = get_logger()
+    logs = logger.get_logs()
+
+    if logs:
+        st.code("\n".join(logs), language="text")
+        if st.button("Refresh Logs"):
+            st.rerun()
+    else:
+        st.info("No logs recorded yet.")
+
+st.divider()
 
     # --- ADMIN ACCESS MANAGEMENT ---
 def render_admin_panel():
