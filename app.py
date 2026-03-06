@@ -336,7 +336,7 @@ st.markdown(
 return None
 
 def logout():code = None
-    if "user_info" in st.session_state:
+if "user_info" in st.session_state:
         del st.session_state.user_info
     st.rerun()
 
