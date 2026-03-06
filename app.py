@@ -1774,7 +1774,7 @@ with c_bk2:
     # Restore
     uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"])
     if uploaded_file is not None:
-if st.button("⚠️ Restore from Backup"):
+        if st.button("⚠️ Restore from Backup"):
     try:
         data = json.load(uploaded_file)
         required_keys = ["jobs", "techs", "locations"]
