@@ -763,7 +763,7 @@ if signature_key:
         col = 0
         
         for photo_key in photos:
-    try:
+            try:
         photo_url = get_view_url(photo_key, expires_seconds=3600)
         img_bytes = requests.get(photo_url, timeout=15).content
         img_reader = ImageReader(BytesIO(img_bytes))
