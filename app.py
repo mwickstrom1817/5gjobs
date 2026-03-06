@@ -2062,12 +2062,32 @@ def render_admin_panel():
                     elif not bucket:
                         st.error("❌ Bucket name is missing (R2_BUCKET_NAME).")
                     else:
+                        # Display configuration details (masked)
+                        endpoint = s3.meta.endpoint_url
+                        region = s3.meta.region_name
+                        
+                        st.info(f"**Endpoint:** `{endpoint}`")
+                        st.info(f"**Bucket:** `{bucket}`")
+                        st.info(f"**Region:** `{region}`")
+                        
+                        if endpoint and bucket in endpoint:
+                            st.warning("⚠️ **Potential Configuration Issue:** The Bucket Name appears to be part of the Endpoint URL. R2 Endpoint URLs should usually end with `.r2.cloudflarestorage.com` and NOT include the bucket name.")
+
                         # Try listing objects (lightweight check)
                         s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
                         st.success(f"✅ Successfully connected to bucket: `{bucket}`")
                         st.toast("Storage connection verified!", icon="✅")
                 except Exception as e:
                     st.error(f"❌ Connection failed: {e}")
+                    # Check for common errors
+                    if "InvalidAccessKeyId" in str(e):
+                        st.warning("💡 **Tip:** Double-check your Access Key ID. Ensure no leading/trailing spaces.")
+                    elif "SignatureDoesNotMatch" in str(e):
+                        st.warning("💡 **Tip:** Double-check your Secret Access Key. Ensure no leading/trailing spaces.")
+                    elif "NoSuchBucket" in str(e):
+                        st.warning(f"💡 **Tip:** The bucket `{bucket}` does not exist or is not accessible with these credentials.")
+                    elif "EndpointConnectionError" in str(e):
+                         st.warning("💡 **Tip:** Could not connect to the endpoint URL. Check for typos.")
 
     st.divider()
 
