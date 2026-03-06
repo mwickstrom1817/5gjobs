@@ -742,32 +742,13 @@ if signature_key:
     except Exception as e:
         print(f"Error adding signature to PDF: {e}")
 
-    # Photos Section
-    photos = report.get('photos', [])
-    if photos:
-        p.showPage() # Finish text page, start photo page
-        
-        # Reset Y for new page
-        y = height - 50
-        p.setFont("Helvetica-Bold", 14)
-        p.drawString(50, y, "SITE PHOTOS")
-        y -= 30
-        
-        # Grid settings
-        x_start = 50
-        img_width = 250
-        img_height = 200
-        gap_x = 20
-        gap_y = 20
-        
-        col = 0
-        
-        for photo_key in photos:
-            try:
-                photo_url = get_view_url(photo_key, expires_seconds=3600)
-                img_bytes = requests.get(photo_url, timeout=15).content
-                img_reader = ImageReader(BytesIO(img_bytes))
+for photo_key in photos:
+    try:
+        photo_url = get_view_url(photo_key, expires_seconds=3600)
+        img_bytes = requests.get(photo_url, timeout=15).content
+        img_reader = ImageReader(BytesIO(img_bytes))
 
+        # Check for page break
         if y - img_height < 50:
             p.showPage()
             y = height - 50
@@ -778,11 +759,19 @@ if signature_key:
 
         x = x_start + (col * (img_width + gap_x))
         draw_y = y - img_height
-        p.drawImage(img_reader, x, draw_y, width=img_width, height=img_height,
-                    preserveAspectRatio=True, anchor='c')
+
+        p.drawImage(
+            img_reader,
+            x,
+            draw_y,
+            width=img_width,
+            height=img_height,
+            preserveAspectRatio=True,
+            anchor='c'
+        )
 
         col += 1
-        if col > 1:
+        if col > 1:  # 2 columns
             col = 0
             y -= (img_height + gap_y)
 
