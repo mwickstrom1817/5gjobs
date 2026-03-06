@@ -221,7 +221,8 @@ TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12',
 
 def authenticate():
 # --- 3) Check for Auth Code from Google Redirect ---
-code = None
+    
+def logout():code = None
 try:
     if "code" in st.query_params:
         code = st.query_params["code"]
@@ -335,7 +336,6 @@ st.markdown(
 
 return None
 
-def logout():
     if "user_info" in st.session_state:
         del st.session_state.user_info
     st.rerun()
