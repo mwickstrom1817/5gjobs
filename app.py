@@ -662,25 +662,46 @@ def get_weather(lat, lon):
         lon = float(lon)
         
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=auto"
-        r = requests.get(url, timeout=2)
+        r = requests.get(url, timeout=5)
+        
+        if r.status_code != 200:
+            return None
+            
         data = r.json()
+        
+        if 'error' in data:
+            return None
+
         current = data.get('current', {})
         temp = current.get('temperature_2m')
         code = current.get('weather_code')
         
+        if temp is None:
+            return None
+            
+        # Ensure temp is a valid number
+        try:
+            float(temp)
+        except (ValueError, TypeError):
+            return None
+        
         # Simple WMO code map
         condition = "Unknown"
         if code is not None:
-            if code == 0: condition = "☀️ Clear"
-            elif code in [1, 2, 3]: condition = "⛅ Partly Cloudy"
-            elif code in [45, 48]: condition = "🌫️ Foggy"
-            elif code in [51, 53, 55]: condition = "🌧️ Drizzle"
-            elif code in [61, 63, 65]: condition = "🌧️ Rain"
-            elif code in [71, 73, 75]: condition = "❄️ Snow"
-            elif code in [95, 96, 99]: condition = "⛈️ Thunderstorm"
+            try:
+                code = int(code)
+                if code == 0: condition = "☀️ Clear"
+                elif code in [1, 2, 3]: condition = "⛅ Partly Cloudy"
+                elif code in [45, 48]: condition = "🌫️ Foggy"
+                elif code in [51, 53, 55]: condition = "🌧️ Drizzle"
+                elif code in [61, 63, 65]: condition = "🌧️ Rain"
+                elif code in [71, 73, 75]: condition = "❄️ Snow"
+                elif code in [95, 96, 99]: condition = "⛈️ Thunderstorm"
+            except (ValueError, TypeError):
+                pass
             
         return f"{condition} {temp}°F"
-    except:
+    except Exception as e:
         return None
 
 def create_ics_file(job, location):
