@@ -570,6 +570,47 @@ def suggest_address_with_gemini(partial_address):
     except:
         return partial_address
 
+def create_ics_file(job, location):
+    """Generates an iCalendar (.ics) file content for the job."""
+    try:
+        # Parse job date
+        if 'T' in job['date']:
+            dt_start = datetime.datetime.fromisoformat(job['date'])
+        else:
+            dt_start = datetime.datetime.strptime(job['date'][:10], "%Y-%m-%d")
+            # Default to 9 AM if no time
+            dt_start = dt_start.replace(hour=9, minute=0)
+            
+        # Assume 2 hour duration default
+        dt_end = dt_start + datetime.timedelta(hours=2)
+        
+        # Format dates for ICS (YYYYMMDDTHHMMSSZ)
+        # We'll use floating time (no Z) to respect local time of the user/device
+        fmt = "%Y%m%dT%H%M%S"
+        start_str = dt_start.strftime(fmt)
+        end_str = dt_end.strftime(fmt)
+        now_str = datetime.datetime.now().strftime(fmt)
+        
+        loc_str = f"{location['name']} - {location['address']}" if location else "Unknown Location"
+        desc = f"Priority: {job['priority']}\\nType: {job['type']}\\n\\n{job['description']}"
+        
+        ics_content = f"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//5G Security//Job Board//EN
+BEGIN:VEVENT
+UID:{job['id']}@5gsecurity.app
+DTSTAMP:{now_str}
+DTSTART:{start_str}
+DTEND:{end_str}
+SUMMARY:🛡️ {job['title']}
+DESCRIPTION:{desc}
+LOCATION:{loc_str}
+END:VEVENT
+END:VCALENDAR"""
+        return ics_content
+    except Exception as e:
+        return None
+
 def download_data_as_csv():
     # Convert jobs to CSV
     if st.session_state.jobs:
@@ -1464,6 +1505,16 @@ def job_details_dialog(job_id):
             mailto_url = create_mailto_link(job, tech, loc)
             st.link_button("📧 Email Assignment to Tech", mailto_url)
 
+        # CALENDAR INVITE (.ics)
+        ics_data = create_ics_file(job, loc)
+        if ics_data:
+            st.download_button(
+                label="📅 Add to Calendar",
+                data=ics_data,
+                file_name=f"job_{job['id']}.ics",
+                mime="text/calendar",
+            )
+
         # PDF DOWNLOAD
         # Find the most relevant report (Completion > Latest Daily)
         relevant_report = None
@@ -1865,6 +1916,59 @@ def render_analytics_dashboard():
         st.markdown("#### Jobs by Type")
         type_counts = df["type"].value_counts()
         st.bar_chart(type_counts)
+
+    st.divider()
+    
+    # --- AI PARTS ANALYSIS ---
+    st.markdown("#### 🔩 AI Parts Usage Tracker")
+    st.caption("Uses Gemini to extract and aggregate parts data from unstructured technician notes.")
+    
+    if st.button("🤖 Analyze Parts Usage"):
+        with st.spinner("Analyzing all job reports..."):
+            # 1. Gather all "Parts Used" text
+            all_parts_text = []
+            for j in st.session_state.jobs:
+                for r in j.get('reports', []):
+                    if r.get('partsUsed'):
+                        all_parts_text.append(f"- {r['partsUsed']}")
+            
+            if not all_parts_text:
+                st.warning("No parts usage recorded in reports yet.")
+            else:
+                # 2. Send to Gemini
+                api_key = get_api_key()
+                if api_key:
+                    model = get_available_model(api_key)
+                    prompt = f"""
+                    Analyze the following list of "Parts Used" entries from technician reports.
+                    Consolidate them into a single JSON object where keys are the standardized part names (e.g., "Cat6 Cable", "NVR Power Supply") and values are the total estimated quantity used (integer).
+                    Ignore vague entries like "none" or "N/A".
+                    
+                    Input List:
+                    {chr(10).join(all_parts_text)}
+                    
+                    Return ONLY valid JSON. Example: {{"Cat6 Cable (ft)": 500, "RJ45 Jacks": 10}}
+                    """
+                    try:
+                        response = model.generate_content(prompt)
+                        # Clean response to ensure just JSON
+                        json_str = response.text.strip()
+                        if "```json" in json_str:
+                            json_str = json_str.split("```json")[1].split("```")[0]
+                        elif "```" in json_str:
+                            json_str = json_str.split("```")[1].split("```")[0]
+                            
+                        parts_data = json.loads(json_str)
+                        
+                        if parts_data:
+                            st.bar_chart(parts_data, horizontal=True)
+                        else:
+                            st.info("AI found no quantifiable parts data.")
+                            
+                    except Exception as e:
+                        st.error(f"Analysis failed: {e}")
+                else:
+                    st.error("API Key missing.")
 
     st.divider()
     
