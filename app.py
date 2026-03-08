@@ -490,11 +490,15 @@ def get_available_model(api_key):
         all_models = list(client.models.list())
         
         # Filter for models that support 'generateContent'
-        valid_models = [m for m in all_models if 'generateContent' in (m.supported_generation_methods or [])]
+        valid_models = []
+        for m in all_models:
+            methods = getattr(m, 'supported_generation_methods', [])
+            if methods and ('generateContent' in methods or 'generate_content' in methods):
+                valid_models.append(m)
         
-        # If strict filtering returns nothing, try a looser filter (some keys might not return methods)
+        # If strict filtering returns nothing, try a looser filter based on name
         if not valid_models:
-            valid_models = [m for m in all_models if 'gemini' in m.name.lower()]
+            valid_models = [m for m in all_models if 'gemini' in m.name.lower() and ('flash' in m.name.lower() or 'pro' in m.name.lower())]
         
         # Preference logic: Try to find latest Flash -> Pro -> generic Gemini
         
@@ -518,18 +522,18 @@ def get_available_model(api_key):
             best_model = valid_models[0]
             
         if best_model:
-            # Strip 'models/' prefix if present, as generate_content sometimes prefers bare ID
-            model_name = best_model.name
-            if model_name.startswith('models/'):
-                model_name = model_name[7:]
-            return client, model_name
+            # Return the full model name as it appears in the list
+            # Usually 'models/gemini-1.5-flash-001'
+            return client, best_model.name
             
         logger.log("No valid Gemini models found. Defaulting to gemini-1.5-flash.")
+        # If we found NO models, maybe the key is wrong or has no access. 
+        # But we return a default to try anyway.
         return client, 'gemini-1.5-flash'
 
     except Exception as e:
         logger.log(f"Error listing models: {e}")
-        # If list_models fails (e.g. API key doesn't have list permission), fallback
+        # Fallback if listing fails
         return client, 'gemini-1.5-flash'
 
 def generate_technician_summary(notes, job_title):
@@ -2678,6 +2682,13 @@ def render_chatbot():
             st.session_state.chat_history.append({"role": "model", "parts": [bot_reply]})
         except Exception as e:
             st.sidebar.error(f"AI Error: {str(e)}")
+            try:
+                # Debug: List available models to help diagnose
+                all_models = list(client.models.list())
+                model_names = [m.name for m in all_models]
+                st.sidebar.warning(f"Available models: {model_names}")
+            except Exception as debug_e:
+                st.sidebar.error(f"Could not list models: {str(debug_e)}")
 
 # --- MAIN APP FLOW ---
 
