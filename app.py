@@ -483,6 +483,7 @@ def get_available_model(api_key):
     This prevents 404 errors by only selecting models that actually exist.
     """
     client = genai.Client(api_key=api_key)
+    logger = get_logger()
     
     try:
         # Get all models available to this API Key
@@ -490,6 +491,10 @@ def get_available_model(api_key):
         
         # Filter for models that support 'generateContent'
         valid_models = [m for m in all_models if 'generateContent' in (m.supported_generation_methods or [])]
+        
+        # If strict filtering returns nothing, try a looser filter (some keys might not return methods)
+        if not valid_models:
+            valid_models = [m for m in all_models if 'gemini' in m.name.lower()]
         
         # Preference logic: Try to find latest Flash -> Pro -> generic Gemini
         
@@ -513,11 +518,17 @@ def get_available_model(api_key):
             best_model = valid_models[0]
             
         if best_model:
-            return client, best_model.name
+            # Strip 'models/' prefix if present, as generate_content sometimes prefers bare ID
+            model_name = best_model.name
+            if model_name.startswith('models/'):
+                model_name = model_name[7:]
+            return client, model_name
             
+        logger.log("No valid Gemini models found. Defaulting to gemini-1.5-flash.")
         return client, 'gemini-1.5-flash'
 
     except Exception as e:
+        logger.log(f"Error listing models: {e}")
         # If list_models fails (e.g. API key doesn't have list permission), fallback
         return client, 'gemini-1.5-flash'
 
@@ -594,27 +605,46 @@ def suggest_address_with_gemini(partial_address):
         return partial_address
 
 def get_lat_lon_from_address(address):
-    """Uses Open-Meteo Geocoding API to geocode an address to Lat/Lon."""
+    """Uses Open-Meteo Geocoding API to geocode an address to Lat/Lon.
+       Falls back to city search if full address fails.
+    """
     try:
-        # Open-Meteo Geocoding API
-        # Use urllib.parse.quote for URL encoding
-        encoded_address = urllib.parse.quote(address)
-        url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_address}&count=1&language=en&format=json"
-        
-        # Add User-Agent as requested by Open-Meteo documentation
-        headers = {'User-Agent': '5GSecurityJobBoard/1.0'}
-        
-        response = requests.get(url, headers=headers, timeout=5)
-        data = response.json()
+        # Helper to query Open-Meteo
+        def query_open_meteo(query):
+            if not query or not query.strip(): return {}
+            encoded_query = urllib.parse.quote(query.strip())
+            url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_query}&count=1&language=en&format=json"
+            headers = {'User-Agent': '5GSecurityJobBoard/1.0'}
+            try:
+                response = requests.get(url, headers=headers, timeout=5)
+                return response.json()
+            except:
+                return {}
+
+        # 1. Try full address (unlikely to work for streets, but good for "City, State")
+        data = query_open_meteo(address)
         
         if 'results' in data and data['results']:
             result = data['results'][0]
-            lat = result.get('latitude')
-            lon = result.get('longitude')
-            return lat, lon
-        else:
-            get_logger().log(f"Geocoding failed for '{address}': No results found from Open-Meteo")
-            return None, None
+            return result.get('latitude'), result.get('longitude')
+        
+        # 2. Fallback: Try to extract City from "Street, City, State" format
+        parts = [p.strip() for p in address.split(',')]
+        if len(parts) >= 2:
+            # Heuristic:
+            # If 3+ parts (e.g. "Street, City, State, Country"), City is likely index 1.
+            # If 2 parts (e.g. "City, State"), City is likely index 0.
+            potential_city = parts[1] if len(parts) >= 3 else parts[0]
+            
+            # Avoid searching for things that look like states or zip codes if possible, 
+            # but Open-Meteo is robust.
+            data = query_open_meteo(potential_city)
+            if 'results' in data and data['results']:
+                result = data['results'][0]
+                return result.get('latitude'), result.get('longitude')
+
+        get_logger().log(f"Geocoding failed for '{address}': No results found from Open-Meteo")
+        return None, None
             
     except Exception as e:
         get_logger().log(f"Geocoding failed for '{address}': {e}")
