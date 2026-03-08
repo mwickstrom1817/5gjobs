@@ -474,7 +474,7 @@ def get_api_key():
     # Try getting from Streamlit secrets, then Env, then return None
     if "GEMINI_API_KEY" in st.secrets:
         return st.secrets["GEMINI_API_KEY"]
-    return os.getenv("API_KEY")
+    return os.getenv("GEMINI_API_KEY") or os.getenv("API_KEY")
 
 def get_available_model(api_key):
     """
@@ -589,24 +589,39 @@ def suggest_address_with_gemini(partial_address):
         return partial_address
 
 def get_lat_lon_from_address(address):
-    """Uses Gemini to geocode an address to Lat/Lon."""
-    api_key = get_api_key()
-    if not api_key: return None, None
-    model = get_available_model(api_key)
+    """Uses Open-Meteo Geocoding API to geocode an address to Lat/Lon."""
     try:
-        response = model.generate_content(f"Return the latitude and longitude for '{address}' as a JSON object {{'lat': float, 'lon': float}}. Return ONLY JSON. No markdown.")
-        text = response.text.strip()
-        # Clean markdown if present
-        if "```" in text:
-            text = text.split("```")[1].replace("json", "").strip()
-        data = json.loads(text)
-        return data.get('lat'), data.get('lon')
-    except:
+        # Open-Meteo Geocoding API
+        # Use urllib.parse.quote for URL encoding
+        encoded_address = urllib.parse.quote(address)
+        url = f"https://geocoding-api.open-meteo.com/v1/search?name={encoded_address}&count=1&language=en&format=json"
+        
+        # Add User-Agent as requested by Open-Meteo documentation
+        headers = {'User-Agent': '5GSecurityJobBoard/1.0'}
+        
+        response = requests.get(url, headers=headers, timeout=5)
+        data = response.json()
+        
+        if 'results' in data and data['results']:
+            result = data['results'][0]
+            lat = result.get('latitude')
+            lon = result.get('longitude')
+            return lat, lon
+        else:
+            get_logger().log(f"Geocoding failed for '{address}': No results found from Open-Meteo")
+            return None, None
+            
+    except Exception as e:
+        get_logger().log(f"Geocoding failed for '{address}': {e}")
         return None, None
 
 def get_weather(lat, lon):
     """Fetches current weather from Open-Meteo (Free, No Key)."""
     try:
+        # Ensure floats
+        lat = float(lat)
+        lon = float(lon)
+        
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=auto"
         r = requests.get(url, timeout=2)
         data = r.json()
@@ -1620,8 +1635,25 @@ def job_details_dialog(job_id):
             weather_info = ""
             if loc.get('address'):
                 # Check if we already have lat/lon cached in session for this loc to save API calls
-                # For now, just call Gemini/OpenMeteo (lightweight)
-                lat, lon = get_lat_lon_from_address(loc['address'])
+                lat = loc.get('lat')
+                lon = loc.get('lon')
+                
+                # Validate cached lat/lon
+                try:
+                    if lat is not None: float(lat)
+                    if lon is not None: float(lon)
+                except (ValueError, TypeError):
+                    lat = None
+                    lon = None
+                
+                # If not cached or invalid, try to fetch and save
+                if not lat or not lon:
+                    lat, lon = get_lat_lon_from_address(loc['address'])
+                    if lat and lon:
+                        loc['lat'] = lat
+                        loc['lon'] = lon
+                        save_state(invalidate_briefing=False)
+                
                 if lat and lon:
                     weather = get_weather(lat, lon)
                     if weather:
