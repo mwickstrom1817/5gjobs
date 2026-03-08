@@ -330,9 +330,8 @@ def authenticate():
                 ">
                     Sign in with Google
                 </a>
-                <p style="font-size: 0.8em; color: #52525b; margin-top: 20px;">
-                    Ensure <code>{redirect_uri}</code> is added to <br/>
-                    "Authorized redirect URIs" in Google Cloud Console.
+                <p style="font-size: 0.9em; color: #a1a1aa; margin-top: 20px;">
+                    Please login with your 5G Security email.
                 </p>
             </div>
         </div>
