@@ -519,6 +519,26 @@ def generate_technician_summary(notes, job_title):
     except:
         return None
 
+def transcribe_audio(audio_file):
+    """Transcribes audio using Gemini 1.5 Flash."""
+    api_key = get_api_key()
+    if not api_key: return None
+    
+    model = get_available_model(api_key)
+    
+    try:
+        audio_bytes = audio_file.read()
+        response = model.generate_content([
+            "Transcribe this audio note exactly as spoken. Do not add any commentary.",
+            {
+                "mime_type": "audio/wav",
+                "data": audio_bytes
+            }
+        ])
+        return response.text
+    except Exception as e:
+        return None
+
 def create_mailto_link(job, tech, location):
     """Generates a mailto link for client-side email sending."""
     subject = f"Assignment: {job['title']}"
@@ -1444,6 +1464,25 @@ def job_details_dialog(job_id):
             mailto_url = create_mailto_link(job, tech, loc)
             st.link_button("📧 Email Assignment to Tech", mailto_url)
 
+        # PDF DOWNLOAD
+        # Find the most relevant report (Completion > Latest Daily)
+        relevant_report = None
+        if job['status'] == 'Completed':
+            relevant_report = next((r for r in reversed(job.get('reports', [])) if 'completion_checklist' in r), None)
+        
+        if not relevant_report and job.get('reports'):
+            relevant_report = job['reports'][-1]
+
+        if relevant_report:
+            pdf_data = generate_job_pdf(job, tech, loc, relevant_report)
+            if pdf_data:
+                st.download_button(
+                    label="📄 Download Report PDF",
+                    data=pdf_data,
+                    file_name=f"JobReport_{job['id']}.pdf",
+                    mime="application/pdf",
+                )
+
     with c2:
         st.markdown("**Current Status:**")
         status_color = {
@@ -1535,8 +1574,19 @@ def job_details_dialog(job_id):
         st.write("#### 📸 Quick Update")
         st.caption("Add photos and notes while working. These save to history immediately.")
         
+        # Voice Note Feature
+        audio_val = st.audio_input("🎙️ Record Voice Note", key=f"audio_prog_{job_id}")
+        transcribed_text = ""
+        if audio_val:
+            with st.spinner("Transcribing..."):
+                transcribed_text = transcribe_audio(audio_val)
+                if transcribed_text:
+                    st.success("Audio Transcribed!")
+        
         with st.form(key=f"progress_form_{job_id}"):
-            prog_note = st.text_area("Note", placeholder="Quick update (e.g. 'Arrived on site', 'Found the issue')...")
+            # If we have a transcription, use it as the default value, otherwise empty
+            default_note = transcribed_text if transcribed_text else ""
+            prog_note = st.text_area("Note", value=default_note, placeholder="Quick update (e.g. 'Arrived on site', 'Found the issue')...")
             
             st.write("**Attach Photos**")
             c_cam, c_upl = st.columns(2)
@@ -1619,6 +1669,15 @@ def job_details_dialog(job_id):
         st.write("#### 📝 Daily Field Report")
         st.caption("End of day reporting. Submit labor hours, parts, and finalize status.")
         
+        # Voice Note Feature for Daily Report
+        audio_daily = st.audio_input("🎙️ Record Summary", key=f"audio_daily_{job_id}")
+        daily_transcribed = ""
+        if audio_daily:
+            with st.spinner("Transcribing..."):
+                daily_transcribed = transcribe_audio(audio_daily)
+                if daily_transcribed:
+                    st.success("Audio Transcribed!")
+
         with st.form(key=f"daily_form_{job_id}"):
             new_status = st.selectbox("Job Status", ["Pending", "In Progress", "Completed"], 
                                       index=["Pending", "In Progress", "Completed"].index(job['status']))
@@ -1637,7 +1696,9 @@ def job_details_dialog(job_id):
                 time_departed = st.time_input("Time Finished", value=datetime.time(17, 0))
                 billable_items = st.text_area("Billable Items / Extras")
 
-            content = st.text_area("General Notes / Summary", placeholder="Detailed summary of work performed today...")
+            # Use transcribed text if available
+            default_content = daily_transcribed if daily_transcribed else ""
+            content = st.text_area("General Notes / Summary", value=default_content, placeholder="Detailed summary of work performed today...")
             
             # Logic to gather photos from "In-Progress" updates today
             current_date_str = datetime.datetime.now().strftime('%Y-%m-%d')
@@ -1717,6 +1778,9 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     
     priority_class = f"priority-{job['priority']}"
     
+    map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
+    loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {loc_name}</a>' if map_url else f"📍 {loc_name}"
+    
     with st.container():
         st.markdown(f"""
         <div class="job-card {priority_class}">
@@ -1724,7 +1788,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 <span style="font-weight:bold; font-size:1.1em;">{job['title']}</span>
                 <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px;">{job['priority']}</span>
             </div>
-            <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_name}</div>
+            <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_html}</div>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
                  <span>📅 {job['date'][:10]}</span>
@@ -1801,6 +1865,22 @@ def render_analytics_dashboard():
         st.markdown("#### Jobs by Type")
         type_counts = df["type"].value_counts()
         st.bar_chart(type_counts)
+
+    st.divider()
+    
+    st.markdown("#### 🏆 Technician Leaderboard (Completed Jobs)")
+    completed_jobs = df[df["status"] == "Completed"]
+    if not completed_jobs.empty:
+        tech_map = {t["id"]: t["name"] for t in st.session_state.techs}
+        tech_map[None] = "Unassigned"
+        
+        # Count completed jobs per tech
+        leaderboard = completed_jobs["techId"].map(tech_map).fillna("Unassigned").value_counts()
+        
+        # Display as horizontal bar chart
+        st.bar_chart(leaderboard, horizontal=True, color="#b91c1c")
+    else:
+        st.info("No completed jobs yet.")
 
 
 
