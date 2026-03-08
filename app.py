@@ -201,6 +201,18 @@ if "chat_history" not in st.session_state:
 # Tech Colors for UI
 TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12', '#292524']
 
+# Tech Skills Options
+SKILL_OPTIONS = [
+    "Cabling (Cat6/Fiber)", 
+    "Access Control", 
+    "CCTV / Cameras", 
+    "Alarm Systems", 
+    "Networking / IT", 
+    "Conduit / Pipe", 
+    "Sound Masking",
+    "Locksmithing"
+]
+
 # --- AUTHENTICATION ---
 
 def authenticate():
@@ -575,6 +587,47 @@ def suggest_address_with_gemini(partial_address):
         return response.text.strip()
     except:
         return partial_address
+
+def get_lat_lon_from_address(address):
+    """Uses Gemini to geocode an address to Lat/Lon."""
+    api_key = get_api_key()
+    if not api_key: return None, None
+    model = get_available_model(api_key)
+    try:
+        response = model.generate_content(f"Return the latitude and longitude for '{address}' as a JSON object {{'lat': float, 'lon': float}}. Return ONLY JSON. No markdown.")
+        text = response.text.strip()
+        # Clean markdown if present
+        if "```" in text:
+            text = text.split("```")[1].replace("json", "").strip()
+        data = json.loads(text)
+        return data.get('lat'), data.get('lon')
+    except:
+        return None, None
+
+def get_weather(lat, lon):
+    """Fetches current weather from Open-Meteo (Free, No Key)."""
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=auto"
+        r = requests.get(url, timeout=2)
+        data = r.json()
+        current = data.get('current', {})
+        temp = current.get('temperature_2m')
+        code = current.get('weather_code')
+        
+        # Simple WMO code map
+        condition = "Unknown"
+        if code is not None:
+            if code == 0: condition = "☀️ Clear"
+            elif code in [1, 2, 3]: condition = "⛅ Partly Cloudy"
+            elif code in [45, 48]: condition = "🌫️ Foggy"
+            elif code in [51, 53, 55]: condition = "🌧️ Drizzle"
+            elif code in [61, 63, 65]: condition = "🌧️ Rain"
+            elif code in [71, 73, 75]: condition = "❄️ Snow"
+            elif code in [95, 96, 99]: condition = "⛈️ Thunderstorm"
+            
+        return f"{condition} {temp}°F"
+    except:
+        return None
 
 def create_ics_file(job, location):
     """Generates an iCalendar (.ics) file content for the job."""
@@ -1233,8 +1286,18 @@ def add_job_dialog():
         
         # Tech Selection
         tech_map = {t['name']: t['id'] for t in st.session_state.techs}
-        tech_map["Unassigned"] = None
-        tech_name = st.selectbox("Assign Tech", list(tech_map.keys()))
+        
+        # Create display labels with skills
+        tech_display_map = {}
+        for t in st.session_state.techs:
+            skills_str = f" ({', '.join(t.get('skills', [])[:2])}..)" if t.get('skills') else ""
+            label = f"{t['name']}{skills_str}"
+            tech_display_map[label] = t['id']
+            
+        tech_display_map["Unassigned"] = None
+        
+        tech_label = st.selectbox("Assign Tech", list(tech_display_map.keys()))
+        selected_tech_id = tech_display_map[tech_label]
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
@@ -1249,7 +1312,7 @@ def add_job_dialog():
                 'priority': priority,
                 'status': 'Pending',
                 'locationId': loc_map[loc_name],
-                'techId': tech_map[tech_name],
+                'techId': selected_tech_id,
                 'date': full_date.isoformat(),
                 'reports': []
             }
@@ -1257,7 +1320,6 @@ def add_job_dialog():
             
             # Send Email Notification
             email_status_msg = ""
-            selected_tech_id = tech_map[tech_name]
             
             if selected_tech_id:
                 tech = get_tech(selected_tech_id)
@@ -1344,17 +1406,27 @@ def edit_job_dialog(job_id):
         
         # Tech Selection
         tech_map = {t['name']: t['id'] for t in st.session_state.techs}
-        tech_map["Unassigned"] = None
-        tech_options = list(tech_map.keys())
+        
+        # Create display labels with skills
+        tech_display_map = {}
+        for t in st.session_state.techs:
+            skills_str = f" ({', '.join(t.get('skills', [])[:2])}..)" if t.get('skills') else ""
+            label = f"{t['name']}{skills_str}"
+            tech_display_map[label] = t['id']
+            
+        tech_display_map["Unassigned"] = None
+        tech_options = list(tech_display_map.keys())
         
         current_tech_id = job.get('techId')
-        current_tech_name = next((k for k, v in tech_map.items() if v == current_tech_id), "Unassigned")
+        # Find label for current ID
+        current_tech_label = next((k for k, v in tech_display_map.items() if v == current_tech_id), "Unassigned")
         
         tech_index = 0
-        if current_tech_name in tech_options:
-            tech_index = tech_options.index(current_tech_name)
+        if current_tech_label in tech_options:
+            tech_index = tech_options.index(current_tech_label)
             
-        tech_name = st.selectbox("Assign Tech", tech_options, index=tech_index)
+        tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index)
+        selected_tech_id = tech_display_map[tech_label]
 
         if st.form_submit_button("Update Job"):
             if title:
@@ -1370,7 +1442,7 @@ def edit_job_dialog(job_id):
                 if loc_name:
                     st.session_state.jobs[job_index]['locationId'] = loc_map[loc_name]
                 
-                st.session_state.jobs[job_index]['techId'] = tech_map[tech_name]
+                st.session_state.jobs[job_index]['techId'] = selected_tech_id
                 
                 # Invalidate briefing so it regenerates with new data
                 st.session_state.briefing = "Data required to generate briefing."
@@ -1543,7 +1615,19 @@ def job_details_dialog(job_id):
                 st.markdown(f"📍 **[{loc['name']}]({map_url})**")
             else:
                 st.markdown(f"📍 **{loc['name']}**")
-            st.caption(loc['address'])
+            
+            # Weather Widget
+            weather_info = ""
+            if loc.get('address'):
+                # Check if we already have lat/lon cached in session for this loc to save API calls
+                # For now, just call Gemini/OpenMeteo (lightweight)
+                lat, lon = get_lat_lon_from_address(loc['address'])
+                if lat and lon:
+                    weather = get_weather(lat, lon)
+                    if weather:
+                        weather_info = f" | {weather}"
+            
+            st.caption(f"{loc['address']}{weather_info}")
         else:
              st.caption(f"📍 Unknown | 👤 {tech['name'] if tech else 'Unassigned'}")
         
@@ -1688,6 +1772,32 @@ Desc: {job['description']}"""
         st.write("#### 📸 Quick Update")
         st.caption("Add photos and notes while working. These save to history immediately.")
         
+        # Quick Status Buttons
+        qs_cols = st.columns(4)
+        status_opts = [("🚗 En Route", "En Route to Site"), ("📍 Arrived", "Arrived on Site"), ("🥪 Lunch", "On Lunch Break"), ("✅ Done for Day", "Finished for the day")]
+        
+        for i, (label, note_text) in enumerate(status_opts):
+            if qs_cols[i].button(label, key=f"qs_{i}_{job_id}"):
+                # Post update immediately
+                report_payload = {
+                    'id': f"r{datetime.datetime.now().timestamp()}",
+                    'techId': job['techId'] or 'unknown',
+                    'timestamp': datetime.datetime.now().isoformat(),
+                    'content': f"[{label}] {note_text}",
+                    'photos': [],
+                    'techsOnSite': "", 'timeArrived': "", 'timeDeparted': "", 
+                    'hoursWorked': "", 'partsUsed': "", 'billableItems': ""
+                }
+                st.session_state.jobs[job_index]['reports'].append(report_payload)
+                
+                # Auto-update status for Arrived
+                if label == "📍 Arrived" and job['status'] == 'Pending':
+                    st.session_state.jobs[job_index]['status'] = 'In Progress'
+                
+                save_state()
+                st.toast(f"Status updated: {label}", icon="✅")
+                st.rerun()
+
         # Voice Note Feature
         audio_val = st.audio_input("🎙️ Record Voice Note", key=f"audio_prog_{job_id}")
         transcribed_text = ""
@@ -2163,6 +2273,8 @@ def render_admin_panel():
             new_tech_email = c2.text_input("Email")
             new_tech_initials = c3.text_input("Initials (2 chars)", max_chars=2)
             
+            new_tech_skills = st.multiselect("Skills", options=SKILL_OPTIONS)
+            
             if st.form_submit_button("Add Technician"):
                 if new_tech_name and new_tech_email and new_tech_initials:
                     existing_ids = [int(t['id'][1:]) for t in st.session_state.techs if t['id'].startswith('t') and t['id'][1:].isdigit()]
@@ -2176,7 +2288,8 @@ def render_admin_panel():
                         "name": new_tech_name,
                         "email": new_tech_email,
                         "initials": new_tech_initials.upper(),
-                        "color": color
+                        "color": color,
+                        "skills": new_tech_skills
                     })
                     save_state(invalidate_briefing=False)
                     st.success(f"Added {new_tech_name}")
@@ -2190,7 +2303,12 @@ def render_admin_panel():
             for t in st.session_state.techs:
                 c1, c2, c3, c4 = st.columns([1, 3, 4, 1])
                 c1.markdown(f"**{t['initials']}**")
-                c2.write(t['name'])
+                
+                skills_display = ""
+                if t.get('skills'):
+                    skills_display = f" | 🛠️ {', '.join(t['skills'])}"
+                    
+                c2.write(f"{t['name']}{skills_display}")
                 c3.write(t['email'])
                 if c4.button("🗑️", key=f"del_tech_{t['id']}"):
                     st.session_state.techs.remove(t)
