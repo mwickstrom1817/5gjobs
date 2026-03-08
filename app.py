@@ -662,7 +662,8 @@ def get_weather(lat, lon):
         lon = float(lon)
         
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=auto"
-        r = requests.get(url, timeout=5)
+        headers = {'User-Agent': '5GSecurityJobBoard/1.0'}
+        r = requests.get(url, headers=headers, timeout=5)
         
         if r.status_code != 200:
             return None
