@@ -3,6 +3,7 @@ import google.generativeai as genai
 import datetime
 import base64
 import os
+import re
 import json
 import smtplib
 import urllib.parse
@@ -1223,6 +1224,11 @@ def add_job_dialog():
         tech_map = {t['name']: t['id'] for t in st.session_state.techs}
         tech_map["Unassigned"] = None
         tech_name = st.selectbox("Assign Tech", list(tech_map.keys()))
+        
+        st.write("**Site Contact Info (Optional)**")
+        c_cont1, c_cont2 = st.columns(2)
+        contact_name = c_cont1.text_input("Contact Name")
+        contact_phone = c_cont2.text_input("Contact Phone")
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
@@ -1239,6 +1245,8 @@ def add_job_dialog():
                 'locationId': loc_map[loc_name],
                 'techId': tech_map[tech_name],
                 'date': full_date.isoformat(),
+                'contact_name': contact_name,
+                'contact_phone': contact_phone,
                 'reports': []
             }
             st.session_state.jobs.insert(0, new_job)
@@ -1343,6 +1351,11 @@ def edit_job_dialog(job_id):
             tech_index = tech_options.index(current_tech_name)
             
         tech_name = st.selectbox("Assign Tech", tech_options, index=tech_index)
+        
+        st.write("**Site Contact Info**")
+        c_cont1, c_cont2 = st.columns(2)
+        contact_name = c_cont1.text_input("Contact Name", value=job.get('contact_name', ''))
+        contact_phone = c_cont2.text_input("Contact Phone", value=job.get('contact_phone', ''))
 
         if st.form_submit_button("Update Job"):
             if title:
@@ -1359,6 +1372,8 @@ def edit_job_dialog(job_id):
                     st.session_state.jobs[job_index]['locationId'] = loc_map[loc_name]
                 
                 st.session_state.jobs[job_index]['techId'] = tech_map[tech_name]
+                st.session_state.jobs[job_index]['contact_name'] = contact_name
+                st.session_state.jobs[job_index]['contact_phone'] = contact_phone
                 
                 # Invalidate briefing so it regenerates with new data
                 st.session_state.briefing = "Data required to generate briefing."
@@ -1504,6 +1519,18 @@ def job_details_dialog(job_id):
         if tech and loc:
             mailto_url = create_mailto_link(job, tech, loc)
             st.link_button("📧 Email Assignment to Tech", mailto_url)
+            
+        # CONTACT CALL BUTTON
+        if job.get('contact_phone'):
+            clean_phone = re.sub(r'\D', '', job['contact_phone'])
+            st.link_button(f"📞 Call {job.get('contact_name', 'Contact')}", f"tel:{clean_phone}")
+
+        # COPY JOB INFO BLOCK
+        copy_text = f"""Job: {job['title']}
+Address: {loc['address'] if loc else 'Unknown'}
+Contact: {job.get('contact_name', 'N/A')} ({job.get('contact_phone', 'N/A')})
+Desc: {job['description']}"""
+        st.code(copy_text, language="text")
 
         # CALENDAR INVITE (.ics)
         ics_data = create_ics_file(job, loc)
@@ -2471,15 +2498,37 @@ def main():
     if search:
         filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
 
+    # Determine if current user is a tech
+    current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
+
     # Navigation Tabs
     tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
+    
+    if current_tech:
+        tabs_list.insert(0, "🙋‍♂️ My Assignments")
+        
     if is_admin:
         tabs_list.append("🛡️ Admin")
     
     tabs = st.tabs(tabs_list)
+    tab_map = {name: tab for name, tab in zip(tabs_list, tabs)}
+    
+    # 0. My Assignments (Conditional)
+    if current_tech:
+        with tab_map["🙋‍♂️ My Assignments"]:
+            st.subheader(f"Hello, {current_tech['name'].split()[0]}!")
+            
+            my_jobs = [j for j in filtered_jobs if j['techId'] == current_tech['id'] and j['status'] != 'Completed']
+            
+            if not my_jobs:
+                st.info("🎉 No active assignments! Enjoy your day.")
+            else:
+                st.success(f"You have {len(my_jobs)} active jobs today.")
+                for job in my_jobs:
+                    render_job_card(job, compact=False, key_suffix="my_assign")
     
     # 1. Morning Briefing
-    with tabs[0]:
+    with tab_map["🌅 Morning Briefing"]:
         col_main, col_feed = st.columns([2, 1])
         with col_main:
             st.subheader("Daily Operational Briefing")
@@ -2519,7 +2568,7 @@ def main():
                 render_job_card(job, compact=True, key_suffix="feed_std")
 
     # 2. Tech Board
-    with tabs[1]:
+    with tab_map["👷 Tech Board"]:
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
@@ -2539,7 +2588,7 @@ def main():
                     render_job_card(job, compact=True, key_suffix="unassigned", allow_delete=is_admin)
 
     # 3. Calendar View
-    with tabs[2]:
+    with tab_map["📅 Calendar"]:
         st.subheader("📅 Job Schedule")
         
         # Calendar Controls
@@ -2607,21 +2656,21 @@ def main():
                             st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
     # 4. Service Calls
-    with tabs[3]:
+    with tab_map["🧰 Service Calls"]:
         service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
         if not service_jobs: st.info("No active service calls.")
         for job in service_jobs:
             render_job_card(job, key_suffix="service", allow_delete=is_admin)
 
     # 5. Projects
-    with tabs[4]:
+    with tab_map["🏗️ Projects"]:
         proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
         if not proj_jobs: st.info("No active projects.")
         for job in proj_jobs:
             render_job_card(job, key_suffix="project", allow_delete=is_admin)
 
     # 6. Archive
-    with tabs[5]:
+    with tab_map["📦 Archive"]:
         archived = [j for j in filtered_jobs if j['status'] == 'Completed']
         if not archived: st.info("No archived jobs.")
         for job in archived:
@@ -2629,7 +2678,7 @@ def main():
 
     # 7. Admin (Only if Admin)
     if is_admin:
-        with tabs[6]:
+        with tab_map["🛡️ Admin"]:
             render_admin_panel()
 
     # Sidebar Chatbot
