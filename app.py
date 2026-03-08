@@ -543,6 +543,11 @@ def transcribe_audio(audio_file):
 def create_mailto_link(job, tech, location):
     """Generates a mailto link for client-side email sending."""
     subject = f"Assignment: {job['title']}"
+    
+    contact_info = ""
+    if location.get('contact_name') or location.get('contact_phone'):
+        contact_info = f"\nContact: {location.get('contact_name', 'N/A')} ({location.get('contact_phone', 'N/A')})"
+        
     body = f"""Hello {tech['name']},
 
 New Assignment:
@@ -550,7 +555,7 @@ New Assignment:
 
 Location:
 {location['name']}
-{location['address']}
+{location['address']}{contact_info}
 
 Details:
 {job['description']}
@@ -851,6 +856,11 @@ def send_assignment_email(job, tech, location):
 
     # Prepare email content
     subject = f"New Job Assignment: {job['title']}"
+    
+    contact_line = ""
+    if location.get('contact_name') or location.get('contact_phone'):
+        contact_line = f"   Contact: {location.get('contact_name', 'N/A')} ({location.get('contact_phone', 'N/A')})"
+        
     body = f"""
    Hello {tech['name']},
 
@@ -866,6 +876,7 @@ def send_assignment_email(job, tech, location):
    --------------------------------------------------
    Name:    {location['name']}
    Address: {location['address']}
+{contact_line}
 
    DESCRIPTION
    --------------------------------------------------
@@ -1224,11 +1235,6 @@ def add_job_dialog():
         tech_map = {t['name']: t['id'] for t in st.session_state.techs}
         tech_map["Unassigned"] = None
         tech_name = st.selectbox("Assign Tech", list(tech_map.keys()))
-        
-        st.write("**Site Contact Info (Optional)**")
-        c_cont1, c_cont2 = st.columns(2)
-        contact_name = c_cont1.text_input("Contact Name")
-        contact_phone = c_cont2.text_input("Contact Phone")
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
@@ -1245,8 +1251,6 @@ def add_job_dialog():
                 'locationId': loc_map[loc_name],
                 'techId': tech_map[tech_name],
                 'date': full_date.isoformat(),
-                'contact_name': contact_name,
-                'contact_phone': contact_phone,
                 'reports': []
             }
             st.session_state.jobs.insert(0, new_job)
@@ -1351,11 +1355,6 @@ def edit_job_dialog(job_id):
             tech_index = tech_options.index(current_tech_name)
             
         tech_name = st.selectbox("Assign Tech", tech_options, index=tech_index)
-        
-        st.write("**Site Contact Info**")
-        c_cont1, c_cont2 = st.columns(2)
-        contact_name = c_cont1.text_input("Contact Name", value=job.get('contact_name', ''))
-        contact_phone = c_cont2.text_input("Contact Phone", value=job.get('contact_phone', ''))
 
         if st.form_submit_button("Update Job"):
             if title:
@@ -1372,8 +1371,6 @@ def edit_job_dialog(job_id):
                     st.session_state.jobs[job_index]['locationId'] = loc_map[loc_name]
                 
                 st.session_state.jobs[job_index]['techId'] = tech_map[tech_name]
-                st.session_state.jobs[job_index]['contact_name'] = contact_name
-                st.session_state.jobs[job_index]['contact_phone'] = contact_phone
                 
                 # Invalidate briefing so it regenerates with new data
                 st.session_state.briefing = "Data required to generate briefing."
@@ -1383,6 +1380,41 @@ def edit_job_dialog(job_id):
                 st.rerun()
             else:
                 st.error("Title is required.")
+
+@st.dialog("Edit Location")
+def edit_location_dialog(loc_id):
+    # Find location
+    loc_index = next((i for i, l in enumerate(st.session_state.locations) if l['id'] == loc_id), -1)
+    if loc_index == -1:
+        st.error("Location not found")
+        return
+
+    loc = st.session_state.locations[loc_index]
+
+    with st.form(key=f"edit_loc_form_{loc_id}"):
+        l_name = st.text_input("Location Name", value=loc['name'])
+        l_addr = st.text_input("Address", value=loc['address'])
+        l_maps = st.text_input("Google Maps Link (Optional)", value=loc.get('mapsUrl', ''))
+        
+        c_l1, c_l2 = st.columns(2)
+        l_contact_name = c_l1.text_input("Site Contact Name", value=loc.get('contact_name', ''))
+        l_contact_phone = c_l2.text_input("Site Contact Phone", value=loc.get('contact_phone', ''))
+        
+        if st.form_submit_button("Update Location"):
+            if l_name and l_addr:
+                # Update session state
+                st.session_state.locations[loc_index]['name'] = l_name
+                st.session_state.locations[loc_index]['address'] = l_addr
+                st.session_state.locations[loc_index]['mapsUrl'] = l_maps
+                st.session_state.locations[loc_index]['contact_name'] = l_contact_name
+                st.session_state.locations[loc_index]['contact_phone'] = l_contact_phone
+                
+                save_state(invalidate_briefing=False)
+                st.success("Location updated!")
+                st.rerun()
+            else:
+                st.error("Name and Address required.")
+
 
 def render_completion_confirmation(job_index, report_payload):
     job = st.session_state.jobs[job_index]
@@ -1520,15 +1552,19 @@ def job_details_dialog(job_id):
             mailto_url = create_mailto_link(job, tech, loc)
             st.link_button("📧 Email Assignment to Tech", mailto_url)
             
+        # Resolve Contact Info (Job override > Location default)
+        contact_name = job.get('contact_name') or (loc.get('contact_name') if loc else None)
+        contact_phone = job.get('contact_phone') or (loc.get('contact_phone') if loc else None)
+
         # CONTACT CALL BUTTON
-        if job.get('contact_phone'):
-            clean_phone = re.sub(r'\D', '', job['contact_phone'])
-            st.link_button(f"📞 Call {job.get('contact_name', 'Contact')}", f"tel:{clean_phone}")
+        if contact_phone:
+            clean_phone = re.sub(r'\D', '', contact_phone)
+            st.link_button(f"📞 Call {contact_name or 'Contact'}", f"tel:{clean_phone}")
 
         # COPY JOB INFO BLOCK
         copy_text = f"""Job: {job['title']}
 Address: {loc['address'] if loc else 'Unknown'}
-Contact: {job.get('contact_name', 'N/A')} ({job.get('contact_phone', 'N/A')})
+Contact: {contact_name or 'N/A'} ({contact_phone or 'N/A'})
 Desc: {job['description']}"""
         st.code(copy_text, language="text")
 
@@ -2172,6 +2208,10 @@ def render_admin_panel():
             l_addr = st.text_input("Address")
             l_maps = st.text_input("Google Maps Link (Optional)")
             
+            c_l1, c_l2 = st.columns(2)
+            l_contact_name = c_l1.text_input("Site Contact Name")
+            l_contact_phone = c_l2.text_input("Site Contact Phone")
+            
             if st.form_submit_button("Add Location"):
                 if l_name and l_addr:
                     # Auto-suggest address if API key exists
@@ -2184,7 +2224,9 @@ def render_admin_panel():
                         "id": f"l{next_id}",
                         "name": l_name,
                         "address": final_addr,
-                        "mapsUrl": l_maps
+                        "mapsUrl": l_maps,
+                        "contact_name": l_contact_name,
+                        "contact_phone": l_contact_phone
                     }
                     st.session_state.locations.append(new_loc)
                     save_state(invalidate_briefing=False)
@@ -2197,10 +2239,19 @@ def render_admin_panel():
         if st.session_state.locations:
             st.write("###### Current Locations")
             for l in st.session_state.locations:
-                c1, c2, c3 = st.columns([3, 4, 1])
+                c1, c2, c3, c4 = st.columns([3, 4, 1, 1])
                 c1.write(l['name'])
-                c2.caption(l['address'])
-                if c3.button("🗑️", key=f"del_loc_{l['id']}"):
+                
+                contact_info = ""
+                if l.get('contact_name') or l.get('contact_phone'):
+                    contact_info = f" | 📞 {l.get('contact_name','')} {l.get('contact_phone','')}"
+                    
+                c2.caption(f"{l['address']}{contact_info}")
+                
+                if c3.button("✏️", key=f"edit_loc_{l['id']}"):
+                    edit_location_dialog(l['id'])
+                    
+                if c4.button("🗑️", key=f"del_loc_{l['id']}"):
                     st.session_state.locations.remove(l)
                     save_state(invalidate_briefing=False)
                     st.rerun()
