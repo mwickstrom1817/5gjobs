@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import datetime
 import base64
 import os
@@ -478,17 +479,17 @@ def get_api_key():
 
 def get_available_model(api_key):
     """
-    Dynamically lists models available to the API key and returns the best one.
+    Dynamically lists models available to the API key and returns the client and best model name.
     This prevents 404 errors by only selecting models that actually exist.
     """
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     
     try:
         # Get all models available to this API Key
-        all_models = list(genai.list_models())
+        all_models = list(client.models.list())
         
         # Filter for models that support 'generateContent'
-        valid_models = [m for m in all_models if 'generateContent' in m.supported_generation_methods]
+        valid_models = [m for m in all_models if 'generateContent' in (m.supported_generation_methods or [])]
         
         # Preference logic: Try to find latest Flash -> Pro -> generic Gemini
         
@@ -512,22 +513,22 @@ def get_available_model(api_key):
             best_model = valid_models[0]
             
         if best_model:
-            return genai.GenerativeModel(best_model.name)
+            return client, best_model.name
             
-        return genai.GenerativeModel('gemini-pro')
+        return client, 'gemini-1.5-flash'
 
     except Exception as e:
         # If list_models fails (e.g. API key doesn't have list permission), fallback
-        return genai.GenerativeModel('gemini-pro')
+        return client, 'gemini-1.5-flash'
 
 def generate_technician_summary(notes, job_title):
     """Uses Gemini to summarize the daily work for the PDF Report."""
     api_key = get_api_key()
     if not api_key: return None
-    model = get_available_model(api_key)
+    client, model_name = get_available_model(api_key)
     prompt = f"Summarize the following technician notes for job '{job_title}' into a concise, professional paragraph (approx 50 words) suitable for a client report:\n\n{notes}"
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model=model_name, contents=prompt)
         return response.text
     except:
         return None
@@ -537,17 +538,21 @@ def transcribe_audio(audio_file):
     api_key = get_api_key()
     if not api_key: return None
     
-    model = get_available_model(api_key)
+    client, model_name = get_available_model(api_key)
     
     try:
         audio_bytes = audio_file.read()
-        response = model.generate_content([
-            "Transcribe this audio note exactly as spoken. Do not add any commentary.",
-            {
-                "mime_type": "audio/wav",
-                "data": audio_bytes
-            }
-        ])
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[
+                types.Content(
+                    parts=[
+                        types.Part.from_text(text="Transcribe this audio note exactly as spoken. Do not add any commentary."),
+                        types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
+                    ]
+                )
+            ]
+        )
         return response.text
     except Exception as e:
         return None
@@ -580,10 +585,10 @@ def suggest_address_with_gemini(partial_address):
     """Uses Gemini to autocomplete/validate an address."""
     api_key = get_api_key()
     if not api_key: return partial_address
-    model = get_available_model(api_key)
+    client, model_name = get_available_model(api_key)
     prompt = f"You are an address autocomplete tool. The user typed: '{partial_address}'. Return the most likely full address. If ambiguous, return the best guess. Return ONLY the address text, no other words."
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model=model_name, contents=prompt)
         return response.text.strip()
     except:
         return partial_address
@@ -1237,7 +1242,7 @@ def generate_morning_briefing():
         return "No active jobs to analyze. Please add jobs via the 'New Job' button."
 
     # Use dynamic model selector
-    model = get_available_model(api_key)
+    client, model_name = get_available_model(api_key)
 
     active_jobs = [j for j in st.session_state.jobs if j['status'] != 'Completed']
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
@@ -1270,7 +1275,7 @@ def generate_morning_briefing():
    """
     
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model=model_name, contents=prompt)
         return response.text
     except Exception as e:
         return f"Error generating briefing: {str(e)}"
@@ -2143,7 +2148,7 @@ def render_analytics_dashboard():
                 # 2. Send to Gemini
                 api_key = get_api_key()
                 if api_key:
-                    model = get_available_model(api_key)
+                    client, model_name = get_available_model(api_key)
                     prompt = f"""
                     Analyze the following list of "Parts Used" entries from technician reports.
                     Consolidate them into a single JSON object where keys are the standardized part names (e.g., "Cat6 Cable", "NVR Power Supply") and values are the total estimated quantity used (integer).
@@ -2155,7 +2160,7 @@ def render_analytics_dashboard():
                     Return ONLY valid JSON. Example: {{"Cat6 Cable (ft)": 500, "RJ45 Jacks": 10}}
                     """
                     try:
-                        response = model.generate_content(prompt)
+                        response = client.models.generate_content(model=model_name, contents=prompt)
                         # Clean response to ensure just JSON
                         json_str = response.text.strip()
                         if "```json" in json_str:
@@ -2596,7 +2601,7 @@ def render_chatbot():
             return
 
         # Use dynamic model selector
-        model = get_available_model(api_key)
+        client, model_name = get_available_model(api_key)
         
         # Add user message
         st.session_state.chat_history.append({"role": "user", "parts": [prompt]})
@@ -2636,7 +2641,7 @@ def render_chatbot():
         try:
             with st.sidebar.chat_message("model"):
                 with st.spinner("Thinking..."):
-                    response = model.generate_content(full_prompt)
+                    response = client.models.generate_content(model=model_name, contents=full_prompt)
                     bot_reply = response.text
                     st.write(bot_reply)
                     
