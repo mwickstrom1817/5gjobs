@@ -439,6 +439,96 @@ def keep_awake():
     thread = threading.Thread(target=run, name=thread_name, daemon=True)
     thread.start()
 
+def start_background_scheduler():
+    """Background thread to send daily reminders at 7 AM."""
+    try:
+        secrets_dict = dict(st.secrets)
+    except Exception:
+        secrets_dict = {}
+        
+    def run():
+        time.sleep(15)
+        while True:
+            try:
+                now = datetime.datetime.now()
+                # Run at 7 AM Mon-Fri
+                if now.weekday() <= 4 and now.hour == 7:
+                    today_str = now.strftime("%Y-%m-%d")
+                    
+                    from persistence_pg import load_state, save_state_to_db
+                    state, version = load_state()
+                    
+                    if state.get("last_reminder_date") != today_str:
+                        smtp_server = secrets_dict.get("SMTP_SERVER") or os.getenv("SMTP_SERVER")
+                        smtp_port = secrets_dict.get("SMTP_PORT") or os.getenv("SMTP_PORT", 587)
+                        sender_email = secrets_dict.get("SMTP_EMAIL") or os.getenv("SMTP_EMAIL")
+                        sender_password = secrets_dict.get("SMTP_PASSWORD") or os.getenv("SMTP_PASSWORD")
+                        
+                        if smtp_server and sender_email and sender_password:
+                            import smtplib
+                            from email.mime.text import MIMEText
+                            from email.mime.multipart import MIMEMultipart
+                            
+                            if int(smtp_port) == 465:
+                                server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+                                server.ehlo()
+                            else:
+                                server = smtplib.SMTP(smtp_server, int(smtp_port))
+                                server.ehlo()
+                                server.starttls()
+                                server.ehlo()
+                            
+                            server.login(sender_email, sender_password)
+                            
+                            techs = state.get("techs", [])
+                            jobs = state.get("jobs", [])
+                            locations = state.get("locations", [])
+                            
+                            def get_loc(loc_id):
+                                return next((l for l in locations if l['id'] == loc_id), None)
+                            
+                            for tech in techs:
+                                active_jobs = [j for j in jobs if j['techId'] == tech['id'] and j['status'] != 'Completed']
+                                if not active_jobs:
+                                    continue
+                                    
+                                subject = f"📅 Daily Assignment Reminder - {today_str}"
+                                job_list_text = ""
+                                for job in active_jobs:
+                                    loc = get_loc(job['locationId'])
+                                    loc_name = loc['name'] if loc else "Unknown Location"
+                                    loc_addr = loc['address'] if loc else ""
+                                    
+                                    job_list_text += f"\n- {job['title']} ({job['priority']})\n  Location: {loc_name} - {loc_addr}\n  Status: {job['status']}\n"
+                                    
+                                body = f"Hello {tech['name']},\n\nHere is your summary of active assignments for today ({today_str}):\n{job_list_text}\n\nPlease check the 5G Security Job Board for full details and to log your work.\n"
+                                
+                                msg = MIMEMultipart()
+                                msg['From'] = sender_email
+                                msg['To'] = tech['email']
+                                msg['Subject'] = subject
+                                msg.attach(MIMEText(body, 'plain'))
+                                
+                                server.send_message(msg)
+                                
+                            server.quit()
+                            
+                        state["last_reminder_date"] = today_str
+                        save_state_to_db(state)
+                        get_logger().log(f"Sent 7 AM background reminders for {today_str}")
+            except Exception as e:
+                get_logger().log(f"Background reminder error: {e}")
+            
+            # Check every 10 minutes
+            time.sleep(600)
+            
+    thread_name = "reminder_cron_thread"
+    for t in threading.enumerate():
+        if t.name == thread_name:
+            return
+    thread = threading.Thread(target=run, name=thread_name, daemon=True)
+    thread.start()
+
 def get_tech(tech_id):
     return next((t for t in st.session_state.techs if t['id'] == tech_id), None)
 
@@ -1787,46 +1877,51 @@ Desc: {job['description']}"""
 
     with tab_creds:
         st.write("#### 🔐 Site Credentials & Network Info")
-        st.caption("Securely store logins and IP addresses for this job.")
+        st.caption("Securely store logins and IP addresses for this location.")
         
-        # Ensure 'credentials' key exists
-        if 'credentials' not in job:
-            job['credentials'] = {}
-            
-        creds = job['credentials']
-        
-        with st.form(key=f"creds_form_{job_id}"):
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown("**Windows Login**")
-                win_user = st.text_input("Username", value=creds.get('windows_user', ''), key=f"win_u_{job_id}")
-                win_pass = st.text_input("Password", value=creds.get('windows_pass', ''), key=f"win_p_{job_id}")
+        if not loc:
+            st.warning("No location assigned to this job. Credentials cannot be saved.")
+        else:
+            # Ensure 'credentials' key exists on the location
+            if 'credentials' not in loc:
+                loc['credentials'] = {}
                 
-                st.markdown("**ICT Login**")
-                ict_user = st.text_input("Username", value=creds.get('ict_user', ''), key=f"ict_u_{job_id}")
-                ict_pass = st.text_input("Password", value=creds.get('ict_pass', ''), key=f"ict_p_{job_id}")
+            creds = loc['credentials']
             
-            with c2:
-                st.markdown("**DW Spectrum Login**")
-                dw_user = st.text_input("Username", value=creds.get('dw_user', ''), key=f"dw_u_{job_id}")
-                dw_pass = st.text_input("Password", value=creds.get('dw_pass', ''), key=f"dw_p_{job_id}")
+            with st.form(key=f"creds_form_{job_id}"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("**Windows Login**")
+                    win_user = st.text_input("Username", value=creds.get('windows_user', ''), key=f"win_u_{job_id}")
+                    win_pass = st.text_input("Password", value=creds.get('windows_pass', ''), key=f"win_p_{job_id}")
+                    
+                    st.markdown("**ICT Login**")
+                    ict_user = st.text_input("Username", value=creds.get('ict_user', ''), key=f"ict_u_{job_id}")
+                    ict_pass = st.text_input("Password", value=creds.get('ict_pass', ''), key=f"ict_p_{job_id}")
                 
-                st.markdown("**Network / IPs**")
-                ips = st.text_area("IP Addresses & Notes", value=creds.get('ips', ''), height=145, key=f"ips_{job_id}")
+                with c2:
+                    st.markdown("**DW Spectrum Login**")
+                    dw_user = st.text_input("Username", value=creds.get('dw_user', ''), key=f"dw_u_{job_id}")
+                    dw_pass = st.text_input("Password", value=creds.get('dw_pass', ''), key=f"dw_p_{job_id}")
+                    
+                    st.markdown("**Network / IPs**")
+                    ips = st.text_area("IP Addresses & Notes", value=creds.get('ips', ''), height=145, key=f"ips_{job_id}")
 
-            if st.form_submit_button("Save Credentials"):
-                st.session_state.jobs[job_index]['credentials'] = {
-                    'windows_user': win_user,
-                    'windows_pass': win_pass,
-                    'dw_user': dw_user,
-                    'dw_pass': dw_pass,
-                    'ict_user': ict_user,
-                    'ict_pass': ict_pass,
-                    'ips': ips
-                }
-                save_state(invalidate_briefing=False)
-                st.success("Credentials saved!")
-                st.rerun()
+                if st.form_submit_button("Save Credentials"):
+                    loc_index = next((i for i, l in enumerate(st.session_state.locations) if l['id'] == loc['id']), -1)
+                    if loc_index != -1:
+                        st.session_state.locations[loc_index]['credentials'] = {
+                            'windows_user': win_user,
+                            'windows_pass': win_pass,
+                            'dw_user': dw_user,
+                            'dw_pass': dw_pass,
+                            'ict_user': ict_user,
+                            'ict_pass': ict_pass,
+                            'ips': ips
+                        }
+                        save_state(invalidate_briefing=False)
+                        st.success("Credentials saved to Location!")
+                        st.rerun()
 
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
@@ -2717,6 +2812,7 @@ def render_chatbot():
 def main():
     # Start Keep Awake Thread
     keep_awake()
+    start_background_scheduler()
 
     # 1. Authenticate User
     user = authenticate()
@@ -2734,9 +2830,6 @@ def main():
         st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")
     
     is_admin = user_email in st.session_state.adminEmails
-    
-    # --- DAILY REMINDERS ---
-    send_daily_reminders()
     
     # Sidebar Info
     with st.sidebar:
