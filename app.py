@@ -226,7 +226,11 @@ def authenticate():
     # 2) Setup OAuth Config
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
     client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
-    redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI")
+    
+    # Use APP_URL as fallback for redirect_uri
+    app_url = os.getenv("APP_URL", "").rstrip("/")
+    default_redirect = f"{app_url}/" if app_url else None
+    redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI") or default_redirect
 
     if not (client_id and client_secret and redirect_uri):
         st.error(
@@ -397,20 +401,17 @@ def keep_awake():
         time.sleep(10)
         
         # Primary endpoint that we know works
-        primary_url = "http://localhost:8501/_stcore/health"
+        primary_url = "http://localhost:3000/_stcore/health"
         
         while True:
             try:
                 requests.get(primary_url, timeout=5)
                 msg = f"Keep-awake ping successful to {primary_url}"
-                # Only log to console periodically
-                # if datetime.datetime.now().minute % 10 == 0:
-                #     pass
                 logger.log(msg)
             except Exception as e:
                 # Fallback only if primary fails
                 try:
-                    fallback_url = "http://127.0.0.1:8501/_stcore/health"
+                    fallback_url = "http://127.0.0.1:3000/_stcore/health"
                     requests.get(fallback_url, timeout=5)
                     msg = f"Primary ping failed, fallback successful to {fallback_url}"
                     logger.log(msg)
@@ -535,6 +536,7 @@ def get_tech(tech_id):
 def get_location(loc_id):
     return next((l for l in st.session_state.locations if l['id'] == loc_id), None)
 
+@st.cache_data(ttl=1800)
 def resolve_image_source(photo_source: str):
     """
     Supports:
@@ -567,6 +569,7 @@ def get_api_key():
         return st.secrets["GEMINI_API_KEY"]
     return os.getenv("GEMINI_API_KEY") or os.getenv("API_KEY")
 
+@st.cache_resource
 def get_available_model(api_key):
     """
     Dynamically lists models available to the API key and returns the client and best model name.
@@ -1005,12 +1008,11 @@ def generate_job_pdf(job, tech, location, report):
             sig_bytes = get_image_bytes(sig_url)
             if sig_bytes:
                 sig_reader = ImageReader(BytesIO(sig_bytes))
-
-            y -= 60
-            p.drawImage(sig_reader, 50, y, width=150, height=50, mask="auto")
-            p.setFont("Helvetica-Oblique", 8)
-            p.drawString(50, y - 10, "Customer Digital Signature")
-            y -= 20
+                y -= 60
+                p.drawImage(sig_reader, 50, y, width=150, height=50, mask="auto")
+                p.setFont("Helvetica-Oblique", 8)
+                p.drawString(50, y - 10, "Customer Digital Signature")
+                y -= 20
         except Exception as e:
             pass
 
@@ -1039,31 +1041,31 @@ def generate_job_pdf(job, tech, location, report):
                 if img_bytes:
                     img_reader = ImageReader(BytesIO(img_bytes))
 
-                if y - img_height < 50:
-                    p.showPage()
-                    y = height - 50
-                    p.setFont("Helvetica-Bold", 14)
-                    p.drawString(50, y, "SITE PHOTOS (Cont.)")
-                    y -= 30
-                    col = 0
+                    if y - img_height < 50:
+                        p.showPage()
+                        y = height - 50
+                        p.setFont("Helvetica-Bold", 14)
+                        p.drawString(50, y, "SITE PHOTOS (Cont.)")
+                        y -= 30
+                        col = 0
 
-                x = x_start + (col * (img_width + gap_x))
-                draw_y = y - img_height
+                    x = x_start + (col * (img_width + gap_x))
+                    draw_y = y - img_height
 
-                p.drawImage(
-                    img_reader,
-                    x,
-                    draw_y,
-                    width=img_width,
-                    height=img_height,
-                    preserveAspectRatio=True,
-                    anchor="c",
-                )
+                    p.drawImage(
+                        img_reader,
+                        x,
+                        draw_y,
+                        width=img_width,
+                        height=img_height,
+                        preserveAspectRatio=True,
+                        anchor="c",
+                    )
 
-                col += 1
-                if col > 1:
-                    col = 0
-                    y -= (img_height + gap_y)
+                    col += 1
+                    if col > 1:
+                        col = 0
+                        y -= (img_height + gap_y)
 
             except Exception as e:
                 pass
@@ -1871,14 +1873,19 @@ Desc: {job['description']}"""
             relevant_report = job['reports'][-1]
 
         if relevant_report:
-            pdf_data = generate_job_pdf(job, tech, loc, relevant_report)
-            if pdf_data:
-                st.download_button(
-                    label="📄 Download Report PDF",
-                    data=pdf_data,
-                    file_name=f"JobReport_{job['id']}.pdf",
-                    mime="application/pdf",
-                )
+            # Use a button to trigger PDF generation to avoid slow renders
+            if st.button("📄 Prepare Report PDF"):
+                with st.spinner("Generating PDF..."):
+                    pdf_data = generate_job_pdf(job, tech, loc, relevant_report)
+                    if pdf_data:
+                        st.download_button(
+                            label="⬇️ Download PDF Now",
+                            data=pdf_data,
+                            file_name=f"JobReport_{job['id']}.pdf",
+                            mime="application/pdf",
+                        )
+                    else:
+                        st.error("Failed to generate PDF.")
 
     with c2:
         st.markdown("**Current Status:**")
@@ -1945,7 +1952,19 @@ Desc: {job['description']}"""
         st.write("#### 📜 History")
         if not job['reports']:
             st.info("No reports filed yet.")
-        for r in reversed(job['reports']):
+        
+        # Limit history display to avoid performance issues with many images
+        reports_to_show = reversed(job['reports'])
+        total_reports = len(job['reports'])
+        
+        show_all_key = f"show_all_history_{job_id}"
+        show_all = st.checkbox("Show Full History", key=show_all_key) if total_reports > 5 else True
+        
+        if not show_all:
+            reports_to_show = list(reversed(job['reports']))[:5]
+            st.caption(f"Showing latest 5 of {total_reports} reports.")
+
+        for r in reports_to_show:
             r_tech = get_tech(r['techId'])
             with st.container(border=True):
                 st.markdown(f"**{r_tech['name'] if r_tech else 'Unknown'}** - {r['timestamp'][:16]}")
