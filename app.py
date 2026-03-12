@@ -1769,6 +1769,83 @@ def render_completion_confirmation(job_index, report_payload):
             del st.session_state[f"completion_pending_{job['id']}"]
         st.rerun()
         
+@st.dialog("Edit Daily Report")
+def edit_report_dialog(job_id, report_id):
+    # Find job
+    job_index = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
+    if job_index == -1:
+        st.error("Job not found")
+        return
+    job = st.session_state.jobs[job_index]
+    
+    # Find report
+    report_index = next((i for i, r in enumerate(job['reports']) if r['id'] == report_id), -1)
+    if report_index == -1:
+        st.error("Report not found")
+        return
+    report = job['reports'][report_index]
+
+    with st.form(key=f"edit_report_form_{report_id}"):
+        st.write(f"Editing report from {report['timestamp'][:16]}")
+        
+        r_col1, r_col2 = st.columns(2)
+        with r_col1:
+            available_techs = [t['name'] for t in st.session_state.techs]
+            current_techs_str = report.get('techsOnSite', '')
+            current_techs = [t.strip() for t in current_techs_str.split(',')] if current_techs_str else []
+            current_techs = [t for t in current_techs if t in available_techs]
+            
+            techs_on_site_list = st.multiselect("Techs On Site", options=available_techs, default=current_techs)
+            
+            try:
+                t_arr_str = report.get('timeArrived', '08:00:00')
+                if len(t_arr_str) == 5: t_arr_str += ":00"
+                t_arr = datetime.datetime.strptime(t_arr_str, '%H:%M:%S').time()
+            except:
+                t_arr = datetime.time(8, 0)
+            time_arrived = st.time_input("Time Arrived", value=t_arr)
+            
+            parts_used = st.text_area("Parts/Materials Used", value=report.get('partsUsed', ''))
+            
+        with r_col2:
+            try:
+                h_worked = float(report.get('hoursWorked', 0.0))
+            except:
+                h_worked = 0.0
+            hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, value=h_worked)
+            
+            try:
+                t_dep_str = report.get('timeDeparted', '17:00:00')
+                if len(t_dep_str) == 5: t_dep_str += ":00"
+                t_dep = datetime.datetime.strptime(t_dep_str, '%H:%M:%S').time()
+            except:
+                t_dep = datetime.time(17, 0)
+            time_departed = st.time_input("Time Finished", value=t_dep)
+            
+            billable_items = st.text_area("Billable Items / Extras", value=report.get('billableItems', ''))
+
+        content = st.text_area("General Notes / Summary", value=report.get('content', ''))
+        
+        if st.form_submit_button("Update Report"):
+            # Update report in session state
+            st.session_state.jobs[job_index]['reports'][report_index].update({
+                'content': content,
+                'techsOnSite': ", ".join(techs_on_site_list),
+                'timeArrived': str(time_arrived),
+                'timeDeparted': str(time_departed),
+                'hoursWorked': str(hours_worked),
+                'partsUsed': parts_used,
+                'billableItems': billable_items
+            })
+            
+            # Log the action
+            user_email = st.session_state.user_info.get("email", "Unknown Admin")
+            get_logger().log(f"Admin {user_email} updated daily report {report_id} for job {job_id}")
+            
+            save_state(invalidate_briefing=False)
+            st.success("Report updated!")
+            st.rerun()
+
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
     # Find job directly from session state
@@ -1964,6 +2041,10 @@ Desc: {job['description']}"""
             reports_to_show = list(reversed(job['reports']))[:5]
             st.caption(f"Showing latest 5 of {total_reports} reports.")
 
+        # Admin check
+        user_email = st.session_state.user_info.get("email") if "user_info" in st.session_state else None
+        is_admin = user_email in st.session_state.adminEmails if user_email else False
+
         for r in reports_to_show:
             r_tech = get_tech(r['techId'])
             with st.container(border=True):
@@ -1971,12 +2052,17 @@ Desc: {job['description']}"""
                 
                 # Check if it's a "Daily Report" (has hours/techs) or "In-Progress" (just content/photos)
                 is_daily_report = r.get('hoursWorked') or r.get('techsOnSite')
+                is_completion = 'completion_checklist' in r
                 
                 if is_daily_report:
                     h1, h2, h3 = st.columns(3)
                     h1.caption(f"🕒 Hours: {r.get('hoursWorked')}")
                     h2.caption(f"⏰ In: {r.get('timeArrived')}")
                     h3.caption(f"⏰ Out: {r.get('timeDeparted')}")
+                    
+                    if is_admin and not is_completion:
+                        if st.button("✏️ Edit Report", key=f"edit_rep_{r['id']}"):
+                            edit_report_dialog(job_id, r['id'])
                 
                 if r.get('content'):
                     st.write(r['content'])
