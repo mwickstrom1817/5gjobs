@@ -1769,8 +1769,7 @@ def render_completion_confirmation(job_index, report_payload):
             del st.session_state[f"completion_pending_{job['id']}"]
         st.rerun()
         
-@st.dialog("Edit Daily Report")
-def edit_report_dialog(job_id, report_id):
+def render_edit_report_view(job_id, report_id):
     # Find job
     job_index = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
     if job_index == -1:
@@ -1786,7 +1785,8 @@ def edit_report_dialog(job_id, report_id):
     report = job['reports'][report_index]
 
     with st.form(key=f"edit_report_form_{report_id}"):
-        st.write(f"Editing report from {report['timestamp'][:16]}")
+        st.write(f"### ✏️ Editing Daily Report")
+        st.caption(f"Report from {report['timestamp'][:16]}")
         
         r_col1, r_col2 = st.columns(2)
         with r_col1:
@@ -1843,8 +1843,15 @@ def edit_report_dialog(job_id, report_id):
             get_logger().log(f"Admin {user_email} updated daily report {report_id} for job {job_id}")
             
             save_state(invalidate_briefing=False)
+            if f"editing_report_{job_id}" in st.session_state:
+                del st.session_state[f"editing_report_{job_id}"]
             st.success("Report updated!")
             st.rerun()
+
+    if st.button("Cancel Edit"):
+        if f"editing_report_{job_id}" in st.session_state:
+            del st.session_state[f"editing_report_{job_id}"]
+        st.rerun()
 
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
@@ -1854,6 +1861,12 @@ def job_details_dialog(job_id):
         st.error("Job not found")
         return
     
+    # Check for active report editing
+    edit_key = f"editing_report_{job_id}"
+    if edit_key in st.session_state:
+        render_edit_report_view(job_id, st.session_state[edit_key])
+        return
+
     # Check for pending completion confirmation
     pending_key = f"completion_pending_{job_id}"
     if pending_key in st.session_state:
@@ -2062,7 +2075,8 @@ Desc: {job['description']}"""
                     
                     if is_admin and not is_completion:
                         if st.button("✏️ Edit Report", key=f"edit_rep_{r['id']}"):
-                            edit_report_dialog(job_id, r['id'])
+                            st.session_state[f"editing_report_{job_id}"] = r['id']
+                            st.rerun()
                 
                 if r.get('content'):
                     st.write(r['content'])
