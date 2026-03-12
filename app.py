@@ -698,6 +698,7 @@ def suggest_address_with_gemini(partial_address):
     except:
         return partial_address
 
+@st.cache_data(ttl=3600) # Cache for 1 hour
 def get_lat_lon_from_address(address):
     """Uses Open-Meteo Geocoding API to geocode an address to Lat/Lon.
        Falls back to city search if full address fails.
@@ -744,6 +745,7 @@ def get_lat_lon_from_address(address):
         get_logger().log(f"Geocoding failed for '{address}': {e}")
         return None, None
 
+@st.cache_data(ttl=600) # Cache for 10 mins
 def get_weather(lat, lon):
     """Fetches current weather from Open-Meteo (Free, No Key)."""
     try:
@@ -856,6 +858,18 @@ def download_data_as_json():
     return json.dumps(data, indent=2)
 
 # --- PDF GENERATION ---
+@st.cache_data(ttl=3600)
+def get_image_bytes(url):
+    """Fetches image bytes from a URL and caches them."""
+    try:
+        response = requests.get(url, timeout=15)
+        if response.status_code == 200:
+            return response.content
+    except Exception:
+        pass
+    return None
+
+@st.cache_data(show_spinner="Generating PDF...")
 def generate_job_pdf(job, tech, location, report):
     """Generates a PDF bytes object for the completed job."""
     if not HAS_REPORTLAB:
@@ -988,8 +1002,9 @@ def generate_job_pdf(job, tech, location, report):
     if signature_key:
         try:
             sig_url = get_view_url(signature_key, expires_seconds=3600)
-            sig_bytes = requests.get(sig_url, timeout=10).content
-            sig_reader = ImageReader(BytesIO(sig_bytes))
+            sig_bytes = get_image_bytes(sig_url)
+            if sig_bytes:
+                sig_reader = ImageReader(BytesIO(sig_bytes))
 
             y -= 60
             p.drawImage(sig_reader, 50, y, width=150, height=50, mask="auto")
@@ -1020,8 +1035,9 @@ def generate_job_pdf(job, tech, location, report):
         for photo_key in photos:
             try:
                 photo_url = get_view_url(photo_key, expires_seconds=3600)
-                img_bytes = requests.get(photo_url, timeout=15).content
-                img_reader = ImageReader(BytesIO(img_bytes))
+                img_bytes = get_image_bytes(photo_url)
+                if img_bytes:
+                    img_reader = ImageReader(BytesIO(img_bytes))
 
                 if y - img_height < 50:
                     p.showPage()
