@@ -10,6 +10,7 @@ try:
 except ImportError:
     HAS_BOTO3 = False
 
+@st.cache_resource
 def get_r2_client():
     if not HAS_BOTO3:
         st.error("❌ `boto3` library not found. Please add it to `requirements.txt`.")
@@ -60,6 +61,7 @@ def get_r2_client():
         region_name=region_name
     )
 
+@st.cache_data
 def get_bucket_name():
     return os.environ.get("R2_BUCKET_NAME") or st.secrets.get("R2_BUCKET_NAME") or \
            os.environ.get("AWS_BUCKET_NAME") or st.secrets.get("AWS_BUCKET_NAME") or \
@@ -122,6 +124,7 @@ def upload_streamlit_file(uploaded_file, folder="photos"):
         st.error(f"❌ Upload Failed: {e}")
         return None
 
+@st.cache_data(ttl=1800) # Cache for 30 mins
 def get_view_url(key, expires_seconds=3600):
     """Generates a presigned URL for viewing the object."""
     if not key:
