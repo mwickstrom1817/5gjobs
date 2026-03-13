@@ -8,3 +8,6 @@ reportlab
 streamlit-drawable-canvas
 psycopg2-binary
 boto3
+fastapi
+uvicorn[standard]
+python-multipart
