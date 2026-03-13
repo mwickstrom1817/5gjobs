@@ -1,6 +1,9 @@
+"""
+persistence_pg.py — Streamlit-free version for FastAPI backend.
+All st.secrets / st.session_state replaced with os.environ and in-memory dict.
+"""
 import os
 import json
-import streamlit as st
 
 try:
     import psycopg2
@@ -9,44 +12,29 @@ try:
 except ImportError:
     HAS_PSYCOPG2 = False
 
-# Default data structure
 DEFAULT_DATA = {
     "jobs": [],
     "techs": [],
     "locations": [],
     "briefing": "Data required to generate briefing.",
     "adminEmails": [],
-    "last_reminder_date": None
+    "last_reminder_date": None,
 }
 
 def get_connection():
     if not HAS_PSYCOPG2:
-        raise ImportError("psycopg2 module not found. Please install it.")
-        
+        raise ImportError("psycopg2 not installed.")
     db_url = os.environ.get("DATABASE_URL") or os.environ.get("NEON_DB_URL")
     if not db_url:
-        # Fallback to streamlit secrets if available
-        if "DATABASE_URL" in st.secrets:
-            db_url = st.secrets["DATABASE_URL"]
-        elif "NEON_DB_URL" in st.secrets:
-            db_url = st.secrets["NEON_DB_URL"]
-            
-    if not db_url:
-        raise ValueError("DATABASE_URL or NEON_DB_URL not found in environment or secrets.")
-        
+        raise ValueError("DATABASE_URL or NEON_DB_URL not set in environment.")
     return psycopg2.connect(db_url)
 
 def init_db():
-    """Initialize the table if it doesn't exist."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            # Check if table exists
             cur.execute("SELECT to_regclass('app_state');")
-            table_oid = cur.fetchone()[0]
-            
-            if not table_oid:
-                # Create table if it doesn't exist
+            if not cur.fetchone()[0]:
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS app_state (
                         key TEXT PRIMARY KEY,
@@ -55,26 +43,20 @@ def init_db():
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
-                
-                # Insert default if not exists
                 cur.execute(
                     "INSERT INTO app_state (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     ('global_state', json.dumps(DEFAULT_DATA))
                 )
-            
-            conn.commit()
-            
+        conn.commit()
     except Exception as e:
         conn.rollback()
-        # Log error but do not drop table
         print(f"DB Init Error: {e}")
     finally:
         conn.close()
 
-# Initialize on module load (or first use)
 try:
     init_db()
-except Exception as e:
+except Exception:
     pass
 
 def load_state():
@@ -90,19 +72,18 @@ def load_state():
     finally:
         conn.close()
 
-def save_state_to_db(data):
-    """Saves data to DB, incrementing version."""
+def save_state_to_db(data: dict) -> int:
     conn = get_connection()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                INSERT INTO app_state (key, value) 
-                VALUES ('global_state', %s)
-                ON CONFLICT (key) 
-                DO UPDATE SET value = EXCLUDED.value, version = app_state.version + 1, updated_at = CURRENT_TIMESTAMP
-                RETURNING version;
-                """,
+                """INSERT INTO app_state (key, value)
+                   VALUES ('global_state', %s)
+                   ON CONFLICT (key)
+                   DO UPDATE SET value = EXCLUDED.value,
+                                 version = app_state.version + 1,
+                                 updated_at = CURRENT_TIMESTAMP
+                   RETURNING version;""",
                 (json.dumps(data),)
             )
             new_version = cur.fetchone()[0]
@@ -114,28 +95,7 @@ def save_state_to_db(data):
     finally:
         conn.close()
 
-def ensure_loaded_into_session():
-    """Ensures st.session_state.db is populated."""
-    if 'db' not in st.session_state:
-        data, version = load_state()
-        st.session_state.db = data
-        st.session_state._db_version = version
-
-def commit_from_session(invalidate_briefing=True):
-    """Saves st.session_state.db to DB."""
-    if 'db' not in st.session_state:
-        return
-        
-    # Update briefing if needed
-    if invalidate_briefing:
-        st.session_state.db['briefing'] = "Data required to generate briefing."
-        
-    try:
-        new_ver = save_state_to_db(st.session_state.db)
-        st.session_state._db_version = new_ver
-    except Exception as e:
-        st.error(f"Failed to save to DB: {e}")
-
-def force_overwrite_from_session(invalidate_briefing=False):
-    """Same as commit but explicitly named for restore operations."""
-    commit_from_session(invalidate_briefing=invalidate_briefing)
+# The following stubs are kept for compatibility if anything imports them.
+def ensure_loaded_into_session(): pass
+def commit_from_session(invalidate_briefing=True): pass
+def force_overwrite_from_session(invalidate_briefing=False): pass
