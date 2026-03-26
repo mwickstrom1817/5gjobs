@@ -228,14 +228,11 @@ SKILL_OPTIONS = [
 
 # --- AUTHENTICATION ---
 
-# --- SESSION TOKEN STORE (in-memory, persists across Streamlit reruns via @st.cache_resource) ---
-@st.cache_resource
 # --- POSTGRES-BACKED SESSION STORE ---
 
 def save_session_token(token: str, user_info: dict):
     """Persist a session token to Neon Postgres."""
     from persistence_pg import get_connection
-    import json
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -311,11 +308,8 @@ def authenticate():
             if user_info:
                 st.session_state.user_info = user_info
                 return user_info
-            # Token is stale — clear the cookie
             controller.remove(SESSION_COOKIE)
     except Exception:
-        # Cookies not ready yet on first render — just continue to login screen
-        # The controller will trigger a rerun once ready
         pass
 
     # 3) Setup OAuth Config
@@ -345,14 +339,11 @@ def authenticate():
         except Exception:
             code = None
 
-    # Prevent infinite loops if the URL keeps the same code param
-    if code and st.session_state.get("_oauth_last_code") == code:
-        # Already processed this code, stop here
-        return None
-    elif code:
+    # 5) Exchange auth code for user info — do it immediately, no rerun in between
+    if code and st.session_state.get("_oauth_last_code") != code:
         st.session_state["_oauth_last_code"] = code
-        # Clear the URL immediately before attempting exchange
-        # so a Streamlit rerun doesn't try to use the code again
+
+        # Clear the code from URL right away
         try:
             st.query_params.clear()
         except Exception:
@@ -360,11 +351,7 @@ def authenticate():
                 st.experimental_set_query_params()
             except Exception:
                 pass
-        st.rerun()
 
-    # 5) Exchange auth code for user info
-    code = st.session_state.get("_oauth_last_code")
-    if code:
         try:
             token_url = "https://oauth2.googleapis.com/token"
             data = {
@@ -394,30 +381,17 @@ def authenticate():
             import secrets as _secrets
             session_token = _secrets.token_urlsafe(32)
             save_session_token(session_token, user_info)
-            controller.set(SESSION_COOKIE, session_token, max_age=60 * 60 * 24 * 7)  # 7 days
 
-            # Clear OAuth code from URL
             try:
-                st.query_params.clear()
+                controller.set(SESSION_COOKIE, session_token, max_age=60 * 60 * 24 * 7)
             except Exception:
-                try:
-                    st.experimental_set_query_params()
-                except Exception:
-                    pass
+                pass
 
-            time.sleep(0.1)
+            time.sleep(0.2)
             st.rerun()
 
         except Exception as e:
             st.error(f"Authentication Failed: {e}")
-            try:
-                st.query_params.clear()
-            except Exception:
-                try:
-                    st.experimental_set_query_params()
-                except Exception:
-                    pass
-            code = None
 
     # 6) Show Login Button
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -467,13 +441,10 @@ def logout():
     controller = CookieController()
     SESSION_COOKIE = "5g_session_token"
 
-    # Remove token from Postgres
-    token = controller.get(SESSION_COOKIE)
-    if token:
-        delete_session_token(token)
-
-    # Clear cookie
     try:
+        token = controller.get(SESSION_COOKIE)
+        if token:
+            delete_session_token(token)
         controller.remove(SESSION_COOKIE)
     except Exception:
         pass
