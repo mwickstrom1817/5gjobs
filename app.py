@@ -342,13 +342,20 @@ def authenticate():
 
     # Prevent infinite loops if the URL keeps the same code param
     if code and st.session_state.get("_oauth_last_code") == code:
-        try:
-            st.query_params.clear()
-        except:
-            pass
+        # Already processed this code, stop here
         return None
     elif code:
         st.session_state["_oauth_last_code"] = code
+        # Clear the URL immediately before attempting exchange
+        # so a Streamlit rerun doesn't try to use the code again
+        try:
+            st.query_params.clear()
+        except Exception:
+            try:
+                st.experimental_set_query_params()
+            except Exception:
+                pass
+        st.rerun()
 
     # 5) Exchange auth code for user info
     if code:
