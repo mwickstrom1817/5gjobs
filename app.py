@@ -304,19 +304,19 @@ def authenticate():
         return st.session_state.user_info
 
     # 2) Try to restore from cookie (handles page refresh)
-    # Controller needs a moment to load cookies on first render — if not ready, stop and wait
     try:
         token = controller.get(SESSION_COOKIE)
+        if token:
+            user_info = load_session_token(token)
+            if user_info:
+                st.session_state.user_info = user_info
+                return user_info
+            # Token is stale — clear the cookie
+            controller.remove(SESSION_COOKIE)
     except Exception:
-        st.stop()  # Cookies not loaded yet, Streamlit will rerun automatically
-
-    if token:
-        user_info = load_session_token(token)
-        if user_info:
-            st.session_state.user_info = user_info
-            return user_info
-        # Token is stale — clear the cookie
-        controller.remove(SESSION_COOKIE)
+        # Cookies not ready yet on first render — just continue to login screen
+        # The controller will trigger a rerun once ready
+        pass
 
     # 3) Setup OAuth Config
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
