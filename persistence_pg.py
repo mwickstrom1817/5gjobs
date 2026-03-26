@@ -9,7 +9,7 @@ try:
 except ImportError:
     HAS_PSYCOPG2 = False
 
-# Default data structure 
+# Default data structure  
 DEFAULT_DATA = {
     "jobs": [],
     "techs": [],
