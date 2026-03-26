@@ -228,18 +228,39 @@ SKILL_OPTIONS = [
 
 # --- AUTHENTICATION ---
 
-def authenticate():
-    """Handles Google OAuth2 Flow. Returns user_info dict if logged in, else None."""
+# --- SESSION TOKEN STORE (in-memory, persists across Streamlit reruns via @st.cache_resource) ---
+@st.cache_resource
+def get_session_store():
+    """A simple in-memory store mapping token -> user_info. Persists for the lifetime of the server process."""
+    return {}
 
-    # 1) If already logged in, return user info
+# --- AUTHENTICATION ---
+def authenticate():
+    """Handles Google OAuth2 Flow with cookie-based session persistence."""
+    from streamlit_cookies_controller import CookieController
+    controller = CookieController()
+
+    SESSION_COOKIE = "5g_session_token"
+
+    # 1) Already in session state — fastest path
     if "user_info" in st.session_state:
         return st.session_state.user_info
 
-    # 2) Setup OAuth Config
+    # 2) Try to restore from cookie (handles page refresh)
+    token = controller.get(SESSION_COOKIE)
+    if token:
+        store = get_session_store()
+        user_info = store.get(token)
+        if user_info:
+            st.session_state.user_info = user_info
+            return user_info
+        # Token is stale (server restarted) — clear the cookie
+        controller.remove(SESSION_COOKIE)
+
+    # 3) Setup OAuth Config
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
     client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
-    
-    # Use APP_URL as fallback for redirect_uri
+
     app_url = os.getenv("APP_URL", "").rstrip("/")
     default_redirect = f"{app_url}/" if app_url else None
     redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI") or default_redirect
@@ -251,7 +272,7 @@ def authenticate():
         )
         return None
 
-    # 3) Check for Auth Code from Google Redirect
+    # 4) Check for Auth Code from Google Redirect
     code = None
     try:
         if "code" in st.query_params:
@@ -265,7 +286,6 @@ def authenticate():
 
     # Prevent infinite loops if the URL keeps the same code param
     if code and st.session_state.get("_oauth_last_code") == code:
-        # Code already processed, clear it and continue without rerun
         try:
             st.query_params.clear()
         except:
@@ -274,7 +294,7 @@ def authenticate():
     elif code:
         st.session_state["_oauth_last_code"] = code
 
-    # If we have a code, try to exchange it for a token and fetch user info
+    # 5) Exchange auth code for user info
     if code:
         try:
             token_url = "https://oauth2.googleapis.com/token"
@@ -285,7 +305,6 @@ def authenticate():
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             }
-
             r = requests.post(token_url, data=data, timeout=15)
             r.raise_for_status()
             tokens = r.json()
@@ -299,9 +318,16 @@ def authenticate():
             user_r.raise_for_status()
             user_info = user_r.json()
 
+            # Store in session state
             st.session_state.user_info = user_info
 
-            # Clear query params so refresh doesn't keep re-processing the code
+            # Mint a session token and store in cookie + server-side store
+            import secrets as _secrets
+            session_token = _secrets.token_urlsafe(32)
+            get_session_store()[session_token] = user_info
+            controller.set(SESSION_COOKIE, session_token, max_age=60 * 60 * 24 * 7)  # 7 days
+
+            # Clear OAuth code from URL
             try:
                 st.query_params.clear()
             except Exception:
@@ -309,15 +335,12 @@ def authenticate():
                     st.experimental_set_query_params()
                 except Exception:
                     pass
-            
-            # Small delay to ensure session state propagates
+
             time.sleep(0.1)
             st.rerun()
 
         except Exception as e:
             st.error(f"Authentication Failed: {e}")
-
-            # Clear query params so we can show login again
             try:
                 st.query_params.clear()
             except Exception:
@@ -325,11 +348,9 @@ def authenticate():
                     st.experimental_set_query_params()
                 except Exception:
                     pass
-
-            # Allow the function to continue to the login button UI (no rerun)
             code = None
 
-    # 4) Show Login Button
+    # 6) Show Login Button
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = {
         "client_id": client_id,
@@ -368,13 +389,30 @@ def authenticate():
         """,
         unsafe_allow_html=True,
     )
-
     return None
 
 
 def logout():
+    """Clears session state and the persistent cookie."""
+    from streamlit_cookies_controller import CookieController
+    controller = CookieController()
+    SESSION_COOKIE = "5g_session_token"
+
+    # Remove token from server-side store
+    token = controller.get(SESSION_COOKIE)
+    if token:
+        store = get_session_store()
+        store.pop(token, None)
+
+    # Clear cookie
+    try:
+        controller.remove(SESSION_COOKIE)
+    except Exception:
+        pass
+
     if "user_info" in st.session_state:
         del st.session_state.user_info
+
     st.rerun()
 # --- HELPER FUNCTIONS ---
 
