@@ -304,7 +304,12 @@ def authenticate():
         return st.session_state.user_info
 
     # 2) Try to restore from cookie (handles page refresh)
-    token = controller.get(SESSION_COOKIE)
+    # Controller needs a moment to load cookies on first render — if not ready, stop and wait
+    try:
+        token = controller.get(SESSION_COOKIE)
+    except Exception:
+        st.stop()  # Cookies not loaded yet, Streamlit will rerun automatically
+
     if token:
         user_info = load_session_token(token)
         if user_info:
