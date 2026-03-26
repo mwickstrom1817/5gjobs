@@ -358,6 +358,7 @@ def authenticate():
         st.rerun()
 
     # 5) Exchange auth code for user info
+    code = st.session_state.get("_oauth_last_code")
     if code:
         try:
             token_url = "https://oauth2.googleapis.com/token"
