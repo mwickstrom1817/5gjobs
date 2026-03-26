@@ -234,9 +234,10 @@ SKILL_OPTIONS = [
 
 def save_session_token(token: str, user_info: dict):
     """Persist a session token to Neon Postgres."""
-    from persistence_pg import get_db_conn
+    from persistence_pg import get_connection
     import json
-    with get_db_conn() as conn:
+    conn = get_connection()
+    try:
         with conn.cursor() as cur:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS session_tokens (
@@ -251,29 +252,40 @@ def save_session_token(token: str, user_info: dict):
                 ON CONFLICT (token) DO NOTHING;
             """, (token, json.dumps(user_info)))
         conn.commit()
+    except Exception as e:
+        conn.rollback()
+        raise e
+    finally:
+        conn.close()
 
 def load_session_token(token: str):
     """Look up a session token from Neon Postgres. Returns user_info dict or None."""
-    from persistence_pg import get_db_conn
+    from persistence_pg import get_connection
     try:
-        with get_db_conn() as conn:
+        conn = get_connection()
+        try:
             with conn.cursor() as cur:
                 cur.execute("""
                     SELECT user_info FROM session_tokens WHERE token = %s;
                 """, (token,))
                 row = cur.fetchone()
                 return row[0] if row else None
+        finally:
+            conn.close()
     except Exception:
         return None
 
 def delete_session_token(token: str):
     """Remove a session token on logout."""
-    from persistence_pg import get_db_conn
+    from persistence_pg import get_connection
     try:
-        with get_db_conn() as conn:
+        conn = get_connection()
+        try:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM session_tokens WHERE token = %s;", (token,))
             conn.commit()
+        finally:
+            conn.close()
     except Exception:
         pass
 
