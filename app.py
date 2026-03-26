@@ -1494,7 +1494,7 @@ def add_job_dialog():
                 'description': desc,
                 'type': job_type,
                 'priority': priority,
-                'status': 'Pending',
+                'status': 'Not Started',
                 'locationId': loc_map[loc_name],
                 'techId': selected_tech_id,
                 'date': full_date.isoformat(),
@@ -1980,8 +1980,11 @@ Desc: {job['description']}"""
     with c2:
         st.markdown("**Current Status:**")
         status_color = {
+            "Not Started": "gray",
             "Pending": "gray",
             "In Progress": "orange", 
+            "Customer on Hold": "red",
+            "Waiting on Parts": "blue",
             "Completed": "green"
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
@@ -2114,7 +2117,7 @@ Desc: {job['description']}"""
                 st.session_state.jobs[job_index]['reports'].append(report_payload)
                 
                 # Auto-update status for Arrived
-                if label == "📍 Arrived" and job['status'] == 'Pending':
+                if label == "📍 Arrived" and job['status'] in ['Pending', 'Not Started']:
                     st.session_state.jobs[job_index]['status'] = 'In Progress'
                 
                 save_state()
@@ -2167,7 +2170,7 @@ Desc: {job['description']}"""
                     st.session_state.jobs[job_index]['reports'].append(report_payload)
                     
                     # Auto-set status to In Progress if Pending
-                    if job['status'] == 'Pending':
+                    if job['status'] in ['Pending', 'Not Started']:
                         st.session_state.jobs[job_index]['status'] = 'In Progress'
                         st.session_state.briefing = "Data required to generate briefing."
                     
@@ -2226,8 +2229,14 @@ Desc: {job['description']}"""
                     st.success("Audio Transcribed!")
 
         with st.form(key=f"daily_form_{job_id}"):
-            new_status = st.selectbox("Job Status", ["Pending", "In Progress", "Completed"], 
-                                      index=["Pending", "In Progress", "Completed"].index(job['status']))
+            status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Completed"]
+            current_status = job['status']
+            if current_status == "Pending": current_status = "Not Started"
+            try:
+                status_idx = status_options.index(current_status)
+            except ValueError:
+                status_idx = 0
+            new_status = st.selectbox("Job Status", status_options, index=status_idx)
 
             r_col1, r_col2 = st.columns(2)
             with r_col1:
@@ -2342,6 +2351,32 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             </div>
         </div>
         """, unsafe_allow_html=True)
+        # Status Dropdown
+        status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Completed"]
+        current_status = job['status']
+        if current_status == "Pending": current_status = "Not Started"
+        
+        try:
+            status_idx = status_options.index(current_status)
+        except ValueError:
+            status_idx = 0
+            
+        new_status = st.selectbox(
+            "Change Status",
+            status_options,
+            index=status_idx,
+            key=f"status_change_{job['id']}_{key_suffix}",
+            label_visibility="collapsed"
+        )
+        
+        if new_status != job['status']:
+            # Find job index and update
+            job_idx = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job['id']), -1)
+            if job_idx != -1:
+                st.session_state.jobs[job_idx]['status'] = new_status
+                save_state()
+                st.rerun()
+
         # Unique key using job ID AND suffix to prevent Streamlit duplicates
         if allow_delete:
             c1, c2, c3 = st.columns([6, 1, 1])
@@ -3069,20 +3104,20 @@ def main():
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
-            cols = st.columns(len(st.session_state.techs) + 1)
-            # Tech Columns
-            for i, tech in enumerate(st.session_state.techs):
+            board_statuses = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts"]
+            cols = st.columns(len(board_statuses))
+            for i, status in enumerate(board_statuses):
                 with cols[i]:
-                    st.markdown(f"**{tech['initials']}** - {tech['name']}")
-                    tech_jobs = [j for j in filtered_jobs if j['techId'] == tech['id'] and j['status'] != 'Completed']
-                    for job in tech_jobs:
-                        render_job_card(job, compact=True, key_suffix=f"tech_{tech['id']}", allow_delete=is_admin)
-            # Unassigned
-            with cols[-1]:
-                st.markdown("**Unassigned**")
-                unassigned = [j for j in filtered_jobs if not j['techId'] and j['status'] != 'Completed']
-                for job in unassigned:
-                    render_job_card(job, compact=True, key_suffix="unassigned", allow_delete=is_admin)
+                    st.markdown(f"#### {status}")
+                    if status == "Not Started":
+                        status_jobs = [j for j in filtered_jobs if j['status'] in ["Not Started", "Pending"]]
+                    else:
+                        status_jobs = [j for j in filtered_jobs if j['status'] == status]
+                    
+                    if not status_jobs:
+                        st.caption("No jobs.")
+                    for job in status_jobs:
+                        render_job_card(job, compact=True, key_suffix=f"board_{status}", allow_delete=is_admin)
 
     # 3. Calendar View
     with tab_map["📅 Calendar"]:
