@@ -230,11 +230,56 @@ SKILL_OPTIONS = [
 
 # --- SESSION TOKEN STORE (in-memory, persists across Streamlit reruns via @st.cache_resource) ---
 @st.cache_resource
-def get_session_store():
-    """A simple in-memory store mapping token -> user_info. Persists for the lifetime of the server process."""
-    return {}
+# --- POSTGRES-BACKED SESSION STORE ---
+
+def save_session_token(token: str, user_info: dict):
+    """Persist a session token to Neon Postgres."""
+    from persistence_pg import get_db_conn
+    import json
+    with get_db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS session_tokens (
+                    token TEXT PRIMARY KEY,
+                    user_info JSONB NOT NULL,
+                    created_at TIMESTAMPTZ DEFAULT NOW()
+                );
+            """)
+            cur.execute("""
+                INSERT INTO session_tokens (token, user_info)
+                VALUES (%s, %s)
+                ON CONFLICT (token) DO NOTHING;
+            """, (token, json.dumps(user_info)))
+        conn.commit()
+
+def load_session_token(token: str):
+    """Look up a session token from Neon Postgres. Returns user_info dict or None."""
+    from persistence_pg import get_db_conn
+    try:
+        with get_db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT user_info FROM session_tokens WHERE token = %s;
+                """, (token,))
+                row = cur.fetchone()
+                return row[0] if row else None
+    except Exception:
+        return None
+
+def delete_session_token(token: str):
+    """Remove a session token on logout."""
+    from persistence_pg import get_db_conn
+    try:
+        with get_db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM session_tokens WHERE token = %s;", (token,))
+            conn.commit()
+    except Exception:
+        pass
+
 
 # --- AUTHENTICATION ---
+
 def authenticate():
     """Handles Google OAuth2 Flow with cookie-based session persistence."""
     from streamlit_cookies_controller import CookieController
@@ -249,12 +294,11 @@ def authenticate():
     # 2) Try to restore from cookie (handles page refresh)
     token = controller.get(SESSION_COOKIE)
     if token:
-        store = get_session_store()
-        user_info = store.get(token)
+        user_info = load_session_token(token)
         if user_info:
             st.session_state.user_info = user_info
             return user_info
-        # Token is stale (server restarted) — clear the cookie
+        # Token is stale — clear the cookie
         controller.remove(SESSION_COOKIE)
 
     # 3) Setup OAuth Config
@@ -321,10 +365,10 @@ def authenticate():
             # Store in session state
             st.session_state.user_info = user_info
 
-            # Mint a session token and store in cookie + server-side store
+            # Mint a session token and persist to Postgres + cookie
             import secrets as _secrets
             session_token = _secrets.token_urlsafe(32)
-            get_session_store()[session_token] = user_info
+            save_session_token(session_token, user_info)
             controller.set(SESSION_COOKIE, session_token, max_age=60 * 60 * 24 * 7)  # 7 days
 
             # Clear OAuth code from URL
@@ -393,16 +437,15 @@ def authenticate():
 
 
 def logout():
-    """Clears session state and the persistent cookie."""
+    """Clears session state, Postgres token, and the persistent cookie."""
     from streamlit_cookies_controller import CookieController
     controller = CookieController()
     SESSION_COOKIE = "5g_session_token"
 
-    # Remove token from server-side store
+    # Remove token from Postgres
     token = controller.get(SESSION_COOKIE)
     if token:
-        store = get_session_store()
-        store.pop(token, None)
+        delete_session_token(token)
 
     # Clear cookie
     try:
