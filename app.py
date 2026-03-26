@@ -176,6 +176,18 @@ def save_state(invalidate_briefing=True):
     _sync_session_to_db()
     commit_from_session(invalidate_briefing=invalidate_briefing)
 
+def update_job_status_callback(job_id, widget_key):
+    """Callback to update job status and save state."""
+    new_status = st.session_state.get(widget_key)
+    if not new_status:
+        return
+        
+    job_idx = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
+    if job_idx != -1:
+        if st.session_state.jobs[job_idx]['status'] != new_status:
+            st.session_state.jobs[job_idx]['status'] = new_status
+            save_state()
+
 # --- DB SESSION INITIALIZER (safe) ---
 def init_db_session():
     try:
@@ -2361,21 +2373,16 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         except ValueError:
             status_idx = 0
             
-        new_status = st.selectbox(
+        widget_key = f"status_change_{job['id']}_{key_suffix}"
+        st.selectbox(
             "Change Status",
             status_options,
             index=status_idx,
-            key=f"status_change_{job['id']}_{key_suffix}",
+            key=widget_key,
+            on_change=update_job_status_callback,
+            args=(job['id'], widget_key),
             label_visibility="collapsed"
         )
-        
-        if new_status != job['status']:
-            # Find job index and update
-            job_idx = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job['id']), -1)
-            if job_idx != -1:
-                st.session_state.jobs[job_idx]['status'] = new_status
-                save_state()
-                st.rerun()
 
         # Unique key using job ID AND suffix to prevent Streamlit duplicates
         if allow_delete:
@@ -3117,7 +3124,7 @@ def main():
                     if not status_jobs:
                         st.caption("No jobs.")
                     for job in status_jobs:
-                        render_job_card(job, compact=True, key_suffix=f"board_{status}", allow_delete=is_admin)
+                        render_job_card(job, compact=True, key_suffix="board", allow_delete=is_admin)
 
     # 3. Calendar View
     with tab_map["📅 Calendar"]:
