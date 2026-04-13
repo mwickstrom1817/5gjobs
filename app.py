@@ -228,94 +228,18 @@ SKILL_OPTIONS = [
 
 # --- AUTHENTICATION ---
 
-# --- POSTGRES-BACKED SESSION STORE ---
-
-def save_session_token(token: str, user_info: dict):
-    """Persist a session token to Neon Postgres."""
-    from persistence_pg import get_connection
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS session_tokens (
-                    token TEXT PRIMARY KEY,
-                    user_info JSONB NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT NOW()
-                );
-            """)
-            cur.execute("""
-                INSERT INTO session_tokens (token, user_info)
-                VALUES (%s, %s)
-                ON CONFLICT (token) DO NOTHING;
-            """, (token, json.dumps(user_info)))
-        conn.commit()
-    except Exception as e:
-        conn.rollback()
-        raise e
-    finally:
-        conn.close()
-
-def load_session_token(token: str):
-    """Look up a session token from Neon Postgres. Returns user_info dict or None."""
-    from persistence_pg import get_connection
-    try:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    SELECT user_info FROM session_tokens WHERE token = %s;
-                """, (token,))
-                row = cur.fetchone()
-                return row[0] if row else None
-        finally:
-            conn.close()
-    except Exception:
-        return None
-
-def delete_session_token(token: str):
-    """Remove a session token on logout."""
-    from persistence_pg import get_connection
-    try:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM session_tokens WHERE token = %s;", (token,))
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception:
-        pass
-
-
-# --- AUTHENTICATION ---
-
 def authenticate():
-    """Handles Google OAuth2 Flow with cookie-based session persistence."""
-    from streamlit_cookies_controller import CookieController
-    controller = CookieController()
+    """Handles Google OAuth2 Flow. Returns user_info dict if logged in, else None."""
 
-    SESSION_COOKIE = "5g_session_token"
-
-    # 1) Already in session state — fastest path
+    # 1) If already logged in, return user info
     if "user_info" in st.session_state:
         return st.session_state.user_info
 
-    # 2) Try to restore from cookie (handles page refresh)
-    try:
-        token = controller.get(SESSION_COOKIE)
-        if token:
-            user_info = load_session_token(token)
-            if user_info:
-                st.session_state.user_info = user_info
-                return user_info
-            controller.remove(SESSION_COOKIE)
-    except Exception:
-        pass
-
-    # 3) Setup OAuth Config
+    # 2) Setup OAuth Config
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
     client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
-
+    
+    # Use APP_URL as fallback for redirect_uri
     app_url = os.getenv("APP_URL", "").rstrip("/")
     default_redirect = f"{app_url}/" if app_url else None
     redirect_uri = st.secrets.get("GOOGLE_REDIRECT_URI") or os.getenv("GOOGLE_REDIRECT_URI") or default_redirect
@@ -327,7 +251,7 @@ def authenticate():
         )
         return None
 
-    # 4) Check for Auth Code from Google Redirect
+    # 3) Check for Auth Code from Google Redirect
     code = None
     try:
         if "code" in st.query_params:
@@ -339,19 +263,19 @@ def authenticate():
         except Exception:
             code = None
 
-    # 5) Exchange auth code for user info — do it immediately, no rerun in between
-    if code and st.session_state.get("_oauth_last_code") != code:
-        st.session_state["_oauth_last_code"] = code
-
-        # Clear the code from URL right away
+    # Prevent infinite loops if the URL keeps the same code param
+    if code and st.session_state.get("_oauth_last_code") == code:
+        # Code already processed, clear it and continue without rerun
         try:
             st.query_params.clear()
-        except Exception:
-            try:
-                st.experimental_set_query_params()
-            except Exception:
-                pass
+        except:
+            pass
+        return None
+    elif code:
+        st.session_state["_oauth_last_code"] = code
 
+    # If we have a code, try to exchange it for a token and fetch user info
+    if code:
         try:
             token_url = "https://oauth2.googleapis.com/token"
             data = {
@@ -361,6 +285,7 @@ def authenticate():
                 "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             }
+
             r = requests.post(token_url, data=data, timeout=15)
             r.raise_for_status()
             tokens = r.json()
@@ -374,26 +299,37 @@ def authenticate():
             user_r.raise_for_status()
             user_info = user_r.json()
 
-            # Store in session state
             st.session_state.user_info = user_info
 
-            # Mint a session token and persist to Postgres + cookie
-            import secrets as _secrets
-            session_token = _secrets.token_urlsafe(32)
-            save_session_token(session_token, user_info)
-
+            # Clear query params so refresh doesn't keep re-processing the code
             try:
-                controller.set(SESSION_COOKIE, session_token, max_age=60 * 60 * 24 * 7)
+                st.query_params.clear()
             except Exception:
-                pass
-
-            time.sleep(0.2)
+                try:
+                    st.experimental_set_query_params()
+                except Exception:
+                    pass
+            
+            # Small delay to ensure session state propagates
+            time.sleep(0.1)
             st.rerun()
 
         except Exception as e:
             st.error(f"Authentication Failed: {e}")
 
-    # 6) Show Login Button
+            # Clear query params so we can show login again
+            try:
+                st.query_params.clear()
+            except Exception:
+                try:
+                    st.experimental_set_query_params()
+                except Exception:
+                    pass
+
+            # Allow the function to continue to the login button UI (no rerun)
+            code = None
+
+    # 4) Show Login Button
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = {
         "client_id": client_id,
@@ -432,26 +368,13 @@ def authenticate():
         """,
         unsafe_allow_html=True,
     )
+
     return None
 
 
 def logout():
-    """Clears session state, Postgres token, and the persistent cookie."""
-    from streamlit_cookies_controller import CookieController
-    controller = CookieController()
-    SESSION_COOKIE = "5g_session_token"
-
-    try:
-        token = controller.get(SESSION_COOKIE)
-        if token:
-            delete_session_token(token)
-        controller.remove(SESSION_COOKIE)
-    except Exception:
-        pass
-
     if "user_info" in st.session_state:
         del st.session_state.user_info
-
     st.rerun()
 # --- HELPER FUNCTIONS ---
 
@@ -1128,7 +1051,25 @@ def generate_job_pdf(job, tech, location, report):
                 photo_url = get_view_url(photo_key, expires_seconds=3600)
                 img_bytes = get_image_bytes(photo_url)
                 if img_bytes:
-                    img_reader = ImageReader(BytesIO(img_bytes))
+                    # Resize image to reduce PDF size and prevent massive files
+                    try:
+                        img = Image.open(BytesIO(img_bytes))
+                        # Convert to RGB if necessary (e.g. from RGBA)
+                        if img.mode in ("RGBA", "P"):
+                            img = img.convert("RGB")
+                        
+                        # Resize if larger than 1024px (good balance of quality/size)
+                        max_size = 1024
+                        if img.width > max_size or img.height > max_size:
+                            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                        
+                        img_byte_arr = io.BytesIO()
+                        # Save as JPEG with optimized quality
+                        img.save(img_byte_arr, format='JPEG', quality=75, optimize=True)
+                        img_reader = ImageReader(BytesIO(img_byte_arr.getvalue()))
+                    except Exception as e:
+                        # Fallback to original if resizing fails
+                        img_reader = ImageReader(BytesIO(img_bytes))
 
                     if y - img_height < 50:
                         p.showPage()
@@ -1260,27 +1201,31 @@ def send_completion_email(job, tech, location, report_data):
     # Get Admin Emails
     recipients = st.session_state.adminEmails
     if not recipients:
+        st.warning("No admin emails configured to receive completion notification.")
         return
 
     # Generate PDF
-    pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+    try:
+        pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+    except Exception as e:
+        st.error(f"Failed to generate PDF report: {e}")
+        pdf_bytes = None
 
     # Prepare email content
     subject = f"✅ Job Completed: {job['title']}"
     body = f"""
-   JOB COMPLETED NOTIFICATION
-   
-   Job:      {job['title']}
-   Tech:     {tech['name'] if tech else 'Unknown'}
-   Location: {location['name'] if location else 'Unknown'}
-   
-   The job has been marked as Completed.
-   Please see the attached PDF report for full details.
-   """
+    JOB COMPLETED NOTIFICATION
+    
+    Job:      {job['title']}
+    Tech:     {tech['name'] if tech else 'Unknown'}
+    Location: {location['name'] if location else 'Unknown'}
+    
+    The job has been marked as Completed.
+    Please see the attached PDF report for full details.
+    """
 
     if not (smtp_server and sender_email and sender_password):
-        # 
-
+        st.warning("SMTP not configured. Completion email could not be sent.")
         return
 
     try:
@@ -1295,24 +1240,27 @@ def send_completion_email(job, tech, location, report_data):
 
         server.login(sender_email, sender_password)
         
-        for recipient in recipients:
-            msg = MIMEMultipart()
-            msg['From'] = sender_email
-            msg['To'] = recipient
-            msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
-            
-            if pdf_bytes:
-                attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-                attachment.add_header('Content-Disposition', 'attachment', filename=f"Report_{job['id']}.pdf")
-                msg.attach(attachment)
+        # Create base message
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        
+        if pdf_bytes:
+            attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+            attachment.add_header('Content-Disposition', 'attachment', filename=f"Report_{job['id']}.pdf")
+            msg.attach(attachment)
 
+        for recipient in recipients:
+            # We need to set 'To' for each recipient
+            if 'To' in msg: del msg['To']
+            msg['To'] = recipient
             server.send_message(msg)
             
         server.quit()
         st.toast("📧 Completion notification sent to Admins", icon="✅")
     except Exception as e:
-        st.error(f"Failed to send email: {str(e)}")
+        st.error(f"Failed to send completion email: {str(e)}")
 
 def send_daily_report_email(job, tech, location, report_data):
     """Sends a Daily Report email to Admins with PDF attachment."""
@@ -1336,23 +1284,27 @@ def send_daily_report_email(job, tech, location, report_data):
         return
 
     # Generate PDF
-    pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+    try:
+        pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+    except Exception as e:
+        st.error(f"Failed to generate PDF report: {e}")
+        pdf_bytes = None
 
     # Prepare email content
     subject = f"📝 Daily Report: {job['title']}"
     body = f"""
-   DAILY FIELD REPORT
-   
-   Job:      {job['title']}
-   Tech:     {tech['name'] if tech else 'Unknown'}
-   Location: {location['name'] if location else 'Unknown'}
-   Date:     {datetime.datetime.now().strftime('%Y-%m-%d')}
-   
-   Please see the attached PDF report for today's details.
-   """
+    DAILY FIELD REPORT
+    
+    Job:      {job['title']}
+    Tech:     {tech['name'] if tech else 'Unknown'}
+    Location: {location['name'] if location else 'Unknown'}
+    Date:     {datetime.datetime.now().strftime('%Y-%m-%d')}
+    
+    Please see the attached PDF report for today's details.
+    """
 
     if not (smtp_server and sender_email and sender_password):
-        st.error("SMTP not configured.")
+        st.error("SMTP not configured. Daily report email could not be sent.")
         return
 
     try:
@@ -1367,24 +1319,26 @@ def send_daily_report_email(job, tech, location, report_data):
 
         server.login(sender_email, sender_password)
         
-        for recipient in recipients:
-            msg = MIMEMultipart()
-            msg['From'] = sender_email
-            msg['To'] = recipient
-            msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
-            
-            if pdf_bytes:
-                attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-                attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf")
-                msg.attach(attachment)
+        # Create base message
+        msg = MIMEMultipart()
+        msg['From'] = sender_email
+        msg['Subject'] = subject
+        msg.attach(MIMEText(body, 'plain'))
+        
+        if pdf_bytes:
+            attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+            attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf")
+            msg.attach(attachment)
 
+        for recipient in recipients:
+            if 'To' in msg: del msg['To']
+            msg['To'] = recipient
             server.send_message(msg)
             
         server.quit()
         st.toast("📧 Daily Report sent to Admins", icon="✅")
     except Exception as e:
-        st.error(f"Failed to send email: {str(e)}")
+        st.error(f"Failed to send daily report email: {str(e)}")
 
 def send_daily_reminders():
     """Sends daily reminder emails to techs with active assignments (Mon-Fri only)."""
