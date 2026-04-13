@@ -158,6 +158,7 @@ def load_data():
             "locations": [],
             "briefing": "Data required to generate briefing.",
             "adminEmails": [],
+            "smtp_settings": {},
             "last_reminder_date": None
         }
 
@@ -168,6 +169,7 @@ def _sync_session_to_db():
     st.session_state.db["locations"] = st.session_state.locations
     st.session_state.db["briefing"] = st.session_state.briefing
     st.session_state.db["adminEmails"] = st.session_state.adminEmails
+    st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
 def save_state(invalidate_briefing=True):
@@ -200,11 +202,12 @@ init_db_session()
 # --- SESSION STATE INITIALIZATION ---
 if "jobs" not in st.session_state:
     db_data = load_data()
-    st.session_state.jobs = db_data["jobs"]
-    st.session_state.techs = db_data["techs"]
-    st.session_state.locations = db_data["locations"]
-    st.session_state.briefing = db_data["briefing"]
-    st.session_state.adminEmails = db_data["adminEmails"]
+    st.session_state.jobs = db_data.get("jobs", [])
+    st.session_state.techs = db_data.get("techs", [])
+    st.session_state.locations = db_data.get("locations", [])
+    st.session_state.briefing = db_data.get("briefing", "Data required to generate briefing.")
+    st.session_state.adminEmails = db_data.get("adminEmails", [])
+    st.session_state.smtp_settings = db_data.get("smtp_settings", {})
     st.session_state.last_reminder_date = db_data.get("last_reminder_date")
 
 if "chat_history" not in st.session_state:
@@ -873,7 +876,7 @@ def download_data_as_json():
     return json.dumps(data, indent=2)
 
 # --- PDF GENERATION ---
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def get_image_bytes(url):
     """Fetches image bytes from a URL and caches them."""
     try:
@@ -1045,8 +1048,13 @@ def generate_job_pdf(job, tech, location, report):
         gap_y = 20
 
         col = 0
+        processed_photos = set()
 
         for photo_key in photos:
+            if photo_key in processed_photos:
+                continue
+            processed_photos.add(photo_key)
+            
             try:
                 photo_url = get_view_url(photo_key, expires_seconds=3600)
                 img_bytes = get_image_bytes(photo_url)
@@ -1207,6 +1215,11 @@ def send_completion_email(job, tech, location, report_data):
     # Generate PDF
     try:
         pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+        if pdf_bytes:
+            pdf_size_mb = len(pdf_bytes) / (1024 * 1024)
+            get_logger().log(f"Generated PDF for job {job['id']}: {pdf_size_mb:.2f} MB")
+            if pdf_size_mb > 20:
+                st.warning(f"⚠️ PDF report is very large ({pdf_size_mb:.2f} MB). It may be rejected by some email servers.")
     except Exception as e:
         st.error(f"Failed to generate PDF report: {e}")
         pdf_bytes = None
@@ -1240,21 +1253,19 @@ def send_completion_email(job, tech, location, report_data):
 
         server.login(sender_email, sender_password)
         
-        # Create base message
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
-        
-        if pdf_bytes:
-            attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-            attachment.add_header('Content-Disposition', 'attachment', filename=f"Report_{job['id']}.pdf")
-            msg.attach(attachment)
-
         for recipient in recipients:
-            # We need to set 'To' for each recipient
-            if 'To' in msg: del msg['To']
+            # Create fresh message for each recipient to avoid header issues
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
             msg['To'] = recipient
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            
+            if pdf_bytes:
+                attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+                attachment.add_header('Content-Disposition', 'attachment', filename=f"Report_{job['id']}.pdf")
+                msg.attach(attachment)
+            
             server.send_message(msg)
             
         server.quit()
@@ -1286,6 +1297,11 @@ def send_daily_report_email(job, tech, location, report_data):
     # Generate PDF
     try:
         pdf_bytes = generate_job_pdf(job, tech, location, report_data)
+        if pdf_bytes:
+            pdf_size_mb = len(pdf_bytes) / (1024 * 1024)
+            get_logger().log(f"Generated Daily PDF for job {job['id']}: {pdf_size_mb:.2f} MB")
+            if pdf_size_mb > 20:
+                st.warning(f"⚠️ PDF report is very large ({pdf_size_mb:.2f} MB). It may be rejected by some email servers.")
     except Exception as e:
         st.error(f"Failed to generate PDF report: {e}")
         pdf_bytes = None
@@ -1319,20 +1335,19 @@ def send_daily_report_email(job, tech, location, report_data):
 
         server.login(sender_email, sender_password)
         
-        # Create base message
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
-        
-        if pdf_bytes:
-            attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-            attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf")
-            msg.attach(attachment)
-
         for recipient in recipients:
-            if 'To' in msg: del msg['To']
+            # Create fresh message for each recipient
+            msg = MIMEMultipart()
+            msg['From'] = sender_email
             msg['To'] = recipient
+            msg['Subject'] = subject
+            msg.attach(MIMEText(body, 'plain'))
+            
+            if pdf_bytes:
+                attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+                attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf")
+                msg.attach(attachment)
+            
             server.send_message(msg)
             
         server.quit()
@@ -2301,7 +2316,7 @@ Desc: {job['description']}"""
             
             # Logic to gather photos from "In-Progress" updates today
             current_date_str = datetime.datetime.now().strftime('%Y-%m-%d')
-            todays_photos = []
+            todays_photos_set = set()
             for r in job['reports']:
                 # Check timestamp match
                 if r['timestamp'].startswith(current_date_str) and r.get('photos'):
@@ -2309,7 +2324,10 @@ Desc: {job['description']}"""
                     # to avoid duplicating photos if a Daily Report was already submitted.
                     is_full_report = r.get('hoursWorked') or r.get('techsOnSite')
                     if not is_full_report:
-                        todays_photos.extend(r['photos'])
+                        for p_key in r['photos']:
+                            todays_photos_set.add(p_key)
+            
+            todays_photos = list(todays_photos_set)
             
             if todays_photos:
                 st.info(f"📸 {len(todays_photos)} photos taken today via 'In-Progress' updates will be automatically attached.")
@@ -2355,6 +2373,10 @@ Desc: {job['description']}"""
                         st.session_state[f"completion_pending_{job['id']}"] = report_payload
                         st.rerun()
                     else:
+                        # Automatically send email to admins for in-progress daily reports
+                        with st.spinner("Sending Daily Report to Admins..."):
+                            send_daily_report_email(job, tech, loc, report_payload)
+                            
                         st.session_state.jobs[job_index]['reports'].append(report_payload)
                         
                         # Update Status
@@ -2363,7 +2385,7 @@ Desc: {job['description']}"""
                             st.session_state.briefing = "Data required to generate briefing."
                         
                         save_state()
-                        st.success("Daily Report Submitted!")
+                        st.success("Daily Report Submitted & Emailed to Admins!")
                         st.rerun()
 
 # --- UI COMPONENTS ---
@@ -2655,7 +2677,9 @@ def render_admin_panel():
                     "SMTP_EMAIL": s_email,
                     "SMTP_PASSWORD": s_pass
                 }
-                st.success("SMTP Settings Saved to Session (Temporary)")
+                save_state(invalidate_briefing=False)
+                st.success("SMTP Settings Saved to Database!")
+                st.rerun()
     
     st.divider()
 
