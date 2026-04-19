@@ -326,12 +326,20 @@ def add_report(job_id: str, report: ReportIn, user: dict = Depends(verify_google
         except Exception: pass
     state["jobs"][idx].setdefault("reports", []).append(rd)
     save_state(invalidate_briefing=False)
-    if state["jobs"][idx].get("status") == "Completed":
-        t = _tech(state["jobs"][idx].get("techId")); l = _loc(state["jobs"][idx].get("locationId"))
-        pdf = make_pdf(state["jobs"][idx], t, l, rd)
-        admins = state.get("adminEmails", [])
-        if admins: send_email(f"✅ Job Completed: {state['jobs'][idx]['title']}",
-                              f"Job completed. See attached PDF.", admins, pdf, f"Report_{job_id}.pdf")
+    t = _tech(state["jobs"][idx].get("techId"))
+    l = _loc(state["jobs"][idx].get("locationId"))
+    pdf = make_pdf(state["jobs"][idx], t, l, rd)
+    admins = state.get("adminEmails", [])
+    if admins:
+        job_title = state["jobs"][idx]["title"]
+        status = state["jobs"][idx].get("status", "In Progress")
+        if status == "Completed":
+            subject = f"✅ Job Completed: {job_title}"
+            body = f"Job has been completed. See attached PDF report."
+        else:
+            subject = f"📋 Daily Report: {job_title}"
+            body = f"A field report has been submitted for '{job_title}' (Status: {status}). See attached PDF."
+        send_email(subject, body, admins, pdf, f"Report_{job_id}.pdf")
     return rd
 
 @app.get("/jobs/{job_id}/pdf")
