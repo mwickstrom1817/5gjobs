@@ -341,18 +341,24 @@ def add_report(job_id: str, report: ReportIn, user: dict = Depends(verify_google
     admins = list(state.get("adminEmails", []))
 
     def background_tasks():
-        t = _tech(job_snapshot.get("techId"))
-        l = _loc(job_snapshot.get("locationId"))
-        pdf = make_pdf(job_snapshot, t, l, rd)
-        if admins and pdf:
-            status = job_snapshot.get("status", "In Progress")
-            if status == "Completed":
-                subject = f"✅ Job Completed: {job_snapshot['title']}"
-                body = "Job has been completed. See attached PDF report."
+        try:
+            t = _tech(job_snapshot.get("techId"))
+            l = _loc(job_snapshot.get("locationId"))
+            pdf = make_pdf(job_snapshot, t, l, rd)
+            if admins and pdf:
+                status = job_snapshot.get("status", "In Progress")
+                if status == "Completed":
+                    subject = f"✅ Job Completed: {job_snapshot['title']}"
+                    body = "Job has been completed. See attached PDF report."
+                else:
+                    subject = f"📋 Daily Report: {job_snapshot['title']}"
+                    body = f"A field report was submitted for '{job_snapshot['title']}' (Status: {status}). See attached PDF."
+                success, msg = send_email(subject, body, admins, pdf, f"Report_{job_id}.pdf")
+                print(f"Email result: success={success}, msg={msg}")
             else:
-                subject = f"📋 Daily Report: {job_snapshot['title']}"
-                body = f"A field report was submitted for '{job_snapshot['title']}' (Status: {status}). See attached PDF."
-            send_email(subject, body, admins, pdf, f"Report_{job_id}.pdf")
+                print(f"Email skipped: admins={admins}, pdf={'yes' if pdf else 'no'}")
+        except Exception as e:
+            print(f"Background task error: {e}")
 
     threading.Thread(target=background_tasks, daemon=True).start()
 
