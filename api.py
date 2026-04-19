@@ -281,12 +281,21 @@ def create_job(job: JobIn, user: dict = Depends(require_admin)):
           "priority": job.priority, "status": "Pending", "locationId": job.locationId,
           "techId": job.techId, "date": job.date, "reports": []}
     state["jobs"].insert(0, nj); save_state()
+
     if job.techId and job.locationId:
         t = _tech(job.techId); l = _loc(job.locationId)
         if t and l:
-            send_email(f"Assignment: {job.title}",
-                       f"Hello {t['name']},\n\nNew: {job.title} ({job.priority})\n\n{l['name']}\n{l['address']}\n\n{job.description}",
-                       [t["email"]])
+            tech_snapshot = dict(t)
+            loc_snapshot  = dict(l)
+            job_snapshot  = dict(nj)
+            def notify_tech():
+                send_email(
+                    f"Assignment: {job_snapshot['title']}",
+                    f"Hello {tech_snapshot['name']},\n\nNew: {job_snapshot['title']} ({job_snapshot['priority']})\n\n{loc_snapshot['name']}\n{loc_snapshot['address']}\n\n{job_snapshot['description']}",
+                    [tech_snapshot["email"]]
+                )
+            threading.Thread(target=notify_tech, daemon=True).start()
+
     return nj
 
 @app.get("/jobs/{job_id}")
@@ -326,20 +335,27 @@ def add_report(job_id: str, report: ReportIn, user: dict = Depends(verify_google
         except Exception: pass
     state["jobs"][idx].setdefault("reports", []).append(rd)
     save_state(invalidate_briefing=False)
-    t = _tech(state["jobs"][idx].get("techId"))
-    l = _loc(state["jobs"][idx].get("locationId"))
-    pdf = make_pdf(state["jobs"][idx], t, l, rd)
-    admins = state.get("adminEmails", [])
-    if admins:
-        job_title = state["jobs"][idx]["title"]
-        status = state["jobs"][idx].get("status", "In Progress")
-        if status == "Completed":
-            subject = f"✅ Job Completed: {job_title}"
-            body = f"Job has been completed. See attached PDF report."
-        else:
-            subject = f"📋 Daily Report: {job_title}"
-            body = f"A field report has been submitted for '{job_title}' (Status: {status}). See attached PDF."
-        send_email(subject, body, admins, pdf, f"Report_{job_id}.pdf")
+
+    # Capture what we need for the background task before returning
+    job_snapshot = dict(state["jobs"][idx])
+    admins = list(state.get("adminEmails", []))
+
+    def background_tasks():
+        t = _tech(job_snapshot.get("techId"))
+        l = _loc(job_snapshot.get("locationId"))
+        pdf = make_pdf(job_snapshot, t, l, rd)
+        if admins and pdf:
+            status = job_snapshot.get("status", "In Progress")
+            if status == "Completed":
+                subject = f"✅ Job Completed: {job_snapshot['title']}"
+                body = "Job has been completed. See attached PDF report."
+            else:
+                subject = f"📋 Daily Report: {job_snapshot['title']}"
+                body = f"A field report was submitted for '{job_snapshot['title']}' (Status: {status}). See attached PDF."
+            send_email(subject, body, admins, pdf, f"Report_{job_id}.pdf")
+
+    threading.Thread(target=background_tasks, daemon=True).start()
+
     return rd
 
 @app.get("/jobs/{job_id}/pdf")
