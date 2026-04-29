@@ -1622,7 +1622,7 @@ def add_job_dialog():
         # Document Upload
         st.write("---")
         st.write("###### 📄 Job Documents")
-        uploaded_docs = st.file_uploader("Upload Floorplans, Maps, or Docs (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'])
+        uploaded_docs = st.file_uploader("Upload Floorplans, Maps, or Docs (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'PDF', 'jpg', 'png', 'jpeg', 'PNG', 'JPG', 'JPEG', 'application/pdf', 'image/jpeg', 'image/png'])
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
@@ -1829,7 +1829,7 @@ def edit_job_dialog(job_id):
                     save_state(invalidate_briefing=False)
                     st.rerun()
         
-        uploaded_docs = st.file_uploader("Attach More Documents", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'], key=f"edit_docs_{job_id}")
+        uploaded_docs = st.file_uploader("Attach More Documents", accept_multiple_files=True, type=['pdf', 'PDF', 'jpg', 'png', 'jpeg', 'PNG', 'JPG', 'JPEG', 'application/pdf', 'image/jpeg', 'image/png'], key=f"edit_docs_{job_id}")
 
         if st.form_submit_button("Update Job"):
             if title:
@@ -2367,8 +2367,16 @@ Desc: {job['description']}"""
                     cols = st.columns(4)
                     for i, photo_source in enumerate(r['photos']):
                         with cols[i % 4]:
-                            # st.image handles both Base64 and File Paths automatically
-                            st.image(resolve_image_source(photo_source), use_container_width=True)
+                            url = resolve_image_source(photo_source)
+                            # Check if it's an image or a PDF
+                            is_pdf = False
+                            if isinstance(photo_source, str) and photo_source.lower().endswith('.pdf'):
+                                is_pdf = True
+                            
+                            if is_pdf:
+                                st.link_button("📄 View PDF", url, use_container_width=True)
+                            else:
+                                st.image(url, use_container_width=True)
 
     with tab_progress:
         st.write("#### 📸 Quick Update")
@@ -2414,12 +2422,12 @@ Desc: {job['description']}"""
             default_note = transcribed_text if transcribed_text else ""
             prog_note = st.text_area("Note", value=default_note, placeholder="Quick update (e.g. 'Arrived on site', 'Found the issue')...")
             
-            st.write("**Attach Photos**")
+            st.write("**Attach Photos & Docs**")
             c_cam, c_upl = st.columns(2)
             with c_cam:
                 cam_pic = st.camera_input("Take Photo")
             with c_upl:
-                upl_pics = st.file_uploader("Upload Images", accept_multiple_files=True, type=['png', 'jpg'])
+                upl_pics = st.file_uploader("Upload Images/PDFs", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf', 'PDF', 'PNG', 'JPG', 'JPEG'])
                 
             if st.form_submit_button("Post Update"):
                 photos_list = []
@@ -2554,7 +2562,7 @@ Desc: {job['description']}"""
                 st.info(f"📸 {len(todays_photos)} photos taken today via 'In-Progress' updates will be automatically attached.")
             
             # Allow adding more photos directly here
-            daily_photos = st.file_uploader("Attach Additional Photos (Optional)", accept_multiple_files=True, type=['png', 'jpg'], key=f"daily_up_{job_id}")
+            daily_photos = st.file_uploader("Attach Additional Photos/Docs (Optional)", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf', 'PDF', 'PNG', 'JPG', 'JPEG'], key=f"daily_up_{job_id}")
 
             f_c1, f_c2 = st.columns(2)
             submit_btn = f_c1.form_submit_button("Submit Daily Report")
