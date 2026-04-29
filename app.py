@@ -1544,7 +1544,15 @@ def generate_morning_briefing():
         err_msg = str(e)
         if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
             return "⏳ **System is currently busy (Rate Limit Reached).** \n\nPlease wait a minute and click 'Refresh Briefing' below to try again. (Common on Free Tier Gemini keys during high activity)."
-        return f"Error generating briefing: {err_msg}"
+        
+        # Help text for Paid 1 users or other errors
+        help_tip = ""
+        if "API_KEY_INVALID" in err_msg:
+            help_tip = "\n\n💡 **Tip:** Your API Key appears to be invalid. Check AI Studio settings."
+        elif "PERMISSION_DENIED" in err_msg:
+            help_tip = "\n\n💡 **Tip:** Permission denied. If you just upgraded to 'Paid 1', it may take a few minutes to activate."
+            
+        return f"Error generating briefing: {err_msg}{help_tip}"
 
 # --- DIALOGS (MODALS) ---
 
@@ -3077,7 +3085,55 @@ def render_admin_panel():
 
     st.divider()
 
-    # --- ANALYTICS ---
+    # --- AI DIAGNOSTICS ---
+    st.subheader("🤖 AI Service Diagnostics")
+    with st.expander("Test Gemini API Connection", expanded=False):
+        st.caption("Check your API key status and model accessibility.")
+        
+        api_key = get_api_key()
+        if not api_key:
+            st.error("❌ No API Key found. Set `GEMINI_API_KEY` in Streamlit Secrets.")
+        else:
+            st.code(f"Key Found: {'*' * (len(api_key)-4)}{api_key[-4:]}")
+            
+            if st.button("Run AI Diagnostics"):
+                try:
+                    # 1. Test Client Initialization
+                    client = genai.Client(api_key=api_key)
+                    st.success("✅ Gemini Client Initialized.")
+                    
+                    # 2. List Models
+                    with st.spinner("Fetching available models..."):
+                        all_models = list(client.models.list())
+                        model_names = [m.name for m in all_models]
+                        st.write(f"**Available Models ({len(model_names)}):**")
+                        st.json(model_names[:10]) # Show first 10
+                    
+                    # 3. Test simple generation
+                    with st.spinner("Testing generation..."):
+                        # Get best model
+                        _, model_name = get_available_model(api_key)
+                        st.info(f"Targeting Model: `{model_name}`")
+                        
+                        test_resp = client.models.generate_content(
+                            model=model_name, 
+                            contents="Say 'Connection Successful' if you can read this."
+                        )
+                        st.success(f"✅ AI Response: {test_resp.text}")
+                        st.toast("AI System is fully operational!", icon="🤖")
+                
+                except Exception as e:
+                    err_str = str(e)
+                    st.error(f"❌ Diagnostic Failed: {err_str}")
+                    
+                    if "429" in err_str:
+                        st.warning("⚠️ **Rate Limit:** You are on the Free Tier and have exceeded current limits. Consider 'Paid 1' or waiting a minute.")
+                    elif "API_KEY_INVALID" in err_str:
+                        st.warning("⚠️ **Invalid Key:** Ensure the key is copied exactly from AI Studio.")
+                    elif "billing" in err_str.lower() or "quota" in err_str.lower():
+                        st.warning("⚠️ **Quota/Billing:** Your account might have run out of free credits or billing isn't fully active yet.")
+
+    st.divider()
     with st.expander("📊 View Analytics Dashboard", expanded=False):
         render_analytics_dashboard()
 
