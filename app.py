@@ -92,15 +92,16 @@ st.markdown("""
        display: flex;
        align-items: center;
        justify-content: center;
-       padding: 4px 10px !important;
+       padding: 0px !important;
        min-height: 2.5rem;
    }
    .stButton > button p {
        margin: 0 !important;
-       line-height: 1.2 !important;
+       line-height: 1 !important;
        display: flex;
        align-items: center;
        justify-content: center;
+       width: 100%;
    }
    .stButton > button:hover {
        background-color: #991b1b;
@@ -227,6 +228,19 @@ if "chat_history" not in st.session_state:
         {"role": "model", "parts": ["Hello! I have access to your database. Ask me about active jobs, tech locations, or history."]}
     ]
 # Tech Colors for UI
+def get_status_color(status):
+    colors = {
+        "Not Started": "#71717a",
+        "Pending": "#71717a",
+        "In Progress": "#3b82f6",
+        "Customer on Hold": "#f97316",
+        "Waiting on Parts": "#ef4444",
+        "Parts not ordered": "#991b1b",
+        "Parts Staged": "#10b981",
+        "Completed": "#059669"
+    }
+    return colors.get(status, "#71717a")
+
 TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12', '#292524']
 
 # Tech Skills Options
@@ -2531,21 +2545,25 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     tech_name = tech['name'] if tech else "Unassigned"
     
     priority_class = f"priority-{job['priority']}"
+    status_bg = get_status_color(job['status'])
     
     map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
     loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {loc_name}</a>' if map_url else f"📍 {loc_name}"
     
     with st.container():
         st.markdown(f"""
-        <div class="job-card {priority_class}">
-            <div style="display:flex; justify-content:space-between;">
-                <span style="font-weight:bold; font-size:1.1em;">{job['title']}</span>
-                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px;">{job['priority']}</span>
+        <div class="job-card {priority_class}" style="position:relative; overflow:hidden;">
+            <div style="position:absolute; top:0; right:0; padding:2px 8px; background:{status_bg}; color:white; font-size:0.65em; font-weight:bold; border-bottom-left-radius:8px;">
+                {job['status'].upper()}
+            </div>
+            <div style="display:flex; justify-content:space-between; margin-top:5px;">
+                <span style="font-weight:bold; font-size:1.1em; max-width:70%;">{job['title']}</span>
+                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{job['priority']}</span>
             </div>
             <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_html}</div>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
-                 <span>📅 {job['date'][:10]}</span>
+                 <span>📅 {'🗓️ ' + job['date'][:10]}</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -2572,15 +2590,15 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
 
         # Unique key using job ID AND suffix to prevent Streamlit duplicates
         if allow_delete:
-            c1, c2, c3 = st.columns([6, 1, 1])
+            c1, c2, c3 = st.columns([4, 1.2, 1.2])
             with c1:
                 if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
                     job_details_dialog(job['id'])
             with c2:
-                if st.button("✏️", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job"):
+                if st.button("✏️", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
                     edit_job_dialog(job['id'])
             with c3:
-                if st.button("🗑️", key=f"del_{job['id']}_{key_suffix}", help="Delete from Archive"):
+                if st.button("🗑️", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
                     if job in st.session_state.jobs:
                         st.session_state.jobs.remove(job)
                         save_state()
@@ -3303,7 +3321,7 @@ def main():
             cols = st.columns(len(board_statuses))
             for i, status in enumerate(board_statuses):
                 with cols[i]:
-                    st.markdown(f"#### {status}")
+                    st.markdown(f"<h4 style='color:{get_status_color(status)}; border-bottom: 2px solid {get_status_color(status)}; padding-bottom: 5px; margin-bottom: 15px;'>{status}</h4>", unsafe_allow_html=True)
                     if status == "Not Started":
                         status_jobs = [j for j in filtered_jobs if j['status'] in ["Not Started", "Pending"]]
                     else:
