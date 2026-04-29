@@ -89,24 +89,24 @@ st.markdown("""
        border: none;
        border-radius: 8px;
        font-weight: bold;
-       display: flex;
-       align-items: center;
-       justify-content: center;
-       padding: 0px !important;
        min-height: 2.5rem;
-   }
-   .stButton > button p {
-       margin: 0 !important;
-       line-height: 1 !important;
-       display: flex;
-       align-items: center;
-       justify-content: center;
        width: 100%;
+       padding: 0.5rem 1rem !important;
    }
    .stButton > button:hover {
        background-color: #991b1b;
        color: white;
        border-color: #7f1d1d;
+   }
+   /* Fix for button text centering */
+   .stButton > button div {
+       display: flex;
+       align-items: center;
+       justify-content: center;
+   }
+   .stButton > button p {
+       margin: 0 !important;
+       line-height: 1.2 !important;
    }
 
    /* Custom Job Card Style */
@@ -2552,11 +2552,11 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     
     with st.container():
         st.markdown(f"""
-        <div class="job-card {priority_class}" style="position:relative; overflow:hidden;">
+        <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
             <div style="position:absolute; top:0; right:0; padding:2px 8px; background:{status_bg}; color:white; font-size:0.65em; font-weight:bold; border-bottom-left-radius:8px;">
                 {job['status'].upper()}
             </div>
-            <div style="display:flex; justify-content:space-between; margin-top:5px;">
+            <div style="display:flex; justify-content:space-between; margin-top:10px;">
                 <span style="font-weight:bold; font-size:1.1em; max-width:70%;">{job['title']}</span>
                 <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{job['priority']}</span>
             </div>
@@ -3317,7 +3317,7 @@ def main():
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
-            board_statuses = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged"]
+            board_statuses = ["Not Started", "Parts not ordered", "Waiting on Parts", "Parts Staged", "Customer on Hold", "In Progress"]
             cols = st.columns(len(board_statuses))
             for i, status in enumerate(board_statuses):
                 with cols[i]:
