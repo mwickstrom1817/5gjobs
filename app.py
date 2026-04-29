@@ -89,6 +89,18 @@ st.markdown("""
        border: none;
        border-radius: 8px;
        font-weight: bold;
+       display: flex;
+       align-items: center;
+       justify-content: center;
+       padding: 4px 10px !important;
+       min-height: 2.5rem;
+   }
+   .stButton > button p {
+       margin: 0 !important;
+       line-height: 1.2 !important;
+       display: flex;
+       align-items: center;
+       justify-content: center;
    }
    .stButton > button:hover {
        background-color: #991b1b;
@@ -1001,19 +1013,27 @@ def generate_job_pdf(job, tech, location, report):
     text_object.setFont("Helvetica", 10)
 
     max_width = 80
-    words = notes.split()
-    current_line = []
+    line_count = 0
+    
+    # Handle manual newlines by splitting first
+    note_lines = notes.split('\n')
+    for line in note_lines:
+        words = line.split(' ')
+        current_line = []
 
-    for word in words:
-        current_line.append(word)
-        if len(" ".join(current_line)) > max_width:
+        for word in words:
+            current_line.append(word)
+            if len(" ".join(current_line)) > max_width:
+                text_object.textLine(" ".join(current_line[:-1]))
+                current_line = [word]
+                line_count += 1
+
+        if current_line:
             text_object.textLine(" ".join(current_line))
-            current_line = []
-
-    if current_line:
-        text_object.textLine(" ".join(current_line))
+            line_count += 1
 
     p.drawText(text_object)
+    y -= (line_count * 12) + 15  # Update y based on lines printed
 
     # Signature
     signature_key = report.get("signature_key")
@@ -1022,6 +1042,13 @@ def generate_job_pdf(job, tech, location, report):
             sig_url = get_view_url(signature_key, expires_seconds=3600)
             sig_bytes = get_image_bytes(sig_url)
             if sig_bytes:
+                if y < 150:
+                    p.showPage()
+                    y = height - 50
+                    p.setFont("Helvetica-Bold", 12)
+                    p.drawString(50, y, "CONTINUED: CUSTOMER SIGNATURE")
+                    y -= 30
+
                 sig_reader = ImageReader(BytesIO(sig_bytes))
                 y -= 60
                 p.drawImage(sig_reader, 50, y, width=150, height=50, mask="auto")
