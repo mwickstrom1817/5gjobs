@@ -185,7 +185,7 @@ def _sync_session_to_db():
     st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
-def save_state(invalidate_briefing=True):
+def save_state(invalidate_briefing=False):
     if invalidate_briefing:
         st.session_state.briefing = "Data required to generate briefing."
     _sync_session_to_db()
@@ -1541,7 +1541,10 @@ def generate_morning_briefing():
         response = client.models.generate_content(model=model_name, contents=prompt)
         return response.text
     except Exception as e:
-        return f"Error generating briefing: {str(e)}"
+        err_msg = str(e)
+        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+            return "⏳ **System is currently busy (Rate Limit Reached).** \n\nPlease wait a minute and click 'Refresh Briefing' below to try again. (Common on Free Tier Gemini keys during high activity)."
+        return f"Error generating briefing: {err_msg}"
 
 # --- DIALOGS (MODALS) ---
 
@@ -3278,14 +3281,23 @@ def main():
         with col_main:
             st.subheader("Daily Operational Briefing")
             
-            # Automatically generate briefing if it matches default placeholder AND we have jobs
-            if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
-                with st.spinner("🤖 AI is preparing your morning briefing..."):
+            # Briefing display box
+            st.container(border=True).markdown(st.session_state.briefing)
+            
+            # Controls for briefing
+            c1, c2 = st.columns([1, 2])
+            if c1.button("🔄 Refresh Briefing", use_container_width=True):
+                with st.spinner("🤖 AI is updating your briefing..."):
                     st.session_state.briefing = generate_morning_briefing()
                     save_state(invalidate_briefing=False)
-                 # NO st.rerun() here
-            
-            st.container(border=True).markdown(st.session_state.briefing)
+                    st.rerun()
+
+            # Automatically generate briefing ONLY if it's the default first-time text
+            if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
+                with st.spinner("🤖 AI is preparing your initial morning briefing..."):
+                    st.session_state.briefing = generate_morning_briefing()
+                    save_state(invalidate_briefing=False)
+                    st.rerun()
             
             # Stats
             s1, s2, s3 = st.columns(3)
