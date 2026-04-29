@@ -588,7 +588,7 @@ def resolve_image_source(photo_source: str):
         return None
 
     # If it looks like an R2 key, turn into a signed URL
-    if isinstance(photo_source, str) and (photo_source.startswith("photos/") or photo_source.startswith("signatures/")):
+    if isinstance(photo_source, str) and (photo_source.startswith("photos/") or photo_source.startswith("signatures/") or photo_source.startswith("docs/")):
         return get_view_url(photo_source)
 
     # fallback: local paths or base64 (legacy)
@@ -598,6 +598,10 @@ def resolve_image_source(photo_source: str):
 def save_image_locally(uploaded_file):
     """Uploads an uploaded file/camera input to R2 and returns the object key."""
     return upload_streamlit_file(uploaded_file, folder="photos")
+
+def save_document_locally(uploaded_file):
+    """Uploads an uploaded file (PDF/etc) to R2 and returns the object key."""
+    return upload_streamlit_file(uploaded_file, folder="docs")
 
 def get_google_maps_url(address):
     """Generates a Google Maps Search URL based on address."""
@@ -1615,6 +1619,11 @@ def add_job_dialog():
         tech_label = st.selectbox("Assign Tech", list(tech_display_map.keys()))
         selected_tech_id = tech_display_map[tech_label]
 
+        # Document Upload
+        st.write("---")
+        st.write("###### 📄 Job Documents")
+        uploaded_docs = st.file_uploader("Upload Floorplans, Maps, or Docs (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'])
+
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
             # Handle Inline Location Creation
@@ -1640,6 +1649,13 @@ def add_job_dialog():
             else:
                 final_loc_id = loc_map[loc_selection]
 
+            # Save Documents
+            doc_keys = []
+            if uploaded_docs:
+                for up_doc in uploaded_docs:
+                    dk = save_document_locally(up_doc)
+                    if dk: doc_keys.append({'name': up_doc.name, 'key': dk})
+
             # Contacts List
             contacts = []
             if contact1_name or contact1_phone:
@@ -1663,7 +1679,8 @@ def add_job_dialog():
                 'techId': selected_tech_id,
                 'date': full_date.isoformat(),
                 'contacts': contacts,
-                'reports': []
+                'reports': [],
+                'documents': doc_keys
             }
             st.session_state.jobs.insert(0, new_job)
             
@@ -1798,8 +1815,31 @@ def edit_job_dialog(job_id):
         
         contact3_name = st.text_input("Additional Contact / Notes", value=c3_note)
 
+        # Document Upload
+        st.write("---")
+        st.write("###### 📄 Job Documents")
+        existing_docs = job.get('documents', [])
+        if existing_docs:
+            for i, d in enumerate(existing_docs):
+                c_d1, c_d2 = st.columns([4, 1])
+                c_d1.write(f"📎 {d['name']}")
+                if c_d2.button("🗑️", key=f"del_doc_{job_id}_{i}"):
+                    existing_docs.pop(i)
+                    st.session_state.jobs[job_index]['documents'] = existing_docs
+                    save_state(invalidate_briefing=False)
+                    st.rerun()
+        
+        uploaded_docs = st.file_uploader("Attach More Documents", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'], key=f"edit_docs_{job_id}")
+
         if st.form_submit_button("Update Job"):
             if title:
+                # Save New Documents
+                doc_keys = existing_docs.copy()
+                if uploaded_docs:
+                    for up_doc in uploaded_docs:
+                        dk = save_document_locally(up_doc)
+                        if dk: doc_keys.append({'name': up_doc.name, 'key': dk})
+
                 # Update Contacts
                 new_contacts = []
                 if contact1_name or contact1_phone: 
@@ -1814,6 +1854,7 @@ def edit_job_dialog(job_id):
                 st.session_state.jobs[job_index]['description'] = desc
                 st.session_state.jobs[job_index]['type'] = job_type
                 st.session_state.jobs[job_index]['priority'] = priority
+                st.session_state.jobs[job_index]['documents'] = doc_keys
                 
                 # Update Date (preserve time if possible, or use current time)
                 full_date = datetime.datetime.combine(job_date, existing_time)
@@ -2203,7 +2244,28 @@ Desc: {job['description']}"""
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
 
-    tab_history, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "📸 In-Progress", "📝 Daily Report", "🔐 IPs & Passwords"])
+    tab_history, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "📄 Documents", "📸 In-Progress", "📝 Daily Report", "🔐 IPs & Passwords"])
+
+    with tab_docs:
+        st.write("#### 📄 Job Documents")
+        st.caption("Floorplans, maps, and other site-specific documents.")
+        
+        docs = job.get('documents', [])
+        if not docs:
+            st.info("No documents uploaded for this job yet.")
+        else:
+            for d in docs:
+                with st.container(border=True):
+                    d_col1, d_col2 = st.columns([3, 1])
+                    d_col1.write(f"**{d['name']}**")
+                    url = resolve_image_source(d['key'])
+                    
+                    # If it's an image, we can show a small preview
+                    ext = d['name'].lower().split('.')[-1]
+                    if ext in ['jpg', 'jpeg', 'png']:
+                        st.image(url, width=200)
+                    
+                    d_col2.link_button("👁️ View / Download", url, use_container_width=True)
 
     with tab_creds:
         st.write("#### 🔐 Site Credentials & Network Info")
