@@ -1516,7 +1516,7 @@ def add_job_dialog():
         desc = st.text_area("Description")
         
         c1, c2 = st.columns(2)
-        job_type = c1.selectbox("Type", ["Service", "Project"])
+        job_type = c1.selectbox("Type", ["Service", "Project", "Leads"])
         priority = c2.selectbox("Priority", ["Medium", "Low", "High", "Critical"])
         
         # Date Selection
@@ -1524,8 +1524,28 @@ def add_job_dialog():
         
         # Location Selection
         loc_map = {l['name']: l['id'] for l in st.session_state.locations}
-        loc_name = st.selectbox("Location", list(loc_map.keys()))
+        loc_options = list(loc_map.keys()) + ["➕ New Location"]
+        loc_selection = st.selectbox("Location", loc_options)
         
+        # New Location Fields (will be used if "➕ New Location" selected)
+        st.write("---")
+        with st.expander("New Location Details", expanded=(loc_selection == "➕ New Location")):
+            new_loc_name = st.text_input("New Location Name")
+            new_loc_address = st.text_input("New Location Address")
+            new_loc_maps = st.text_input("Google Maps Link (Optional)")
+        
+        # Multiple Site Contacts
+        st.write("---")
+        st.write("###### 👥 Site Contacts")
+        c1, c2 = st.columns(2)
+        contact1_name = c1.text_input("Primary Contact Name")
+        contact1_phone = c1.text_input("Primary Contact Phone")
+        
+        contact2_name = c2.text_input("Secondary Contact Name")
+        contact2_phone = c2.text_input("Secondary Contact Phone")
+        
+        contact3_name = st.text_input("Additional Contact / Notes")
+
         # Tech Selection
         tech_map = {t['name']: t['id'] for t in st.session_state.techs}
         
@@ -1543,6 +1563,38 @@ def add_job_dialog():
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
+            # Handle Inline Location Creation
+            final_loc_id = None
+            if loc_selection == "➕ New Location":
+                if new_loc_name and new_loc_address:
+                    existing_ids = [int(l['id'][1:]) for l in st.session_state.locations if l['id'].startswith('l') and l['id'][1:].isdigit()]
+                    next_id = (max(existing_ids) if existing_ids else 0) + 1
+                    final_loc_id = f"l{next_id}"
+                    
+                    new_loc = {
+                        "id": final_loc_id,
+                        "name": new_loc_name,
+                        "address": new_loc_address,
+                        "mapsUrl": new_loc_maps,
+                        "contact_name": contact1_name,
+                        "contact_phone": contact1_phone
+                    }
+                    st.session_state.locations.append(new_loc)
+                else:
+                    st.error("New Location Name and Address are required.")
+                    return
+            else:
+                final_loc_id = loc_map[loc_selection]
+
+            # Contacts List
+            contacts = []
+            if contact1_name or contact1_phone:
+                contacts.append({'name': contact1_name, 'phone': contact1_phone, 'label': 'Primary'})
+            if contact2_name or contact2_phone:
+                contacts.append({'name': contact2_name, 'phone': contact2_phone, 'label': 'Secondary'})
+            if contact3_name:
+                contacts.append({'name': contact3_name, 'phone': '', 'label': 'Note'})
+
             # Combine date with current time for ISO format
             full_date = datetime.datetime.combine(job_date, datetime.datetime.now().time())
             
@@ -1553,9 +1605,10 @@ def add_job_dialog():
                 'type': job_type,
                 'priority': priority,
                 'status': 'Not Started',
-                'locationId': loc_map[loc_name],
+                'locationId': final_loc_id,
                 'techId': selected_tech_id,
                 'date': full_date.isoformat(),
+                'contacts': contacts,
                 'reports': []
             }
             st.session_state.jobs.insert(0, new_job)
@@ -1565,7 +1618,7 @@ def add_job_dialog():
             
             if selected_tech_id:
                 tech = get_tech(selected_tech_id)
-                loc = get_location(loc_map[loc_name])
+                loc = get_location(final_loc_id)
                 if tech and loc:
                     success = send_assignment_email(new_job, tech, loc)
                     if not success:
@@ -1599,7 +1652,7 @@ def edit_job_dialog(job_id):
         c1, c2 = st.columns(2)
         
         # Type
-        type_opts = ["Service", "Project"]
+        type_opts = ["Service", "Project", "Leads"]
         curr_type_idx = 0
         if job['type'] in type_opts:
             curr_type_idx = type_opts.index(job['type'])
@@ -1669,9 +1722,40 @@ def edit_job_dialog(job_id):
             
         tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index)
         selected_tech_id = tech_display_map[tech_label]
+        
+        # Site Contacts
+        st.write("---")
+        st.write("###### 👥 Site Contacts")
+        job_contacts = job.get('contacts', [])
+        c1, c2 = st.columns(2)
+        
+        # Extract existing contact values
+        c1_n = job_contacts[0]['name'] if len(job_contacts) > 0 else ""
+        c1_p = job_contacts[0]['phone'] if len(job_contacts) > 0 else ""
+        c2_n = job_contacts[1]['name'] if len(job_contacts) > 1 else ""
+        c2_p = job_contacts[1]['phone'] if len(job_contacts) > 1 else ""
+        c3_note = job_contacts[2]['name'] if len(job_contacts) > 2 else ""
+
+        contact1_name = c1.text_input("Primary Contact Name", value=c1_n)
+        contact1_phone = c1.text_input("Primary Contact Phone", value=c1_p)
+        
+        contact2_name = c2.text_input("Secondary Contact Name", value=c2_n)
+        contact2_phone = c2.text_input("Secondary Contact Phone", value=c2_p)
+        
+        contact3_name = st.text_input("Additional Contact / Notes", value=c3_note)
 
         if st.form_submit_button("Update Job"):
             if title:
+                # Update Contacts
+                new_contacts = []
+                if contact1_name or contact1_phone: 
+                    new_contacts.append({'name': contact1_name, 'phone': contact1_phone, 'label': 'Primary'})
+                if contact2_name or contact2_phone: 
+                    new_contacts.append({'name': contact2_name, 'phone': contact2_phone, 'label': 'Secondary'})
+                if contact3_name: 
+                    new_contacts.append({'name': contact3_name, 'phone': '', 'label': 'Note'})
+                
+                st.session_state.jobs[job_index]['contacts'] = new_contacts
                 st.session_state.jobs[job_index]['title'] = title
                 st.session_state.jobs[job_index]['description'] = desc
                 st.session_state.jobs[job_index]['type'] = job_type
@@ -1986,13 +2070,29 @@ def job_details_dialog(job_id):
             st.link_button("📧 Email Assignment to Tech", mailto_url)
             
         # Resolve Contact Info (Job override > Location default)
-        contact_name = job.get('contact_name') or (loc.get('contact_name') if loc else None)
-        contact_phone = job.get('contact_phone') or (loc.get('contact_phone') if loc else None)
+        job_contacts = job.get('contacts', [])
+        
+        if job_contacts:
+            st.write("###### 👥 Site Contacts")
+            for c in job_contacts:
+                col_c1, col_c2 = st.columns([2, 1])
+                col_c1.write(f"**{c['label']}:** {c['name']}")
+                if c.get('phone'):
+                    clean_phone = re.sub(r'\D', '', c['phone'])
+                    col_c2.link_button(f"📞 Call", f"tel:{clean_phone}", use_container_width=True)
+                else:
+                    col_c2.write("")
+        else:
+            # Fallback to old single contact logic if no list exists
+            contact_name = job.get('contact_name') or (loc.get('contact_name') if loc else None)
+            contact_phone = job.get('contact_phone') or (loc.get('contact_phone') if loc else None)
 
-        # CONTACT CALL BUTTON
-        if contact_phone:
-            clean_phone = re.sub(r'\D', '', contact_phone)
-            st.link_button(f"📞 Call {contact_name or 'Contact'}", f"tel:{clean_phone}")
+            # CONTACT CALL BUTTON
+            if contact_phone:
+                clean_phone = re.sub(r'\D', '', contact_phone)
+                st.link_button(f"📞 Call {contact_name or 'Contact'}", f"tel:{clean_phone}")
+            elif contact_name:
+                st.write(f"👤 {contact_name}")
 
         # COPY JOB INFO BLOCK
         copy_text = f"""Job: {job['title']}
@@ -2043,6 +2143,8 @@ Desc: {job['description']}"""
             "In Progress": "orange", 
             "Customer on Hold": "red",
             "Waiting on Parts": "blue",
+            "Parts not ordered": "red",
+            "Parts Staged": "violet",
             "Completed": "green"
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
@@ -2250,6 +2352,7 @@ Desc: {job['description']}"""
             with st.container(border=True):
                 st.markdown(f"**Time:** {payload['timeArrived']} - {payload['timeDeparted']} ({payload['hoursWorked']} hrs)")
                 st.markdown(f"**Techs:** {payload['techsOnSite']}")
+                st.markdown(f"**Warranty:** {'Yes' if payload.get('isWarranty') else 'No'}")
                 st.markdown(f"**Notes:** {payload['content']}")
                 if payload.get('photos'):
                     st.markdown(f"**Photos:** {len(payload['photos'])} attached")
@@ -2287,14 +2390,16 @@ Desc: {job['description']}"""
                     st.success("Audio Transcribed!")
 
         with st.form(key=f"daily_form_{job_id}"):
-            status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Completed"]
+            status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged", "Completed"]
             current_status = job['status']
             if current_status == "Pending": current_status = "Not Started"
             try:
                 status_idx = status_options.index(current_status)
             except ValueError:
                 status_idx = 0
+            
             new_status = st.selectbox("Job Status", status_options, index=status_idx)
+            is_warranty = st.checkbox("Warranty Work?", value=job.get('isWarranty', False))
 
             r_col1, r_col2 = st.columns(2)
             with r_col1:
@@ -2359,6 +2464,7 @@ Desc: {job['description']}"""
                     'hoursWorked': str(hours_worked),
                     'partsUsed': parts_used,
                     'billableItems': billable_items,
+                    'isWarranty': is_warranty,
                     'photos': todays_photos # Photos handled in other tab
                 }
 
@@ -2417,7 +2523,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
-        status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Completed"]
+        status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged", "Completed"]
         current_status = job['status']
         if current_status == "Pending": current_status = "Not Started"
         
@@ -3096,7 +3202,7 @@ def main():
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
 
     # Navigation Tabs
-    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🧰 Service Calls", "🏗️ Projects", "📦 Archive"]
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive"]
     
     if current_tech:
         tabs_list.insert(0, "🙋‍♂️ My Assignments")
@@ -3166,7 +3272,7 @@ def main():
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
-            board_statuses = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts"]
+            board_statuses = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged"]
             cols = st.columns(len(board_statuses))
             for i, status in enumerate(board_statuses):
                 with cols[i]:
@@ -3262,6 +3368,13 @@ def main():
         if not proj_jobs: st.info("No active projects.")
         for job in proj_jobs:
             render_job_card(job, key_suffix="project", allow_delete=is_admin)
+
+    # 🤝 Leads
+    with tab_map["🤝 Leads"]:
+        lead_jobs = [j for j in filtered_jobs if j['type'] == 'Leads' and j['status'] != 'Completed']
+        if not lead_jobs: st.info("No active leads.")
+        for job in lead_jobs:
+            render_job_card(job, key_suffix="leads", allow_delete=is_admin)
 
     # 6. Archive
     with tab_map["📦 Archive"]:
