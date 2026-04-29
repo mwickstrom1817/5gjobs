@@ -622,6 +622,8 @@ def get_available_model(api_key):
     try:
         # Get all models available to this API Key
         all_models = list(client.models.list())
+        model_names = [m.name for m in all_models]
+        logger.log(f"Discovery: Found {len(model_names)} available models.")
         
         # Filter for models that support 'generateContent'
         valid_models = []
@@ -1543,7 +1545,7 @@ def generate_morning_briefing():
     except Exception as e:
         err_msg = str(e)
         if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-            return "⏳ **System is currently busy (Rate Limit Reached).** \n\nPlease wait a minute and click 'Refresh Briefing' below to try again. (Common on Free Tier Gemini keys during high activity)."
+            return "⏳ **System is currently busy (Rate Limit or Quota Reached).** \n\nPlease wait a minute and click 'Refresh Briefing' below to try again. If you just upgraded to 'Paid 1', it may take a few minutes to fully activate across all regions."
         
         # Help text for Paid 1 users or other errors
         help_tip = ""
@@ -2958,6 +2960,17 @@ def render_admin_panel():
 
     st.divider()
 
+    st.subheader("System Maintenance")
+    c_m1, c_m2 = st.columns(2)
+    with c_m1:
+        if st.button("🧹 Clear App Cache"):
+            st.cache_resource.clear()
+            st.cache_data.clear()
+            st.toast("Cache cleared!", icon="🧹")
+            st.rerun()
+    
+    st.divider()
+
     st.subheader("Database Management")
 
     c_db1, c_db2 = st.columns(2)
@@ -3083,9 +3096,19 @@ def render_admin_panel():
                     elif "EndpointConnectionError" in str(e):
                          st.warning("💡 **Tip:** Could not connect to the endpoint URL. Check for typos.")
 
+    # --- SYSTEM LOGS ---
+    st.subheader("📋 System Event Logs")
+    with st.expander("View Background Logs", expanded=False):
+        logs = get_logger().get_logs()
+        if not logs:
+            st.info("No system events logged yet.")
+        else:
+            for log_entry in logs:
+                st.code(log_entry, language="text")
+
     st.divider()
 
-    # --- AI DIAGNOSTICS ---
+    # --- ANALYTICS ---
     st.subheader("🤖 AI Service Diagnostics")
     with st.expander("Test Gemini API Connection", expanded=False):
         st.caption("Check your API key status and model accessibility.")
@@ -3126,8 +3149,8 @@ def render_admin_panel():
                     err_str = str(e)
                     st.error(f"❌ Diagnostic Failed: {err_str}")
                     
-                    if "429" in err_str:
-                        st.warning("⚠️ **Rate Limit:** You are on the Free Tier and have exceeded current limits. Consider 'Paid 1' or waiting a minute.")
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        st.warning("⚠️ **Rate Limit / Quota Exhausted:** If you are on the **Paid 1** tier, this usually indicates that the account has reached its burst limit or the billing upgrade is still propagating (can take 10-15 mins). On the **Free Tier**, this means you've hit the monthly or daily limit.")
                     elif "API_KEY_INVALID" in err_str:
                         st.warning("⚠️ **Invalid Key:** Ensure the key is copied exactly from AI Studio.")
                     elif "billing" in err_str.lower() or "quota" in err_str.lower():
