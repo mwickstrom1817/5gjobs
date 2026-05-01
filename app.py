@@ -2250,6 +2250,29 @@ Desc: {job['description']}"""
         st.write("#### 📄 Job Documents")
         st.caption("Floorplans, maps, and other site-specific documents.")
         
+        # New Upload Section in Tab
+        with st.expander("➕ Upload New Document"):
+            new_uploaded_docs = st.file_uploader("Select files (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'PDF', 'jpg', 'png', 'jpeg', 'PNG', 'JPG', 'JPEG', 'application/pdf', 'image/jpeg', 'image/png'], key=f"tab_docs_upload_{job_id}")
+            if st.button("Save Uploaded Documents", key=f"btn_save_tab_docs_{job_id}"):
+                if new_uploaded_docs:
+                    with st.spinner("Uploading..."):
+                        new_keys = []
+                        for f in new_uploaded_docs:
+                            k = upload_file(f, f"jobs/{job_id}/docs")
+                            if k:
+                                new_keys.append({"name": f.name, "key": k})
+                        
+                        if new_keys:
+                            # Update session state and save
+                            existing_docs = job.get('documents', [])
+                            existing_docs.extend(new_keys)
+                            job['documents'] = existing_docs
+                            save_state(invalidate_briefing=False)
+                            st.success(f"Uploaded {len(new_keys)} document(s)!")
+                            st.rerun()
+                else:
+                    st.warning("Please select files first.")
+
         docs = job.get('documents', [])
         if not docs:
             st.info("No documents uploaded for this job yet.")
