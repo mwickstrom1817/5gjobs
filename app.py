@@ -976,6 +976,17 @@ def generate_job_pdf(job, tech, location, report):
         p.drawString(50, y, point)
         y -= 20
 
+    # Warranty Info
+    y -= 10
+    p.setFont("Helvetica-Bold", 12)
+    p.drawString(50, y, "WARRANTY INFORMATION")
+    p.line(50, y - 5, width - 50, y - 5)
+    y -= 25
+    p.setFont("Helvetica", 11)
+    is_warranty = "YES" if report.get('isWarranty') else "NO"
+    p.drawString(50, y, f"Warranty Work? {is_warranty}")
+    y -= 20
+
     # AI Summary
     ai_summary = report.get("ai_summary")
     if ai_summary:
@@ -1622,7 +1633,7 @@ def add_job_dialog():
         # Document Upload
         st.write("---")
         st.write("###### 📄 Job Documents")
-        uploaded_docs = st.file_uploader("Upload Floorplans, Maps, or Docs (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'PDF', 'jpg', 'png', 'jpeg', 'PNG', 'JPG', 'JPEG', 'application/pdf', 'image/jpeg', 'image/png'])
+        uploaded_docs = st.file_uploader("Upload Floorplans, Maps, or Docs (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'])
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
@@ -1829,7 +1840,7 @@ def edit_job_dialog(job_id):
                     save_state(invalidate_briefing=False)
                     st.rerun()
         
-        uploaded_docs = st.file_uploader("Attach More Documents", accept_multiple_files=True, type=['pdf', 'PDF', 'jpg', 'png', 'jpeg', 'PNG', 'JPG', 'JPEG', 'application/pdf', 'image/jpeg', 'image/png'], key=f"edit_docs_{job_id}")
+        uploaded_docs = st.file_uploader("Attach More Documents", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'], key=f"edit_docs_{job_id}")
 
         if st.form_submit_button("Update Job"):
             if title:
@@ -2252,13 +2263,13 @@ Desc: {job['description']}"""
         
         # New Upload Section in Tab
         with st.expander("➕ Upload New Document"):
-            new_uploaded_docs = st.file_uploader("Select files (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'PDF', 'jpg', 'png', 'jpeg', 'PNG', 'JPG', 'JPEG', 'application/pdf', 'image/jpeg', 'image/png'], key=f"tab_docs_upload_{job_id}")
+            new_uploaded_docs = st.file_uploader("Select files (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'], key=f"tab_docs_upload_{job_id}")
             if st.button("Save Uploaded Documents", key=f"btn_save_tab_docs_{job_id}"):
                 if new_uploaded_docs:
                     with st.spinner("Uploading..."):
                         new_keys = []
                         for f in new_uploaded_docs:
-                            k = upload_file(f, f"jobs/{job_id}/docs")
+                            k = upload_streamlit_file(f, folder=f"jobs/{job_id}/docs")
                             if k:
                                 new_keys.append({"name": f.name, "key": k})
                         
@@ -2450,7 +2461,7 @@ Desc: {job['description']}"""
             with c_cam:
                 cam_pic = st.camera_input("Take Photo")
             with c_upl:
-                upl_pics = st.file_uploader("Upload Images/PDFs", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf', 'PDF', 'PNG', 'JPG', 'JPEG'])
+                upl_pics = st.file_uploader("Upload Images/PDFs", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf'])
                 
             if st.form_submit_button("Post Update"):
                 photos_list = []
@@ -2585,7 +2596,7 @@ Desc: {job['description']}"""
                 st.info(f"📸 {len(todays_photos)} photos taken today via 'In-Progress' updates will be automatically attached.")
             
             # Allow adding more photos directly here
-            daily_photos = st.file_uploader("Attach Additional Photos/Docs (Optional)", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf', 'PDF', 'PNG', 'JPG', 'JPEG'], key=f"daily_up_{job_id}")
+            daily_photos = st.file_uploader("Attach Additional Photos/Docs (Optional)", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf'], key=f"daily_up_{job_id}")
 
             f_c1, f_c2 = st.columns(2)
             submit_btn = f_c1.form_submit_button("Submit Daily Report")
