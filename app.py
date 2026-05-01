@@ -588,7 +588,7 @@ def resolve_image_source(photo_source: str):
         return None
 
     # If it looks like an R2 key, turn into a signed URL
-    if isinstance(photo_source, str) and (photo_source.startswith("photos/") or photo_source.startswith("signatures/") or photo_source.startswith("docs/")):
+    if isinstance(photo_source, str) and (photo_source.startswith("photos/") or photo_source.startswith("signatures/") or photo_source.startswith("docs/") or photo_source.startswith("jobs/")):
         return get_view_url(photo_source)
 
     # fallback: local paths or base64 (legacy)
