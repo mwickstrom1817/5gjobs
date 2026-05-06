@@ -581,15 +581,19 @@ def get_location(loc_id):
 def resolve_image_source(photo_source: str):
     """
     Supports:
-    - R2 object keys like 'photos/...', 'signatures/...'
+    - R2 object keys like 'photos/...', 'signatures/...', 'jobs/...'
     - legacy local paths (if any remain)
     """
-    if not photo_source:
-        return None
+    if not photo_source or not isinstance(photo_source, str):
+        return photo_source
+
+    # Clean the path
+    clean_path = photo_source.lstrip("/")
 
     # If it looks like an R2 key, turn into a signed URL
-    if isinstance(photo_source, str) and (photo_source.startswith("photos/") or photo_source.startswith("signatures/") or photo_source.startswith("docs/") or photo_source.startswith("jobs/")):
-        return get_view_url(photo_source)
+    prefixes = ("photos/", "signatures/", "docs/", "jobs/")
+    if clean_path.startswith(prefixes):
+        return get_view_url(clean_path)
 
     # fallback: local paths or base64 (legacy)
     return photo_source
@@ -2178,6 +2182,10 @@ def job_details_dialog(job_id):
         # Resolve Contact Info (Job override > Location default)
         job_contacts = job.get('contacts', [])
         
+        # Contact Info Logic
+        contact_name = None
+        contact_phone = None
+
         if job_contacts:
             st.write("###### 👥 Site Contacts")
             for c in job_contacts:
@@ -2188,6 +2196,10 @@ def job_details_dialog(job_id):
                     col_c2.link_button(f"📞 Call", f"tel:{clean_phone}", use_container_width=True)
                 else:
                     col_c2.write("")
+            
+            # For the copy block below, use the first contact as a default if available
+            contact_name = job_contacts[0].get('name')
+            contact_phone = job_contacts[0].get('phone')
         else:
             # Fallback to old single contact logic if no list exists
             contact_name = job.get('contact_name') or (loc.get('contact_name') if loc else None)
