@@ -17,6 +17,19 @@ from email.mime.application import MIMEApplication
 from persistence_pg import load_state, save_state_to_db, init_db
 from object_store import upload_bytes, get_view_url
 
+# Cloud hosts run on UTC — stamp timestamps in the company timezone instead.
+# Override with the APP_TIMEZONE env var (IANA name, e.g. "America/Chicago").
+try:
+    from zoneinfo import ZoneInfo
+    _APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/Chicago"))
+except Exception:
+    _APP_TZ = None
+
+def now_local():
+    if _APP_TZ:
+        return datetime.datetime.now(_APP_TZ).replace(tzinfo=None)
+    return datetime.datetime.now()
+
 try:
     from google import genai
     HAS_GENAI = True
@@ -212,7 +225,7 @@ def make_pdf(job, tech, loc, report):
     p.setFillColor(colors.darkred); p.setFont("Helvetica-Bold", 20)
     p.drawString(50, h-50, "5G Security - Job Completion Report")
     p.setFillColor(colors.black); p.setFont("Helvetica", 10)
-    p.drawString(50, h-65, f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    p.drawString(50, h-65, f"Generated: {now_local().strftime('%Y-%m-%d %H:%M')}")
     y = h-100; p.setFont("Helvetica-Bold", 12); p.drawString(50, y, "JOB DETAILS")
     p.line(50, y-5, w-50, y-5); y -= 25; p.setFont("Helvetica", 11)
     p.drawString(50, y, f"Title: {job.get('title','')}"); y -= 15
@@ -238,7 +251,7 @@ def gen_briefing(state):
     if not HAS_GENAI: return "⚠️ google-genai not installed."
     active = [j for j in state["jobs"] if j["status"] != "Completed"]
     critical = [j for j in active if j["priority"] in ["Critical","High"]]
-    today = datetime.datetime.now().strftime("%B %d, %Y")
+    today = now_local().strftime("%B %d, %Y")
     prompt = f"""You are Operations Manager for 5G Security (cameras, access control, alarms, cabling).
 Generate a Morning Briefing. Today: {today}
 Active: {len(active)} | Critical/High: {len(critical)}
@@ -254,7 +267,7 @@ Cover: 1. Security Focus 2. Critical Jobs 3. Safety Tip. Max 150 words. Use **bo
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health(): return {"status": "ok", "timestamp": datetime.datetime.now().isoformat()}
+def health(): return {"status": "ok", "timestamp": now_local().isoformat()}
 
 @app.get("/auth/me")
 def get_me(user: dict = Depends(verify_google_token)):
@@ -276,7 +289,7 @@ def list_jobs(search: Optional[str] = None, user: dict = Depends(verify_google_t
 @app.post("/jobs", status_code=201)
 def create_job(job: JobIn, user: dict = Depends(require_admin)):
     state = get_state()
-    nj = {"id": f"j{len(state['jobs'])+100}_{datetime.datetime.now().timestamp()}",
+    nj = {"id": f"j{len(state['jobs'])+100}_{now_local().timestamp()}",
           "title": job.title, "description": job.description, "type": job.type,
           "priority": job.priority, "status": "Pending", "locationId": job.locationId,
           "techId": job.techId, "date": job.date, "reports": []}
@@ -316,7 +329,7 @@ def add_report(job_id: str, report: ReportIn, user: dict = Depends(verify_google
     idx = next((i for i,j in enumerate(state["jobs"]) if j["id"]==job_id), -1)
     if idx == -1: raise HTTPException(404, "Job not found")
     rd = report.dict(); rd["id"] = str(uuid.uuid4())
-    rd["timestamp"] = datetime.datetime.now().isoformat(); rd["authorEmail"] = user.get("email")
+    rd["timestamp"] = now_local().isoformat(); rd["authorEmail"] = user.get("email")
     api_key = get_api_key()
     if api_key and HAS_GENAI and report.content:
         try:
@@ -352,7 +365,7 @@ def download_ics(job_id: str, user: dict = Depends(verify_google_token)):
     try:
         ds = datetime.datetime.fromisoformat(j["date"]) if "T" in j["date"] else datetime.datetime.strptime(j["date"][:10],"%Y-%m-%d").replace(hour=9)
         de = ds + datetime.timedelta(hours=2); fmt = "%Y%m%dT%H%M%S"
-        ics = f"BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:{j['id']}@5gsecurity.app\nDTSTAMP:{datetime.datetime.now().strftime(fmt)}\nDTSTART:{ds.strftime(fmt)}\nDTEND:{de.strftime(fmt)}\nSUMMARY:🛡️ {j['title']}\nLOCATION:{l['name']+' - '+l['address'] if l else 'Unknown'}\nEND:VEVENT\nEND:VCALENDAR"
+        ics = f"BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:{j['id']}@5gsecurity.app\nDTSTAMP:{now_local().strftime(fmt)}\nDTSTART:{ds.strftime(fmt)}\nDTEND:{de.strftime(fmt)}\nSUMMARY:🛡️ {j['title']}\nLOCATION:{l['name']+' - '+l['address'] if l else 'Unknown'}\nEND:VEVENT\nEND:VCALENDAR"
         return StreamingResponse(BytesIO(ics.encode()), media_type="text/calendar",
                                  headers={"Content-Disposition": f"attachment; filename=job_{job_id}.ics"})
     except Exception as e: raise HTTPException(500, str(e))
@@ -364,7 +377,7 @@ def list_techs(user: dict = Depends(verify_google_token)): return {"techs": get_
 def create_tech(tech: TechIn, user: dict = Depends(require_admin)):
     state = get_state()
     colors = ['#7f1d1d','#3f3f46','#b91c1c','#52525b','#991b1b','#7c2d12','#292524']
-    nt = {"id": f"t{len(state['techs'])+1}_{datetime.datetime.now().timestamp()}",
+    nt = {"id": f"t{len(state['techs'])+1}_{now_local().timestamp()}",
           "name": tech.name, "email": tech.email, "initials": tech.initials,
           "color": tech.color or colors[len(state["techs"]) % len(colors)], "skills": tech.skills or []}
     state["techs"].append(nt); save_state(invalidate_briefing=False); return nt
@@ -390,7 +403,7 @@ def list_locations(user: dict = Depends(verify_google_token)): return {"location
 @app.post("/locations", status_code=201)
 def create_location(loc: LocationIn, user: dict = Depends(require_admin)):
     state = get_state()
-    nl = {"id": f"l{len(state['locations'])+1}_{datetime.datetime.now().timestamp()}",
+    nl = {"id": f"l{len(state['locations'])+1}_{now_local().timestamp()}",
           "name": loc.name, "address": loc.address, "contact_name": loc.contact_name or "",
           "contact_phone": loc.contact_phone or "", "contact_email": loc.contact_email or ""}
     w = weather_for(loc.address)
@@ -443,7 +456,7 @@ def chat(msg: ChatIn, user: dict = Depends(verify_google_token)):
 @app.post("/upload/photo")
 async def upload_photo(file: UploadFile = File(...), folder: str = "photos", user: dict = Depends(verify_google_token)):
     data = await file.read()
-    key = f"{folder}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+    key = f"{folder}/{now_local().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
     result = upload_bytes(data, key, file.content_type or "image/jpeg")
     if not result: raise HTTPException(500, "Upload failed")
     return {"key": result}
@@ -451,7 +464,7 @@ async def upload_photo(file: UploadFile = File(...), folder: str = "photos", use
 @app.post("/upload/signature")
 async def upload_signature(file: UploadFile = File(...), user: dict = Depends(verify_google_token)):
     data = await file.read()
-    key = f"signatures/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_sig.png"
+    key = f"signatures/{now_local().strftime('%Y%m%d_%H%M%S')}_sig.png"
     result = upload_bytes(data, key, "image/png")
     if not result: raise HTTPException(500, "Upload failed")
     return {"key": result}
@@ -493,7 +506,7 @@ def export_csv(user: dict = Depends(require_admin)):
 def send_reminders(user: dict = Depends(require_admin)):
     state = get_state(); srv, port, sender, pwd = smtp_cfg()
     if not all([srv, sender, pwd]): raise HTTPException(503, "SMTP not configured")
-    today = datetime.datetime.now().strftime("%Y-%m-%d"); count = 0
+    today = now_local().strftime("%Y-%m-%d"); count = 0
     try:
         s = smtp_connect(srv, port, sender, pwd)
         for t in state["techs"]:
