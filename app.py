@@ -55,6 +55,38 @@ try:
 except ImportError:
     HAS_COOKIES = False
 
+# --- TIMEZONE ---
+# Cloud hosts run on UTC, so naive datetime.now() stamps the wrong hours.
+# All timestamps go through now_local() pinned to the company timezone.
+# Override with APP_TIMEZONE (IANA name, e.g. "America/Chicago") in secrets or env.
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None
+
+def _resolve_app_timezone():
+    tz_name = os.getenv("APP_TIMEZONE")
+    if not tz_name:
+        try:
+            tz_name = st.secrets.get("APP_TIMEZONE")
+        except Exception:
+            tz_name = None
+    tz_name = tz_name or "America/Chicago"
+    if ZoneInfo:
+        try:
+            return ZoneInfo(tz_name)
+        except Exception:
+            pass
+    return None
+
+APP_TZ = _resolve_app_timezone()
+
+def now_local():
+    """Wall-clock 'now' in the app's timezone, returned naive to match stored data."""
+    if APP_TZ:
+        return datetime.datetime.now(APP_TZ).replace(tzinfo=None)
+    return datetime.datetime.now()
+
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
     page_title="5G Security Job Board",
@@ -318,7 +350,7 @@ def _sign_session_token(user_info):
         "email": user_info.get("email"),
         "name": user_info.get("name"),
         "picture": user_info.get("picture"),
-        "exp": (datetime.datetime.now() + datetime.timedelta(days=SESSION_COOKIE_DAYS)).timestamp(),
+        "exp": (now_local() + datetime.timedelta(days=SESSION_COOKIE_DAYS)).timestamp(),
     }
     raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
     sig = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
@@ -335,7 +367,7 @@ def _verify_session_token(token):
         if not hmac.compare_digest(sig, expected):
             return None
         payload = json.loads(base64.urlsafe_b64decode(raw.encode()).decode())
-        if payload.get("exp", 0) < datetime.datetime.now().timestamp():
+        if payload.get("exp", 0) < now_local().timestamp():
             return None
         if not payload.get("email"):
             return None
@@ -544,7 +576,7 @@ class SystemLogger:
         
     def log(self, message):
         with self.lock:
-            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            ts = now_local().strftime("%Y-%m-%d %H:%M:%S")
             self.logs.insert(0, f"[{ts}] {message}")
             if len(self.logs) > 50:
                 self.logs.pop()
@@ -617,7 +649,7 @@ def start_background_scheduler():
         time.sleep(15)
         while True:
             try:
-                now = datetime.datetime.now()
+                now = now_local()
                 # Run at 7 AM Mon-Fri
                 if now.weekday() <= 4 and now.hour == 7:
                     today_str = now.strftime("%Y-%m-%d")
@@ -751,7 +783,7 @@ def save_image_locally(uploaded_file):
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=80, optimize=True)
 
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = now_local().strftime("%Y%m%d_%H%M%S")
         base_name = file_name.rsplit('.', 1)[0] or 'photo'
         key = f"photos/{timestamp}_{base_name}.jpg"
         return upload_bytes(buf.getvalue(), key, content_type="image/jpeg")
@@ -1030,7 +1062,7 @@ def create_ics_file(job, location):
         fmt = "%Y%m%dT%H%M%S"
         start_str = dt_start.strftime(fmt)
         end_str = dt_end.strftime(fmt)
-        now_str = datetime.datetime.now().strftime(fmt)
+        now_str = now_local().strftime(fmt)
         
         loc_str = f"{location['name']} - {location['address']}" if location else "Unknown Location"
         desc = f"Priority: {job['priority']}\\nType: {job['type']}\\n\\n{job['description']}"
@@ -1100,7 +1132,7 @@ def generate_job_pdf(job, tech, location, report):
 
     p.setFillColor(colors.black)
     p.setFont("Helvetica", 10)
-    p.drawString(50, height - 65, f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    p.drawString(50, height - 65, f"Generated: {now_local().strftime('%Y-%m-%d %H:%M')}")
 
     # Job Info
     y = height - 100
@@ -1536,7 +1568,7 @@ def send_daily_report_email(job, tech, location, report_data):
     Job:      {job['title']}
     Tech:     {tech['name'] if tech else 'Unknown'}
     Location: {location['name'] if location else 'Unknown'}
-    Date:     {datetime.datetime.now().strftime('%Y-%m-%d')}
+    Date:     {now_local().strftime('%Y-%m-%d')}
     
     Please see the attached PDF report for today's details.
     """
@@ -1567,7 +1599,7 @@ def send_daily_report_email(job, tech, location, report_data):
             
             if pdf_bytes:
                 attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-                attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{datetime.datetime.now().strftime('%Y%m%d')}.pdf")
+                attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{now_local().strftime('%Y%m%d')}.pdf")
                 msg.attach(attachment)
             
             server.send_message(msg)
@@ -1581,7 +1613,7 @@ def send_daily_reminders():
     """Sends daily reminder emails to techs with active assignments (Mon-Fri only)."""
     
     # 1. Check Date & Time
-    now = datetime.datetime.now()
+    now = now_local()
     today_str = now.strftime("%Y-%m-%d")
     weekday = now.weekday() # 0=Mon, 4=Fri, 5=Sat, 6=Sun
     
@@ -1691,7 +1723,7 @@ def generate_morning_briefing():
     active_jobs = [j for j in st.session_state.jobs if j['status'] != 'Completed']
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
     
-    current_date = datetime.datetime.now().strftime("%B %d, %Y")
+    current_date = now_local().strftime("%B %d, %Y")
 
     prompt = f"""
       You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
@@ -1753,7 +1785,7 @@ def add_job_dialog():
         priority = c2.selectbox("Priority", ["Medium", "Low", "High", "Critical"])
         
         # Date Selection
-        job_date = st.date_input("Scheduled Date", value=datetime.datetime.now())
+        job_date = st.date_input("Scheduled Date", value=now_local())
         
         # Location Selection
         loc_map = {l['name']: l['id'] for l in st.session_state.locations}
@@ -1841,10 +1873,10 @@ def add_job_dialog():
                 contacts.append({'name': contact3_name, 'phone': '', 'label': 'Note'})
 
             # Combine date with current time for ISO format
-            full_date = datetime.datetime.combine(job_date, datetime.datetime.now().time())
+            full_date = datetime.datetime.combine(job_date, now_local().time())
             
             new_job = {
-                'id': f"j{len(st.session_state.jobs) + 100}_{datetime.datetime.now().timestamp()}",
+                'id': f"j{len(st.session_state.jobs) + 100}_{now_local().timestamp()}",
                 'title': title,
                 'description': desc,
                 'type': job_type,
@@ -1921,10 +1953,10 @@ def edit_job_dialog(job_id):
             else:
                 existing_dt = datetime.datetime.strptime(job['date'][:10], "%Y-%m-%d")
                 existing_date = existing_dt.date()
-                existing_time = datetime.datetime.now().time()
+                existing_time = now_local().time()
         except:
-            existing_date = datetime.datetime.now().date()
-            existing_time = datetime.datetime.now().time()
+            existing_date = now_local().date()
+            existing_time = now_local().time()
             
         job_date = st.date_input("Scheduled Date", value=existing_date)
         
@@ -2507,7 +2539,7 @@ Desc: {job['description']}"""
                 for sys_name, u_key, p_key in legacy_logins:
                     if legacy.get(u_key) or legacy.get(p_key):
                         migrated.append({
-                            'id': f"s{datetime.datetime.now().timestamp()}_{len(migrated)}",
+                            'id': f"s{now_local().timestamp()}_{len(migrated)}",
                             'name': sys_name,
                             'username': legacy.get(u_key, ''),
                             'password': legacy.get(p_key, ''),
@@ -2516,7 +2548,7 @@ Desc: {job['description']}"""
                         })
                 if legacy.get('ips'):
                     migrated.append({
-                        'id': f"s{datetime.datetime.now().timestamp()}_{len(migrated)}",
+                        'id': f"s{now_local().timestamp()}_{len(migrated)}",
                         'name': "Network / IPs",
                         'username': '',
                         'password': '',
@@ -2548,14 +2580,14 @@ Desc: {job['description']}"""
                         else:
                             sys_name = custom_name.strip() or sys_type
                             loc.setdefault('systems', []).append({
-                                'id': f"s{datetime.datetime.now().timestamp()}",
+                                'id': f"s{now_local().timestamp()}",
                                 'name': sys_name,
                                 'username': new_user,
                                 'password': new_pass,
                                 'ip': new_ip,
                                 'notes': new_notes,
                                 'updated_by': current_user_email,
-                                'updated_at': datetime.datetime.now().isoformat()
+                                'updated_at': now_local().isoformat()
                             })
                             save_state(invalidate_briefing=False)
                             st.success(f"'{sys_name}' saved!")
@@ -2606,7 +2638,7 @@ Desc: {job['description']}"""
                                     'ip': e_ip,
                                     'notes': e_notes,
                                     'updated_by': current_user_email,
-                                    'updated_at': datetime.datetime.now().isoformat()
+                                    'updated_at': now_local().isoformat()
                                 })
                                 save_state(invalidate_briefing=False)
                                 st.success("System updated!")
@@ -2743,9 +2775,9 @@ Desc: {job['description']}"""
             if qs_cols[i].button(label, key=f"qs_{i}_{job_id}"):
                 # Post update immediately
                 report_payload = {
-                    'id': f"r{datetime.datetime.now().timestamp()}",
+                    'id': f"r{now_local().timestamp()}",
                     'techId': job['techId'] or 'unknown',
-                    'timestamp': datetime.datetime.now().isoformat(),
+                    'timestamp': now_local().isoformat(),
                     'content': f"[{label}] {note_text}",
                     'photos': [],
                     'techsOnSite': "", 'timeArrived': "", 'timeDeparted': "", 
@@ -2795,9 +2827,9 @@ Desc: {job['description']}"""
                 if prog_note or photos_list:
                     # Construct Simple Report Data
                     report_payload = {
-                        'id': f"r{datetime.datetime.now().timestamp()}",
+                        'id': f"r{now_local().timestamp()}",
                         'techId': job['techId'] or 'unknown',
-                        'timestamp': datetime.datetime.now().isoformat(),
+                        'timestamp': now_local().isoformat(),
                         'content': prog_note,
                         'photos': photos_list,
                         # Empty structured fields
@@ -2870,7 +2902,7 @@ Desc: {job['description']}"""
                     st.success("Audio Transcribed!")
 
         # Prefill arrival/finish times from today's quick-status taps ("📍 Arrived" / "✅ Done for Day")
-        today_prefix = datetime.datetime.now().strftime('%Y-%m-%d')
+        today_prefix = now_local().strftime('%Y-%m-%d')
         default_arrived = datetime.time(8, 0)
         default_departed = datetime.time(17, 0)
         times_prefilled = False
@@ -2925,7 +2957,7 @@ Desc: {job['description']}"""
             content = st.text_area("General Notes / Summary", value=default_content, placeholder="Detailed summary of work performed today...")
             
             # Logic to gather photos from "In-Progress" updates today
-            current_date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+            current_date_str = now_local().strftime('%Y-%m-%d')
             todays_photos_set = set()
             for r in job['reports']:
                 # Check timestamp match
@@ -2966,9 +2998,9 @@ Desc: {job['description']}"""
 
                 # Construct Report Data
                 report_payload = {
-                    'id': f"r{datetime.datetime.now().timestamp()}",
+                    'id': f"r{now_local().timestamp()}",
                     'techId': job['techId'] or 'unknown',
-                    'timestamp': datetime.datetime.now().isoformat(),
+                    'timestamp': now_local().isoformat(),
                     'content': content,
                     'techsOnSite': ", ".join(techs_on_site_list),
                     'timeArrived': str(time_arrived),
@@ -3466,7 +3498,7 @@ def render_admin_panel():
             st.download_button(
                 label="📥 Download Jobs CSV",
                 data=csv_data,
-                file_name=f"jobs_export_{datetime.datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"jobs_export_{now_local().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
             )
         else:
@@ -3476,7 +3508,7 @@ def render_admin_panel():
         st.download_button(
             label="📦 Download Full Backup (JSON)",
             data=json_data,
-            file_name=f"backup_{datetime.datetime.now().strftime('%Y%m%d')}.json",
+            file_name=f"backup_{now_local().strftime('%Y%m%d')}.json",
             mime="application/json",
         )
 
@@ -3704,7 +3736,7 @@ def render_chatbot():
         
         system_context = f"""
        You are a 5G Security Assistant.
-       Current Time: {datetime.datetime.now()}
+       Current Time: {now_local()}
        Techs: {json.dumps(st.session_state.techs)}
        Locations: {json.dumps(st.session_state.locations)}
        Jobs: {json.dumps(simple_jobs)}
@@ -3891,7 +3923,7 @@ def main():
         col_cal1, col_cal2 = st.columns([1, 4])
         with col_cal1:
             # Simple month navigation could be added here, defaulting to current month for now
-            current_date = datetime.datetime.now()
+            current_date = now_local()
             cal_year = st.number_input("Year", value=current_date.year, min_value=2024, max_value=2030)
             cal_month = st.selectbox("Month", list(calendar.month_name)[1:], index=current_date.month - 1)
             month_num = list(calendar.month_name).index(cal_month)
