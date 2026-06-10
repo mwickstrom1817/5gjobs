@@ -6,6 +6,8 @@ import base64
 import os
 import re
 import json
+import hmac
+import hashlib
 import smtplib
 import urllib.parse
 import requests
@@ -17,7 +19,7 @@ import time
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
-from PIL import Image
+from PIL import Image, ImageOps
 from io import BytesIO
 from persistence_pg import (
     ensure_loaded_into_session,
@@ -45,6 +47,13 @@ try:
     HAS_CANVAS = True
 except ImportError:
     HAS_CANVAS = False
+
+# Try importing Cookie Controller for persistent login
+try:
+    from streamlit_cookies_controller import CookieController
+    HAS_COOKIES = True
+except ImportError:
+    HAS_COOKIES = False
 
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -278,12 +287,97 @@ def location_has_system_info(loc):
 
 # --- AUTHENTICATION ---
 
+# Persistent login: a signed cookie keeps techs logged in across refreshes.
+SESSION_COOKIE_NAME = "fivegsec_session"
+SESSION_COOKIE_DAYS = 30
+
+def _make_cookie_controller():
+    """Creates the cookie controller for this script run (must re-render every run)."""
+    if not HAS_COOKIES:
+        return None
+    try:
+        ctrl = CookieController(key="auth_cookies")
+        st.session_state["_cookie_controller"] = ctrl
+        return ctrl
+    except Exception:
+        return None
+
+def _get_cookie_secret():
+    """Secret used to sign session cookies. Set COOKIE_SECRET, or the OAuth client secret is used."""
+    secret = st.secrets.get("COOKIE_SECRET") if "COOKIE_SECRET" in st.secrets else os.getenv("COOKIE_SECRET")
+    if not secret:
+        secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
+    return secret
+
+def _sign_session_token(user_info):
+    """Builds a tamper-proof session token: base64(payload).hmac_sha256(payload)."""
+    secret = _get_cookie_secret()
+    if not (secret and user_info.get("email")):
+        return None
+    payload = {
+        "email": user_info.get("email"),
+        "name": user_info.get("name"),
+        "picture": user_info.get("picture"),
+        "exp": (datetime.datetime.now() + datetime.timedelta(days=SESSION_COOKIE_DAYS)).timestamp(),
+    }
+    raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    sig = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
+    return f"{raw}.{sig}"
+
+def _verify_session_token(token):
+    """Returns the user_info payload if the token is validly signed and unexpired, else None."""
+    secret = _get_cookie_secret()
+    if not (secret and token and isinstance(token, str) and "." in token):
+        return None
+    try:
+        raw, sig = token.rsplit(".", 1)
+        expected = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        payload = json.loads(base64.urlsafe_b64decode(raw.encode()).decode())
+        if payload.get("exp", 0) < datetime.datetime.now().timestamp():
+            return None
+        if not payload.get("email"):
+            return None
+        return payload
+    except Exception:
+        return None
+
 def authenticate():
     """Handles Google OAuth2 Flow. Returns user_info dict if logged in, else None."""
 
+    cookie_ctrl = _make_cookie_controller()
+
     # 1) If already logged in, return user info
     if "user_info" in st.session_state:
+        # Persist the session in a signed cookie (set on the stable run after OAuth,
+        # so an immediate rerun can't swallow the cookie write)
+        if cookie_ctrl and not st.session_state.get("_session_cookie_set"):
+            token = _sign_session_token(st.session_state.user_info)
+            if token:
+                try:
+                    cookie_ctrl.set(SESSION_COOKIE_NAME, token, max_age=SESSION_COOKIE_DAYS * 24 * 3600)
+                    st.session_state["_session_cookie_set"] = True
+                except TypeError:
+                    try:
+                        cookie_ctrl.set(SESSION_COOKIE_NAME, token)
+                        st.session_state["_session_cookie_set"] = True
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
         return st.session_state.user_info
+
+    # 1.5) Try restoring a previous session from the signed browser cookie
+    if cookie_ctrl and not st.session_state.get("_skip_cookie_restore"):
+        try:
+            restored = _verify_session_token(cookie_ctrl.get(SESSION_COOKIE_NAME))
+        except Exception:
+            restored = None
+        if restored:
+            st.session_state.user_info = restored
+            st.session_state["_session_cookie_set"] = True
+            return restored
 
     # 2) Setup OAuth Config
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
@@ -423,6 +517,16 @@ def authenticate():
 
 
 def logout():
+    # Clear the persistent session cookie so a refresh doesn't log the user back in
+    ctrl = st.session_state.get("_cookie_controller")
+    if ctrl:
+        try:
+            ctrl.remove(SESSION_COOKIE_NAME)
+        except Exception:
+            pass
+    st.session_state.pop("_session_cookie_set", None)
+    # Belt-and-braces: skip cookie restore for the rest of this browser session
+    st.session_state["_skip_cookie_restore"] = True
     if "user_info" in st.session_state:
         del st.session_state.user_info
     st.rerun()
@@ -621,8 +725,43 @@ def resolve_image_source(photo_source: str):
 
 
 def save_image_locally(uploaded_file):
-    """Uploads an uploaded file/camera input to R2 and returns the object key."""
-    return upload_streamlit_file(uploaded_file, folder="photos")
+    """Uploads an uploaded file/camera input to R2 and returns the object key.
+    Images are compressed first (max 1600px, JPEG q80) so uploads are fast on cell data.
+    PDFs and other non-image files pass through unchanged."""
+    if uploaded_file is None:
+        return None
+
+    file_type = getattr(uploaded_file, 'type', '') or ''
+    file_name = getattr(uploaded_file, 'name', 'photo.jpg') or 'photo.jpg'
+
+    if not file_type.startswith('image/'):
+        return upload_streamlit_file(uploaded_file, folder="photos")
+
+    try:
+        img = Image.open(uploaded_file)
+        # Apply EXIF rotation so phone photos don't end up sideways after re-encoding
+        img = ImageOps.exif_transpose(img)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+
+        max_size = 1600
+        if img.width > max_size or img.height > max_size:
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=80, optimize=True)
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = file_name.rsplit('.', 1)[0] or 'photo'
+        key = f"photos/{timestamp}_{base_name}.jpg"
+        return upload_bytes(buf.getvalue(), key, content_type="image/jpeg")
+    except Exception:
+        # Compression failed (corrupt/unsupported image) - upload the original instead
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+        return upload_streamlit_file(uploaded_file, folder="photos")
 
 def save_document_locally(uploaded_file):
     """Uploads an uploaded file (PDF/etc) to R2 and returns the object key."""
@@ -2105,6 +2244,13 @@ def render_edit_report_view(job_id, report_id):
         content = st.text_area("General Notes / Summary", value=report.get('content', ''))
         
         if st.form_submit_button("Update Report"):
+            # Auto-calculate hours from arrival/finish times when left at 0
+            if not hours_worked:
+                arr_dt = datetime.datetime.combine(datetime.date.today(), time_arrived)
+                dep_dt = datetime.datetime.combine(datetime.date.today(), time_departed)
+                if dep_dt > arr_dt:
+                    hours_worked = round((dep_dt - arr_dt).total_seconds() / 3600 * 4) / 4
+
             # Update report in session state
             st.session_state.jobs[job_index]['reports'][report_index].update({
                 'content': content,
@@ -2723,6 +2869,31 @@ Desc: {job['description']}"""
                 if daily_transcribed:
                     st.success("Audio Transcribed!")
 
+        # Prefill arrival/finish times from today's quick-status taps ("📍 Arrived" / "✅ Done for Day")
+        today_prefix = datetime.datetime.now().strftime('%Y-%m-%d')
+        default_arrived = datetime.time(8, 0)
+        default_departed = datetime.time(17, 0)
+        times_prefilled = False
+        for qr in job['reports']:
+            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[📍 Arrived]'):
+                try:
+                    default_arrived = datetime.datetime.fromisoformat(qr['timestamp']).time().replace(second=0, microsecond=0)
+                    times_prefilled = True
+                except Exception:
+                    pass
+                break
+        for qr in reversed(job['reports']):
+            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[✅ Done for Day]'):
+                try:
+                    default_departed = datetime.datetime.fromisoformat(qr['timestamp']).time().replace(second=0, microsecond=0)
+                    times_prefilled = True
+                except Exception:
+                    pass
+                break
+
+        if times_prefilled:
+            st.caption("⏱️ Times below were prefilled from your quick-status taps today — adjust if needed.")
+
         with st.form(key=f"daily_form_{job_id}"):
             status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged", "Completed"]
             current_status = job['status']
@@ -2742,11 +2913,11 @@ Desc: {job['description']}"""
                 default_techs = [tech['name']] if tech and tech['name'] in available_techs else []
                 
                 techs_on_site_list = st.multiselect("Techs On Site", options=available_techs, default=default_techs)
-                time_arrived = st.time_input("Time Arrived", value=datetime.time(8, 0))
+                time_arrived = st.time_input("Time Arrived", value=default_arrived)
                 parts_used = st.text_area("Parts/Materials Used")
             with r_col2:
-                hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5)
-                time_departed = st.time_input("Time Finished", value=datetime.time(17, 0))
+                hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, help="Leave at 0 to auto-calculate from arrival/finish times.")
+                time_departed = st.time_input("Time Finished", value=default_departed)
                 billable_items = st.text_area("Billable Items / Extras")
 
             # Use transcribed text if available
@@ -2785,6 +2956,13 @@ Desc: {job['description']}"""
                         path = save_image_locally(up_file)
                         if path:
                             todays_photos.append(path)
+
+                # Auto-calculate hours from arrival/finish times when left at 0
+                if not hours_worked:
+                    arr_dt = datetime.datetime.combine(datetime.date.today(), time_arrived)
+                    dep_dt = datetime.datetime.combine(datetime.date.today(), time_departed)
+                    if dep_dt > arr_dt:
+                        hours_worked = round((dep_dt - arr_dt).total_seconds() / 3600 * 4) / 4
 
                 # Construct Report Data
                 report_payload = {
