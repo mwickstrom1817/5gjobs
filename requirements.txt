@@ -12,3 +12,4 @@ fastapi
 uvicorn[standard]
 python-multipart
 streamlit-cookies-controller
+tzdata
