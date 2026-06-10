@@ -84,11 +84,37 @@ def load_state():
     finally:
         conn.close()
 
-def save_state_to_db(data):
-    """Saves data to DB, incrementing version."""
+class StaleStateError(Exception):
+    """Raised when the DB row has a newer version than the one this session loaded.
+    Saving anyway would silently overwrite someone else's changes."""
+    pass
+
+def get_db_version():
+    """Returns the current version of the global state row (None if missing)."""
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            cur.execute("SELECT version FROM app_state WHERE key = 'global_state'")
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+def save_state_to_db(data, expected_version=None):
+    """Saves data to DB, incrementing version.
+    If expected_version is provided and the row has moved past it (someone else
+    saved first), raises StaleStateError instead of clobbering their changes."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            if expected_version is not None:
+                cur.execute("SELECT version FROM app_state WHERE key = 'global_state' FOR UPDATE")
+                row = cur.fetchone()
+                current_version = row[0] if row else None
+                if current_version is not None and current_version != expected_version:
+                    raise StaleStateError(
+                        f"DB is at version {current_version}, but this session loaded version {expected_version}."
+                    )
             cur.execute(
                 """
                 INSERT INTO app_state (key, value)
@@ -116,7 +142,24 @@ def ensure_loaded_into_session():
         st.session_state._db_version = version
 
 def commit_from_session(invalidate_briefing=True):
-    """Saves st.session_state.db to DB."""
+    """Saves st.session_state.db to DB.
+    Raises StaleStateError if another session saved since this one loaded."""
+    if 'db' not in st.session_state:
+        return
+
+    if invalidate_briefing:
+        st.session_state.db['briefing'] = "Data required to generate briefing."
+
+    try:
+        new_ver = save_state_to_db(st.session_state.db, expected_version=st.session_state.get('_db_version'))
+        st.session_state._db_version = new_ver
+    except StaleStateError:
+        raise
+    except Exception as e:
+        st.error(f"Failed to save to DB: {e}")
+
+def force_overwrite_from_session(invalidate_briefing=False):
+    """Same as commit but skips the version check - for explicit restore operations."""
     if 'db' not in st.session_state:
         return
 
@@ -128,7 +171,3 @@ def commit_from_session(invalidate_briefing=True):
         st.session_state._db_version = new_ver
     except Exception as e:
         st.error(f"Failed to save to DB: {e}")
-
-def force_overwrite_from_session(invalidate_briefing=False):
-    """Same as commit but explicitly named for restore operations."""
-    commit_from_session(invalidate_briefing=invalidate_briefing)
