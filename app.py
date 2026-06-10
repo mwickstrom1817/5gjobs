@@ -440,6 +440,36 @@ def authenticate():
             st.session_state["_session_cookie_set"] = True
             return restored
 
+        # The cookie component may not have delivered the browser's cookies on the
+        # first run(s), so we can't yet tell a returning user from a new one.
+        # Show a brief branded splash instead of flashing the login screen.
+        # After a couple of retries with no valid session (new login, or the
+        # 30-day token expired), fall through to the login button.
+        # Skip the wait entirely when returning from the Google OAuth redirect.
+        oauth_redirect = False
+        try:
+            oauth_redirect = "code" in st.query_params
+        except Exception:
+            pass
+
+        if not oauth_redirect:
+            attempts = st.session_state.get("_cookie_wait_attempts", 0)
+            if attempts < 2:
+                st.session_state["_cookie_wait_attempts"] = attempts + 1
+                st.markdown(
+                    """
+                    <div class="login-container">
+                        <div class="login-box">
+                            <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
+                            <p style="color:#a1a1aa;">Checking your session…</p>
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                time.sleep(0.8)
+                st.rerun()
+
     # 2) Setup OAuth Config
     client_id = st.secrets.get("GOOGLE_CLIENT_ID") or os.getenv("GOOGLE_CLIENT_ID")
     client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET") or os.getenv("GOOGLE_CLIENT_SECRET")
