@@ -1423,6 +1423,81 @@ def generate_job_pdf(job, tech, location, report):
     buffer.seek(0)
     return buffer.getvalue()
 
+def build_assignment_email_html(job, tech, location):
+    """Branded HTML body for the new-assignment email (plain text is attached as fallback)."""
+    def esc(s):
+        return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    priority_colors = {"Critical": "#ef4444", "High": "#dc2626", "Medium": "#b45309", "Low": "#52525b"}
+    p_color = priority_colors.get(job.get('priority'), "#52525b")
+
+    first_name = (tech.get('name') or 'there').split()[0]
+    loc_name = location.get('name', 'Unknown') if location else 'Unknown'
+    loc_addr = location.get('address', '') if location else ''
+    map_url = get_google_maps_url(loc_addr) if loc_addr else None
+    app_url = os.getenv("APP_URL", "").rstrip("/")
+
+    detail_rows = [
+        ("Location", esc(loc_name)),
+        ("Address", esc(loc_addr)),
+        ("Type", esc(job.get('type', 'N/A'))),
+        ("Scheduled", esc(str(job.get('date', ''))[:10])),
+    ]
+    if location and (location.get('contact_name') or location.get('contact_phone')):
+        detail_rows.append(("Contact", f"{esc(location.get('contact_name', 'N/A'))} ({esc(location.get('contact_phone', 'N/A'))})"))
+
+    rows_html = ""
+    for label, value in detail_rows:
+        rows_html += f"""
+            <tr>
+                <td style="padding:8px 12px;background-color:#f4f4f5;color:#71717a;font-size:11px;font-weight:bold;text-transform:uppercase;border-bottom:1px solid #e4e4e7;width:110px;">{label}</td>
+                <td style="padding:8px 12px;color:#27272a;font-size:14px;border-bottom:1px solid #e4e4e7;">{value}</td>
+            </tr>"""
+
+    buttons_html = ""
+    if map_url:
+        buttons_html += f"""<a href="{map_url}" style="display:inline-block;background-color:#b91c1c;color:#ffffff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;margin-right:10px;">&#128205; Get Directions</a>"""
+    if app_url:
+        buttons_html += f"""<a href="{app_url}" style="display:inline-block;background-color:#18181b;color:#ffffff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;">Open Job Board</a>"""
+
+    description_html = esc(job.get('description', '')).replace('\n', '<br>')
+
+    return f"""
+<html>
+<body style="margin:0;padding:0;background-color:#f4f4f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
+    <tr>
+        <td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
+            <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+            <span style="color:#a1a1aa;font-size:13px;">New Job Assignment</span>
+        </td>
+    </tr>
+    <tr>
+        <td style="padding:28px 32px;">
+            <p style="color:#27272a;font-size:14px;margin:0 0 18px 0;">Hello {esc(first_name)}, you've been assigned a new job:</p>
+            <h2 style="color:#18181b;font-size:19px;margin:0 0 10px 0;">{esc(job.get('title', ''))}</h2>
+            <span style="display:inline-block;background-color:{p_color};color:#ffffff;padding:3px 12px;border-radius:12px;font-size:12px;font-weight:bold;">{esc(job.get('priority', 'N/A'))} Priority</span>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:20px 0;border:1px solid #e4e4e7;border-radius:6px;border-collapse:separate;overflow:hidden;">
+                {rows_html}
+            </table>
+            <p style="color:#71717a;font-size:11px;font-weight:bold;text-transform:uppercase;margin:0 0 6px 0;">Description</p>
+            <p style="color:#27272a;font-size:14px;line-height:1.6;margin:0 0 24px 0;border-left:3px solid #b91c1c;padding-left:12px;">{description_html}</p>
+            {buttons_html}
+        </td>
+    </tr>
+    <tr>
+        <td style="background-color:#f4f4f5;padding:14px 32px;color:#71717a;font-size:11px;border-top:1px solid #e4e4e7;">
+            5G Security &nbsp;|&nbsp; Cameras &middot; Access Control &middot; Alarm Systems &middot; Cabling
+        </td>
+    </tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
 def send_assignment_email(job, tech, location):
     """Sends an email notification via SMTP, returning True if successful."""
     # Helper to resolve config priority: Session > Secrets > Env
@@ -1475,11 +1550,16 @@ def send_assignment_email(job, tech, location):
 
         return False
 
-    msg = MIMEMultipart()
+    # multipart/alternative: clients render the HTML version, plain text is the fallback
+    msg = MIMEMultipart("alternative")
     msg['From'] = sender_email
     msg['To'] = tech['email']
     msg['Subject'] = subject
     msg.attach(MIMEText(body, 'plain'))
+    try:
+        msg.attach(MIMEText(build_assignment_email_html(job, tech, location), 'html'))
+    except Exception:
+        pass  # plain-text version still sends
 
     try:
         if int(smtp_port) == 465:
