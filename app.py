@@ -1949,6 +1949,7 @@ def render_completion_confirmation(job_index, report_payload):
     job = st.session_state.jobs[job_index]
     st.write(f"**Job:** {job['title']}")
     st.warning("You are marking this job as **Completed**. This will archive the job and notify admins.")
+    st.caption("Your daily report is attached to this sign-off and will be saved when you confirm. Cancelling discards it.")
 
     completion_loc = get_location(job['locationId'])
     if completion_loc and not location_has_system_info(completion_loc):
@@ -2041,10 +2042,10 @@ def render_completion_confirmation(job_index, report_payload):
         st.success("Job Completed & Closed!")
         st.rerun()
 
-    if c_cancel.button("Cancel"):
+    if c_cancel.button("❌ Cancel & Discard Report"):
         if f"completion_pending_{job['id']}" in st.session_state:
             del st.session_state[f"completion_pending_{job['id']}"]
-        st.rerun()
+        st.rerun(scope="fragment")
         
 def render_edit_report_view(job_id, report_id):
     # Find job
@@ -2123,12 +2124,12 @@ def render_edit_report_view(job_id, report_id):
             if f"editing_report_{job_id}" in st.session_state:
                 del st.session_state[f"editing_report_{job_id}"]
             st.success("Report updated!")
-            st.rerun()
+            st.rerun(scope="fragment")
 
     if st.button("Cancel Edit"):
         if f"editing_report_{job_id}" in st.session_state:
             del st.session_state[f"editing_report_{job_id}"]
-        st.rerun()
+        st.rerun(scope="fragment")
 
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
@@ -2320,7 +2321,7 @@ Desc: {job['description']}"""
                             job['documents'] = existing_docs
                             save_state(invalidate_briefing=False)
                             st.success(f"Uploaded {len(new_keys)} document(s)!")
-                            st.rerun()
+                            st.rerun(scope="fragment")
                 else:
                     st.warning("Please select files first.")
 
@@ -2412,7 +2413,7 @@ Desc: {job['description']}"""
                             })
                             save_state(invalidate_briefing=False)
                             st.success(f"'{sys_name}' saved!")
-                            st.rerun()
+                            st.rerun(scope="fragment")
 
             if not systems:
                 st.info("No system info recorded for this site yet. Add the first one above while you're on site.")
@@ -2463,14 +2464,14 @@ Desc: {job['description']}"""
                                 })
                                 save_state(invalidate_briefing=False)
                                 st.success("System updated!")
-                                st.rerun()
+                                st.rerun(scope="fragment")
 
                             if ec2.form_submit_button("🗑️ Delete System"):
                                 loc['systems'] = [x for x in loc['systems'] if x['id'] != s['id']]
                                 get_logger().log(f"{current_user_email} deleted system '{s.get('name')}' from location {loc['id']}")
                                 save_state(invalidate_briefing=False)
                                 st.toast(f"'{s.get('name')}' deleted", icon="🗑️")
-                                st.rerun()
+                                st.rerun(scope="fragment")
 
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
@@ -2531,12 +2532,12 @@ Desc: {job['description']}"""
                                     get_logger().log(f"{user_email} moved report {r['id']} from job {job_id} to job {target_id}")
                                     save_state(invalidate_briefing=False)
                                     st.toast(f"Entry moved to '{other_jobs[target_id]['title']}'", icon="↪️")
-                                    st.rerun()
+                                    st.rerun(scope="fragment")
 
                     del_confirm_key = f"confirm_del_report_{r['id']}"
                     if hdr_del.button("🗑️", key=f"del_rep_{r['id']}", help="Delete this entry"):
                         st.session_state[del_confirm_key] = True
-                        st.rerun()
+                        st.rerun(scope="fragment")
 
                     if st.session_state.get(del_confirm_key):
                         st.warning("Permanently delete this entry? Its notes and photos will be removed from the job history.")
@@ -2547,10 +2548,10 @@ Desc: {job['description']}"""
                             del st.session_state[del_confirm_key]
                             save_state(invalidate_briefing=False)
                             st.toast("Entry deleted", icon="🗑️")
-                            st.rerun()
+                            st.rerun(scope="fragment")
                         if dc2.button("❌ Cancel", key=f"del_no_{r['id']}", use_container_width=True):
                             del st.session_state[del_confirm_key]
-                            st.rerun()
+                            st.rerun(scope="fragment")
                 
                 if is_daily_report:
                     h1, h2, h3 = st.columns(3)
@@ -2561,7 +2562,7 @@ Desc: {job['description']}"""
                     if is_admin and not is_completion:
                         if st.button("✏️ Edit Report", key=f"edit_rep_{r['id']}"):
                             st.session_state[f"editing_report_{job_id}"] = r['id']
-                            st.rerun()
+                            st.rerun(scope="fragment")
                 
                 if r.get('content'):
                     st.write(r['content'])
@@ -2612,7 +2613,7 @@ Desc: {job['description']}"""
                 
                 save_state()
                 st.toast(f"Status updated: {label}", icon="✅")
-                st.rerun()
+                st.rerun(scope="fragment")
 
         # Voice Note Feature
         audio_val = st.audio_input("🎙️ Record Voice Note", key=f"audio_prog_{job_id}")
@@ -2666,7 +2667,7 @@ Desc: {job['description']}"""
                     
                     save_state()
                     st.success("Update Posted!")
-                    st.rerun()
+                    st.rerun(scope="fragment")
                 else:
                     st.warning("Please add a note or photo.")
 
@@ -2699,11 +2700,11 @@ Desc: {job['description']}"""
                 
                 del st.session_state[confirm_key]
                 st.success("Report Sent & Saved!")
-                st.rerun()
+                st.rerun(scope="fragment")
                 
             if c_no.button("❌ Cancel", key="conf_no"):
                 del st.session_state[confirm_key]
-                st.rerun()
+                st.rerun(scope="fragment")
             
             st.divider()
 
@@ -2802,15 +2803,17 @@ Desc: {job['description']}"""
                 }
 
                 if email_btn:
-                    # Trigger confirmation flow
+                    # Trigger confirmation flow (fragment scope keeps the dialog open)
                     st.session_state[f"confirm_daily_send_{job['id']}"] = report_payload
-                    st.rerun()
+                    st.rerun(scope="fragment")
 
                 if submit_btn:
                     if new_status == "Completed":
-                        # Set pending state and rerun to show confirmation UI
+                        # Set pending state and rerun to show confirmation UI.
+                        # Fragment scope keeps the dialog open so the confirmation
+                        # appears immediately instead of the window closing.
                         st.session_state[f"completion_pending_{job['id']}"] = report_payload
-                        st.rerun()
+                        st.rerun(scope="fragment")
                     else:
                         # Automatically send email to admins for in-progress daily reports
                         with st.spinner("Sending Daily Report to Admins..."):
@@ -2825,7 +2828,7 @@ Desc: {job['description']}"""
                         
                         save_state()
                         st.success("Daily Report Submitted & Emailed to Admins!")
-                        st.rerun()
+                        st.rerun(scope="fragment")
 
 # --- UI COMPONENTS ---
 
