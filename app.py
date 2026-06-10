@@ -761,12 +761,17 @@ def start_background_scheduler():
                                     
                                 body = f"Hello {tech['name']},\n\nHere is your summary of active assignments for today ({today_str}):\n{job_list_text}\n\nPlease check the 5G Security Job Board for full details and to log your work.\n"
                                 
-                                msg = MIMEMultipart()
+                                msg = MIMEMultipart("alternative")
                                 msg['From'] = sender_email
                                 msg['To'] = tech['email']
                                 msg['Subject'] = subject
                                 msg.attach(MIMEText(body, 'plain'))
-                                
+                                try:
+                                    jobs_with_locs = [(j, get_loc(j['locationId'])) for j in active_jobs]
+                                    msg.attach(MIMEText(build_reminder_email_html(tech, jobs_with_locs, today_str), 'html'))
+                                except Exception:
+                                    pass  # plain-text version still sends
+
                                 server.send_message(msg)
                                 
                             server.quit()
@@ -1498,6 +1503,72 @@ def build_assignment_email_html(job, tech, location):
 </body>
 </html>"""
 
+def build_reminder_email_html(tech, jobs_with_locs, today_str):
+    """Branded HTML body for the daily reminder email.
+    jobs_with_locs: list of (job, location) tuples. Pure string-building, safe in threads."""
+    def esc(s):
+        return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    priority_colors = {"Critical": "#ef4444", "High": "#dc2626", "Medium": "#b45309", "Low": "#52525b"}
+    first_name = (tech.get('name') or 'there').split()[0]
+    app_url = os.getenv("APP_URL", "").rstrip("/")
+
+    cards_html = ""
+    for job, loc in jobs_with_locs:
+        loc_name = loc['name'] if loc else "Unknown Location"
+        loc_addr = loc['address'] if loc else ""
+        p_color = priority_colors.get(job.get('priority'), "#52525b")
+        map_url = get_google_maps_url(loc_addr) if loc_addr else None
+        addr_html = esc(loc_addr)
+        if map_url:
+            addr_html = f'<a href="{map_url}" style="color:#b91c1c;text-decoration:none;">{esc(loc_addr)}</a>'
+        cards_html += f"""
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e4e4e7;border-left:4px solid {p_color};border-radius:6px;border-collapse:separate;margin:0 0 12px 0;">
+                <tr><td style="padding:14px 16px;">
+                    <span style="color:#18181b;font-size:15px;font-weight:bold;">{esc(job.get('title', ''))}</span>
+                    <span style="display:inline-block;background-color:{p_color};color:#ffffff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:bold;margin-left:8px;">{esc(job.get('priority', ''))}</span><br>
+                    <span style="color:#71717a;font-size:12px;">Status: {esc(job.get('status', ''))}</span><br>
+                    <span style="color:#27272a;font-size:13px;font-weight:bold;">&#128205; {esc(loc_name)}</span><br>
+                    <span style="font-size:12px;">{addr_html}</span>
+                </td></tr>
+            </table>"""
+
+    button_html = ""
+    if app_url:
+        button_html = f"""<a href="{app_url}" style="display:inline-block;background-color:#b91c1c;color:#ffffff;padding:11px 22px;border-radius:6px;text-decoration:none;font-weight:bold;font-size:14px;">Open Job Board</a>"""
+
+    plural = "s" if len(jobs_with_locs) != 1 else ""
+    return f"""
+<html>
+<body style="margin:0;padding:0;background-color:#f4f4f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
+    <tr>
+        <td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
+            <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+            <span style="color:#a1a1aa;font-size:13px;">Daily Assignment Reminder &mdash; {esc(today_str)}</span>
+        </td>
+    </tr>
+    <tr>
+        <td style="padding:28px 32px;">
+            <p style="color:#27272a;font-size:14px;margin:0 0 18px 0;">Good morning {esc(first_name)} &mdash; you have <span style="font-weight:bold;">{len(jobs_with_locs)} active assignment{plural}</span> today:</p>
+            {cards_html}
+            <p style="color:#71717a;font-size:12px;margin:18px 0 18px 0;">Check the job board for full details and to log your work.</p>
+            {button_html}
+        </td>
+    </tr>
+    <tr>
+        <td style="background-color:#f4f4f5;padding:14px 32px;color:#71717a;font-size:11px;border-top:1px solid #e4e4e7;">
+            5G Security &nbsp;|&nbsp; Cameras &middot; Access Control &middot; Alarm Systems &middot; Cabling
+        </td>
+    </tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
 def send_assignment_email(job, tech, location):
     """Sends an email notification via SMTP, returning True if successful."""
     # Helper to resolve config priority: Session > Secrets > Env
@@ -1822,12 +1893,17 @@ Here is your summary of active assignments for today ({today_str}):
 Please check the 5G Security Job Board for full details and to log your work.
 """
             
-            msg = MIMEMultipart()
+            msg = MIMEMultipart("alternative")
             msg['From'] = sender_email
             msg['To'] = tech['email']
             msg['Subject'] = subject
             msg.attach(MIMEText(body, 'plain'))
-            
+            try:
+                jobs_with_locs = [(j, get_location(j['locationId'])) for j in active_jobs]
+                msg.attach(MIMEText(build_reminder_email_html(tech, jobs_with_locs, today_str), 'html'))
+            except Exception:
+                pass  # plain-text version still sends
+
             server.send_message(msg)
             techs_emailed += 1
             
