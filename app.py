@@ -4019,17 +4019,30 @@ def main():
     with c1:
         st.title("5G Security Job Board")
     with c2:
-        search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs...")
+        search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs, sites, techs...")
     with c3:
         # Restricted Access: Only Admins can create jobs
         if is_admin:
             if st.button("➕ New Job", use_container_width=True):
                 add_job_dialog()
 
-    # Filter Jobs based on search
+    # Filter Jobs based on search (matches title, description, location name/address, tech name)
     filtered_jobs = st.session_state.jobs
     if search:
-        filtered_jobs = [j for j in filtered_jobs if search.lower() in j['title'].lower() or search.lower() in j['description'].lower()]
+        q = search.lower()
+
+        def job_matches(j):
+            if q in j['title'].lower() or q in j['description'].lower():
+                return True
+            j_loc = get_location(j['locationId'])
+            if j_loc and (q in j_loc.get('name', '').lower() or q in j_loc.get('address', '').lower()):
+                return True
+            j_tech = get_tech(j['techId'])
+            if j_tech and q in j_tech.get('name', '').lower():
+                return True
+            return False
+
+        filtered_jobs = [j for j in filtered_jobs if job_matches(j)]
 
     # Determine if current user is a tech
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
@@ -4052,6 +4065,9 @@ def main():
             st.subheader(f"Hello, {current_tech['name'].split()[0]}!")
             
             my_jobs = [j for j in filtered_jobs if j['techId'] == current_tech['id'] and j['status'] != 'Completed']
+            # Most urgent first: Critical > High > Medium > Low, then soonest date
+            priority_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+            my_jobs.sort(key=lambda j: (priority_rank.get(j.get('priority'), 4), str(j.get('date', ''))))
             
             if not my_jobs:
                 st.info("🎉 No active assignments! Enjoy your day.")
@@ -4157,7 +4173,13 @@ def main():
             month_num = list(calendar.month_name).index(cal_month)
             
         with col_cal2:
-            st.write("") # Spacer
+            only_my_jobs = False
+            if current_tech:
+                only_my_jobs = st.toggle("👷 Only my jobs", key="cal_only_mine")
+
+        cal_jobs = filtered_jobs
+        if only_my_jobs and current_tech:
+            cal_jobs = [j for j in cal_jobs if j['techId'] == current_tech['id']]
         
         # Generate Calendar Grid
         cal = calendar.monthcalendar(cal_year, month_num)
@@ -4183,7 +4205,7 @@ def main():
                         # Note: Job 'date' is ISO format string. We compare YYYY-MM-DD.
                         target_date_str = f"{cal_year}-{month_num:02d}-{day:02d}"
                         
-                        day_jobs = [j for j in filtered_jobs if j['date'].startswith(target_date_str) and j['status'] != 'Completed']
+                        day_jobs = [j for j in cal_jobs if j['date'].startswith(target_date_str) and j['status'] != 'Completed']
                         
                         for job in day_jobs:
                             tech = get_tech(job['techId'])
