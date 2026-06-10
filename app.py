@@ -4317,6 +4317,32 @@ def render_chatbot():
             except Exception as debug_e:
                 st.sidebar.error(f"Could not list models: {str(debug_e)}")
 
+# --- LIVE UPDATE WATCHER ---
+
+@st.fragment(run_every="15s")
+def live_update_watcher():
+    """Keeps idle sessions in sync. Polls the DB version every 15s; when another
+    user saves, quietly refreshes this session's data and shows a refresh banner.
+    Deliberately does NOT force a full rerun - that would close any open dialog
+    (e.g. a tech mid-report). Any interaction redraws with fresh data anyway."""
+    try:
+        db_ver = get_db_version()
+    except Exception:
+        return
+    if db_ver is None or st.session_state.get('_db_version') is None:
+        return
+
+    if db_ver != st.session_state._db_version:
+        refresh_session_from_db()
+        st.session_state['_pending_board_update'] = True
+
+    if st.session_state.get('_pending_board_update'):
+        c1, c2 = st.columns([4, 1])
+        c1.info("🔄 The board was updated by another user. Refresh to see the latest.")
+        if c2.button("Refresh now", key="live_refresh_btn", use_container_width=True):
+            st.session_state.pop('_pending_board_update', None)
+            st.rerun(scope="app")
+
 # --- MAIN APP FLOW ---
 
 def main():
@@ -4337,6 +4363,8 @@ def main():
             refresh_session_from_db()
     except Exception:
         pass
+    # A full run means the page is being redrawn with fresh data - clear any pending banner
+    st.session_state.pop('_pending_board_update', None)
 
     # Deep-link: open a job dialog requested from elsewhere (e.g. Site History)
     open_target = st.session_state.pop("_open_job_after_rerun", None)
@@ -4383,6 +4411,9 @@ def main():
         if st.button("Sign in with a different account"):
             logout()
         return
+
+    # Live update watcher: keeps this session in sync while idle
+    live_update_watcher()
 
     # Sidebar Info
     with st.sidebar:
