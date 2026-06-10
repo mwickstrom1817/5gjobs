@@ -97,7 +97,7 @@ def now_local():
 # --- CONFIGURATION & STYLING ---
 st.set_page_config(
     page_title="5G Security Job Board",
-    page_icon="ðŸ›¡ï¸",
+    page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -257,8 +257,8 @@ def save_state(invalidate_briefing=False):
         # changes - reload fresh state and ask the user to re-apply theirs.
         refresh_session_from_db()
         st.warning(
-            "âš ï¸ Someone else saved changes at the same time. The app has refreshed "
-            "with the latest data â€” please re-apply your last change."
+            "⚠️ Someone else saved changes at the same time. The app has refreshed "
+            "with the latest data — please re-apply your last change."
         )
 
 def update_job_status_callback(job_id, widget_key):
@@ -461,7 +461,7 @@ def authenticate():
                     <div class="login-container">
                         <div class="login-box">
                             <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
-                            <p style="color:#a1a1aa;">Checking your sessionâ€¦</p>
+                            <p style="color:#a1a1aa;">Checking your session…</p>
                         </div>
                     </div>
                     """,
@@ -481,7 +481,7 @@ def authenticate():
 
     if not (client_id and client_secret and redirect_uri):
         st.error(
-            "ðŸ”’ Google OAuth is not configured. Please add `GOOGLE_CLIENT_ID`, "
+            "🔒 Google OAuth is not configured. Please add `GOOGLE_CLIENT_ID`, "
             "`GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` to Streamlit secrets."
         )
         return None
@@ -750,7 +750,7 @@ def start_background_scheduler():
                                 if not active_jobs:
                                     continue
                                     
-                                subject = f"ðŸ“… Daily Assignment Reminder - {today_str}"
+                                subject = f"📅 Daily Assignment Reminder - {today_str}"
                                 job_list_text = ""
                                 for job in active_jobs:
                                     loc = get_loc(job['locationId'])
@@ -807,7 +807,7 @@ def start_background_scheduler():
                             detail_rows = [(tn, f"{round(th, 2)} hrs") for tn, th in sorted(totals.items(), key=lambda x: -x[1])]
                             detail_rows.append(("Total", f"{round(sum(totals.values()), 2)} hrs"))
 
-                            subject = f"ðŸ•’ Weekly Hours Digest â€” {start_d} to {end_d}"
+                            subject = f"🕒 Weekly Hours Digest — {start_d} to {end_d}"
                             plain_body = (
                                 f"Hours logged {start_d} to {end_d}:\n\n"
                                 + "\n".join(f"{a}: {b}" for a, b in detail_rows)
@@ -1227,17 +1227,17 @@ def get_weather(lat, lon):
         if code is not None:
             try:
                 code = int(code)
-                if code == 0: condition = "â˜€ï¸ Clear"
-                elif code in [1, 2, 3]: condition = "â›… Partly Cloudy"
-                elif code in [45, 48]: condition = "ðŸŒ«ï¸ Foggy"
-                elif code in [51, 53, 55]: condition = "ðŸŒ§ï¸ Drizzle"
-                elif code in [61, 63, 65]: condition = "ðŸŒ§ï¸ Rain"
-                elif code in [71, 73, 75]: condition = "â„ï¸ Snow"
-                elif code in [95, 96, 99]: condition = "â›ˆï¸ Thunderstorm"
+                if code == 0: condition = "☀️ Clear"
+                elif code in [1, 2, 3]: condition = "⛅ Partly Cloudy"
+                elif code in [45, 48]: condition = "🌫️ Foggy"
+                elif code in [51, 53, 55]: condition = "🌧️ Drizzle"
+                elif code in [61, 63, 65]: condition = "🌧️ Rain"
+                elif code in [71, 73, 75]: condition = "❄️ Snow"
+                elif code in [95, 96, 99]: condition = "⛈️ Thunderstorm"
             except (ValueError, TypeError):
                 pass
             
-        return f"{condition} {temp}Â°F"
+        return f"{condition} {temp}°F"
     except Exception as e:
         return None
 
@@ -1273,7 +1273,7 @@ UID:{job['id']}@5gsecurity.app
 DTSTAMP:{now_str}
 DTSTART:{start_str}
 DTEND:{end_str}
-SUMMARY:ðŸ›¡ï¸ {job['title']}
+SUMMARY:🛡️ {job['title']}
 DESCRIPTION:{desc}
 LOCATION:{loc_str}
 END:VEVENT
@@ -1800,7 +1800,7 @@ def send_assignment_email(job, tech, location):
         server.login(sender_email, sender_password)
         server.send_message(msg)
         server.quit()
-        st.toast(f"ðŸ“§ Email successfully sent to {tech['name']}", icon="âœ…")
+        st.toast(f"📧 Email successfully sent to {tech['name']}", icon="✅")
         return True
     except Exception as e:
         st.error(f"Failed to send email: {str(e)}")
@@ -1834,13 +1834,13 @@ def send_completion_email(job, tech, location, report_data):
             pdf_size_mb = len(pdf_bytes) / (1024 * 1024)
             get_logger().log(f"Generated PDF for job {job['id']}: {pdf_size_mb:.2f} MB")
             if pdf_size_mb > 20:
-                st.warning(f"âš ï¸ PDF report is very large ({pdf_size_mb:.2f} MB). It may be rejected by some email servers.")
+                st.warning(f"⚠️ PDF report is very large ({pdf_size_mb:.2f} MB). It may be rejected by some email servers.")
     except Exception as e:
         st.error(f"Failed to generate PDF report: {e}")
         pdf_bytes = None
 
     # Prepare email content
-    subject = f"âœ… Job Completed: {job['title']}"
+    subject = f"✅ Job Completed: {job['title']}"
     body = f"""
     JOB COMPLETED NOTIFICATION
     
@@ -1872,7 +1872,7 @@ def send_completion_email(job, tech, location, report_data):
         try:
             html_body = build_admin_email_html(
                 "Job Completed",
-                f"â€œ{job['title']}â€ has been marked as Completed.",
+                f"“{job['title']}” has been marked as Completed.",
                 [
                     ("Job", job['title']),
                     ("Technician", tech['name'] if tech else 'Unknown'),
@@ -1906,7 +1906,7 @@ def send_completion_email(job, tech, location, report_data):
             server.send_message(msg)
             
         server.quit()
-        st.toast("ðŸ“§ Completion notification sent to Admins", icon="âœ…")
+        st.toast("📧 Completion notification sent to Admins", icon="✅")
     except Exception as e:
         st.error(f"Failed to send completion email: {str(e)}")
 
@@ -1938,13 +1938,13 @@ def send_daily_report_email(job, tech, location, report_data):
             pdf_size_mb = len(pdf_bytes) / (1024 * 1024)
             get_logger().log(f"Generated Daily PDF for job {job['id']}: {pdf_size_mb:.2f} MB")
             if pdf_size_mb > 20:
-                st.warning(f"âš ï¸ PDF report is very large ({pdf_size_mb:.2f} MB). It may be rejected by some email servers.")
+                st.warning(f"⚠️ PDF report is very large ({pdf_size_mb:.2f} MB). It may be rejected by some email servers.")
     except Exception as e:
         st.error(f"Failed to generate PDF report: {e}")
         pdf_bytes = None
 
     # Prepare email content
-    subject = f"ðŸ“ Daily Report: {job['title']}"
+    subject = f"📝 Daily Report: {job['title']}"
     body = f"""
     DAILY FIELD REPORT
     
@@ -1976,7 +1976,7 @@ def send_daily_report_email(job, tech, location, report_data):
         try:
             html_body = build_admin_email_html(
                 "Daily Field Report",
-                f"A daily field report was submitted for â€œ{job['title']}â€.",
+                f"A daily field report was submitted for “{job['title']}”.",
                 [
                     ("Job", job['title']),
                     ("Technician", tech['name'] if tech else 'Unknown'),
@@ -2011,7 +2011,7 @@ def send_daily_report_email(job, tech, location, report_data):
             server.send_message(msg)
             
         server.quit()
-        st.toast("ðŸ“§ Daily Report sent to Admins", icon="âœ…")
+        st.toast("📧 Daily Report sent to Admins", icon="✅")
     except Exception as e:
         st.error(f"Failed to send daily report email: {str(e)}")
 
@@ -2071,7 +2071,7 @@ def send_daily_reminders():
                 continue
 
             # Compose Email
-            subject = f"ðŸ“… Daily Assignment Reminder - {today_str}"
+            subject = f"📅 Daily Assignment Reminder - {today_str}"
             
             job_list_text = ""
             for job in active_jobs:
@@ -2114,7 +2114,7 @@ Please check the 5G Security Job Board for full details and to log your work.
         save_state(invalidate_briefing=False)
         
         if techs_emailed > 0:
-            st.toast(f"ðŸ“§ Sent daily reminders to {techs_emailed} technicians.", icon="âœ…")
+            st.toast(f"📧 Sent daily reminders to {techs_emailed} technicians.", icon="✅")
             
     except Exception as e:
         pass
@@ -2123,7 +2123,7 @@ def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
     api_key = get_api_key()
     if not api_key:
-        return "âš ï¸ API Key missing. Please set GEMINI_API_KEY in secrets.toml or environment."
+        return "⚠️ API Key missing. Please set GEMINI_API_KEY in secrets.toml or environment."
     
     if not st.session_state.jobs:
         return "No active jobs to analyze. Please add jobs via the 'New Job' button."
@@ -2176,14 +2176,14 @@ def generate_morning_briefing():
     except Exception as e:
         err_msg = str(e)
         if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
-            return "â³ **System is currently busy (Rate Limit or Quota Reached).** \n\nPlease wait a minute and click 'Refresh Briefing' below to try again. If you just upgraded to 'Paid 1', it may take a few minutes to fully activate across all regions."
+            return "⏳ **System is currently busy (Rate Limit or Quota Reached).** \n\nPlease wait a minute and click 'Refresh Briefing' below to try again. If you just upgraded to 'Paid 1', it may take a few minutes to fully activate across all regions."
         
         # Help text for Paid 1 users or other errors
         help_tip = ""
         if "API_KEY_INVALID" in err_msg:
-            help_tip = "\n\nðŸ’¡ **Tip:** Your API Key appears to be invalid. Check AI Studio settings."
+            help_tip = "\n\n💡 **Tip:** Your API Key appears to be invalid. Check AI Studio settings."
         elif "PERMISSION_DENIED" in err_msg:
-            help_tip = "\n\nðŸ’¡ **Tip:** Permission denied. If you just upgraded to 'Paid 1', it may take a few minutes to activate."
+            help_tip = "\n\n💡 **Tip:** Permission denied. If you just upgraded to 'Paid 1', it may take a few minutes to activate."
             
         return f"Error generating briefing: {err_msg}{help_tip}"
 
@@ -2209,19 +2209,19 @@ def add_job_dialog():
         
         # Location Selection
         loc_map = {l['name']: l['id'] for l in st.session_state.locations}
-        loc_options = list(loc_map.keys()) + ["âž• New Location"]
+        loc_options = list(loc_map.keys()) + ["➕ New Location"]
         loc_selection = st.selectbox("Location", loc_options)
         
-        # New Location Fields (will be used if "âž• New Location" selected)
+        # New Location Fields (will be used if "➕ New Location" selected)
         st.write("---")
-        with st.expander("New Location Details", expanded=(loc_selection == "âž• New Location")):
+        with st.expander("New Location Details", expanded=(loc_selection == "➕ New Location")):
             new_loc_name = st.text_input("New Location Name")
             new_loc_address = st.text_input("New Location Address")
             new_loc_maps = st.text_input("Google Maps Link (Optional)")
         
         # Multiple Site Contacts
         st.write("---")
-        st.write("###### ðŸ‘¥ Site Contacts")
+        st.write("###### 👥 Site Contacts")
         c1, c2 = st.columns(2)
         contact1_name = c1.text_input("Primary Contact Name")
         contact1_phone = c1.text_input("Primary Contact Phone")
@@ -2248,14 +2248,14 @@ def add_job_dialog():
 
         # Document Upload
         st.write("---")
-        st.write("###### ðŸ“„ Job Documents")
+        st.write("###### 📄 Job Documents")
         uploaded_docs = st.file_uploader("Upload Floorplans, Maps, or Docs (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'])
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
             # Handle Inline Location Creation
             final_loc_id = None
-            if loc_selection == "âž• New Location":
+            if loc_selection == "➕ New Location":
                 if new_loc_name and new_loc_address:
                     existing_ids = [int(l['id'][1:]) for l in st.session_state.locations if l['id'].startswith('l') and l['id'][1:].isdigit()]
                     next_id = (max(existing_ids) if existing_ids else 0) + 1
@@ -2327,9 +2327,9 @@ def add_job_dialog():
             save_state()  # Save changes
             
             if email_status_msg:
-                st.toast(email_status_msg, icon="â„¹ï¸")
+                st.toast(email_status_msg, icon="ℹ️")
             else:
-                st.toast("Job created successfully!", icon="âœ…")
+                st.toast("Job created successfully!", icon="✅")
                 
             st.rerun()
 
@@ -2423,7 +2423,7 @@ def edit_job_dialog(job_id):
         
         # Site Contacts
         st.write("---")
-        st.write("###### ðŸ‘¥ Site Contacts")
+        st.write("###### 👥 Site Contacts")
         job_contacts = job.get('contacts', [])
         c1, c2 = st.columns(2)
         
@@ -2444,13 +2444,13 @@ def edit_job_dialog(job_id):
 
         # Document Upload
         st.write("---")
-        st.write("###### ðŸ“„ Job Documents")
+        st.write("###### 📄 Job Documents")
         existing_docs = job.get('documents', [])
         if existing_docs:
             for i, d in enumerate(existing_docs):
                 c_d1, c_d2 = st.columns([4, 1])
-                c_d1.write(f"ðŸ“Ž {d['name']}")
-                if c_d2.button("ðŸ—‘ï¸", key=f"del_doc_{job_id}_{i}"):
+                c_d1.write(f"📎 {d['name']}")
+                if c_d2.button("🗑️", key=f"del_doc_{job_id}_{i}"):
                     existing_docs.pop(i)
                     st.session_state.jobs[job_index]['documents'] = existing_docs
                     save_state(invalidate_briefing=False)
@@ -2496,7 +2496,7 @@ def edit_job_dialog(job_id):
                 st.session_state.briefing = "Data required to generate briefing."
                 save_state()  # Save changes
                 
-                st.toast("Job updated successfully!", icon="âœ…")
+                st.toast("Job updated successfully!", icon="✅")
                 st.rerun()
             else:
                 st.error("Title is required.")
@@ -2544,15 +2544,15 @@ def render_completion_confirmation(job_index, report_payload):
 
     completion_loc = get_location(job['locationId'])
     if completion_loc and not location_has_system_info(completion_loc):
-        st.error("ðŸ” No system info (logins / IPs) has been recorded for this site. Please fill out the **IPs & Passwords** tab before closing the job.")
+        st.error("🔐 No system info (logins / IPs) has been recorded for this site. Please fill out the **IPs & Passwords** tab before closing the job.")
 
-    st.write("#### âœ… Completion Checklist")
+    st.write("#### ✅ Completion Checklist")
 
-    c1 = st.checkbox("ðŸ§¹ Messes Cleaned")
-    c2 = st.checkbox("ðŸ§± Tiles Replaced")
-    c3 = st.checkbox("ðŸ—‘ï¸ Trash Taken Out")
+    c1 = st.checkbox("🧹 Messes Cleaned")
+    c2 = st.checkbox("🧱 Tiles Replaced")
+    c3 = st.checkbox("🗑️ Trash Taken Out")
 
-    st.write("#### âœï¸ Customer Signature")
+    st.write("#### ✍️ Customer Signature")
     signature_data = None
 
     if HAS_CANVAS:
@@ -2573,7 +2573,7 @@ def render_completion_confirmation(job_index, report_payload):
         st.warning("Signature pad not available (library missing). Please type name below.")
         signed_name = st.text_input("Customer Name (Signed)")
 
-    st.write("#### ðŸ“ Final Notes")
+    st.write("#### 📝 Final Notes")
     final_note = st.text_area("Add any final closing notes (optional):")
 
     c_confirm, c_cancel = st.columns(2)
@@ -2633,7 +2633,7 @@ def render_completion_confirmation(job_index, report_payload):
         st.success("Job Completed & Closed!")
         st.rerun()
 
-    if c_cancel.button("âŒ Cancel & Discard Report"):
+    if c_cancel.button("❌ Cancel & Discard Report"):
         if f"completion_pending_{job['id']}" in st.session_state:
             del st.session_state[f"completion_pending_{job['id']}"]
         st.rerun(scope="fragment")
@@ -2654,7 +2654,7 @@ def render_edit_report_view(job_id, report_id):
     report = job['reports'][report_index]
 
     with st.form(key=f"edit_report_form_{report_id}"):
-        st.write(f"### âœï¸ Editing Daily Report")
+        st.write(f"### ✏️ Editing Daily Report")
         st.caption(f"Report from {report['timestamp'][:16]}")
         
         r_col1, r_col2 = st.columns(2)
@@ -2762,9 +2762,9 @@ def job_details_dialog(job_id):
         if loc:
             map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
             if map_url:
-                st.markdown(f"ðŸ“ **[{loc['name']}]({map_url})**")
+                st.markdown(f"📍 **[{loc['name']}]({map_url})**")
             else:
-                st.markdown(f"ðŸ“ **{loc['name']}**")
+                st.markdown(f"📍 **{loc['name']}**")
             
             # Weather Widget
             weather_info = ""
@@ -2796,12 +2796,12 @@ def job_details_dialog(job_id):
             
             st.caption(f"{loc['address']}{weather_info}")
         else:
-             st.caption(f"ðŸ“ Unknown | ðŸ‘¤ {tech['name'] if tech else 'Unassigned'}")
+             st.caption(f"📍 Unknown | 👤 {tech['name'] if tech else 'Unassigned'}")
         
         # MAILTO LINK BUTTON: Provides manual alternative if SMTP is missing
         if tech and loc:
             mailto_url = create_mailto_link(job, tech, loc)
-            st.link_button("ðŸ“§ Email Assignment to Tech", mailto_url)
+            st.link_button("📧 Email Assignment to Tech", mailto_url)
             
         # Resolve Contact Info (Job override > Location default)
         job_contacts = job.get('contacts', [])
@@ -2811,13 +2811,13 @@ def job_details_dialog(job_id):
         contact_phone = None
 
         if job_contacts:
-            st.write("###### ðŸ‘¥ Site Contacts")
+            st.write("###### 👥 Site Contacts")
             for c in job_contacts:
                 col_c1, col_c2 = st.columns([2, 1])
                 col_c1.write(f"**{c['label']}:** {c['name']}")
                 if c.get('phone'):
                     clean_phone = re.sub(r'\D', '', c['phone'])
-                    col_c2.link_button(f"ðŸ“ž Call", f"tel:{clean_phone}", use_container_width=True)
+                    col_c2.link_button(f"📞 Call", f"tel:{clean_phone}", use_container_width=True)
                 else:
                     col_c2.write("")
             
@@ -2832,9 +2832,9 @@ def job_details_dialog(job_id):
             # CONTACT CALL BUTTON
             if contact_phone:
                 clean_phone = re.sub(r'\D', '', contact_phone)
-                st.link_button(f"ðŸ“ž Call {contact_name or 'Contact'}", f"tel:{clean_phone}")
+                st.link_button(f"📞 Call {contact_name or 'Contact'}", f"tel:{clean_phone}")
             elif contact_name:
-                st.write(f"ðŸ‘¤ {contact_name}")
+                st.write(f"👤 {contact_name}")
 
         # COPY JOB INFO BLOCK
         copy_text = f"""Job: {job['title']}
@@ -2847,7 +2847,7 @@ Desc: {job['description']}"""
         ics_data = create_ics_file(job, loc)
         if ics_data:
             st.download_button(
-                label="ðŸ“… Add to Calendar",
+                label="📅 Add to Calendar",
                 data=ics_data,
                 file_name=f"job_{job['id']}.ics",
                 mime="text/calendar",
@@ -2864,12 +2864,12 @@ Desc: {job['description']}"""
 
         if relevant_report:
             # Use a button to trigger PDF generation to avoid slow renders
-            if st.button("ðŸ“„ Prepare Report PDF"):
+            if st.button("📄 Prepare Report PDF"):
                 with st.spinner("Generating PDF..."):
                     pdf_data = generate_job_pdf(job, tech, loc, relevant_report)
                     if pdf_data:
                         st.download_button(
-                            label="â¬‡ï¸ Download PDF Now",
+                            label="⬇️ Download PDF Now",
                             data=pdf_data,
                             file_name=f"JobReport_{job['id']}.pdf",
                             mime="application/pdf",
@@ -2893,25 +2893,25 @@ Desc: {job['description']}"""
 
     # Flag the credentials tab when nothing is recorded yet so it doesn't get forgotten
     has_sys_info = location_has_system_info(loc)
-    creds_tab_label = "ðŸ” IPs & Passwords" if has_sys_info else "âš ï¸ IPs & Passwords"
-    tab_history, tab_photos, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["ðŸ“‹ Details & History", "ðŸ–¼ï¸ Photos", "ðŸ“„ Documents", "ðŸ“¸ In-Progress", "ðŸ“ Daily Report", creds_tab_label])
+    creds_tab_label = "🔐 IPs & Passwords" if has_sys_info else "⚠️ IPs & Passwords"
+    tab_history, tab_photos, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "🖼️ Photos", "📄 Documents", "📸 In-Progress", "📝 Daily Report", creds_tab_label])
 
     with tab_docs:
-        st.write("#### ðŸ“„ Documents")
+        st.write("#### 📄 Documents")
         st.caption("Floorplans, maps, and reference documents. Site documents follow the location across every job.")
 
-        with st.expander("âž• Upload New Document"):
+        with st.expander("➕ Upload New Document"):
             dest_options = []
             if loc:
-                dest_options.append(f"ðŸ¢ Site â€” {loc['name']} (shared across all its jobs)")
-            dest_options.append("ðŸ“‹ This job only")
+                dest_options.append(f"🏢 Site — {loc['name']} (shared across all its jobs)")
+            dest_options.append("📋 This job only")
             dest_choice = st.radio("Save to", dest_options, key=f"doc_dest_{job_id}")
 
             new_uploaded_docs = st.file_uploader("Select files (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'], key=f"tab_docs_upload_{job_id}")
             if st.button("Save Uploaded Documents", key=f"btn_save_tab_docs_{job_id}"):
                 if new_uploaded_docs:
                     with st.spinner("Uploading..."):
-                        to_site = bool(loc) and dest_choice.startswith("ðŸ¢")
+                        to_site = bool(loc) and dest_choice.startswith("🏢")
                         folder = f"locations/{loc['id']}/docs" if to_site else f"jobs/{job_id}/docs"
                         new_keys = []
                         for f in new_uploaded_docs:
@@ -2941,17 +2941,17 @@ Desc: {job['description']}"""
                 if ext in ['jpg', 'jpeg', 'png']:
                     st.image(url, width=200)
 
-                d_col2.link_button("ðŸ‘ï¸ View / Download", url, use_container_width=True)
+                d_col2.link_button("👁️ View / Download", url, use_container_width=True)
                 if allow_move_to_site and loc:
-                    if d_col2.button("ðŸ¢ Move to Site", key=f"mv_doc_{key_suffix}", use_container_width=True, help="Share this document across every job at this location"):
+                    if d_col2.button("🏢 Move to Site", key=f"mv_doc_{key_suffix}", use_container_width=True, help="Share this document across every job at this location"):
                         loc.setdefault('documents', []).append(d)
                         job['documents'] = [x for x in job.get('documents', []) if x['key'] != d['key']]
                         save_state(invalidate_briefing=False)
-                        st.toast(f"'{d['name']}' moved to site documents", icon="ðŸ¢")
+                        st.toast(f"'{d['name']}' moved to site documents", icon="🏢")
                         st.rerun(scope="fragment")
 
         if loc:
-            st.write(f"##### ðŸ¢ Site Documents â€” {loc['name']}")
+            st.write(f"##### 🏢 Site Documents — {loc['name']}")
             site_docs = loc.get('documents', [])
             if not site_docs:
                 st.caption("No site documents yet. Floorplans and as-builts belong here.")
@@ -2959,7 +2959,7 @@ Desc: {job['description']}"""
                 render_doc_row(d, f"site_{i}")
             st.divider()
 
-        st.write("##### ðŸ“‹ This Job's Documents")
+        st.write("##### 📋 This Job's Documents")
         docs = job.get('documents', [])
         if not docs:
             st.caption("No documents on this job.")
@@ -2967,7 +2967,7 @@ Desc: {job['description']}"""
             render_doc_row(d, f"job_{i}", allow_move_to_site=True)
 
     with tab_photos:
-        st.write("#### ðŸ–¼ï¸ All Job Photos")
+        st.write("#### 🖼️ All Job Photos")
         # Gather every photo/PDF across all history entries, newest first
         photo_entries = []
         seen_photo_keys = set()
@@ -2995,14 +2995,14 @@ Desc: {job['description']}"""
                 with p_cols[i % 3]:
                     url = resolve_image_source(pe['key'])
                     p_tech = get_tech(pe['techId'])
-                    cap = f"{pe['timestamp'][:10]} Â· {p_tech['name'] if p_tech else 'Unknown'}"
+                    cap = f"{pe['timestamp'][:10]} · {p_tech['name'] if p_tech else 'Unknown'}"
                     if isinstance(pe['key'], str) and pe['key'].lower().endswith('.pdf'):
-                        st.link_button(f"ðŸ“„ PDF â€” {cap}", url, use_container_width=True)
+                        st.link_button(f"📄 PDF — {cap}", url, use_container_width=True)
                     else:
                         st.image(url, caption=cap, use_container_width=True)
 
     with tab_creds:
-        st.write("#### ðŸ” Site Systems & Network Info")
+        st.write("#### 🔐 Site Systems & Network Info")
         st.caption("Logins, IPs, and notes for the systems at this location. Saved to the location, shared across all its jobs.")
 
         if not loc:
@@ -3043,7 +3043,7 @@ Desc: {job['description']}"""
             systems = loc.get('systems', [])
             current_user_email = st.session_state.user_info.get('email', 'unknown') if "user_info" in st.session_state else 'unknown'
 
-            with st.expander("âž• Add a System", expanded=not systems):
+            with st.expander("➕ Add a System", expanded=not systems):
                 with st.form(key=f"add_system_form_{job_id}", clear_on_submit=True):
                     sys_type = st.selectbox("System Type", SYSTEM_PRESETS)
                     custom_name = st.text_input("Custom Name (optional)", placeholder="e.g. Front Desk NVR")
@@ -3055,7 +3055,7 @@ Desc: {job['description']}"""
                         new_pass = st.text_input("Password")
                         new_notes = st.text_input("Notes", placeholder="Port, VLAN, where it lives...")
 
-                    if st.form_submit_button("ðŸ’¾ Save System", use_container_width=True):
+                    if st.form_submit_button("💾 Save System", use_container_width=True):
                         if not (new_user or new_pass or new_ip or new_notes):
                             st.warning("Please fill in at least one field.")
                         else:
@@ -3079,7 +3079,7 @@ Desc: {job['description']}"""
 
             for s in systems:
                 with st.container(border=True):
-                    st.markdown(f"**ðŸ–¥ï¸ {s.get('name', 'System')}**")
+                    st.markdown(f"**🖥️ {s.get('name', 'System')}**")
                     d1, d2 = st.columns(2)
                     with d1:
                         if s.get('username'):
@@ -3099,7 +3099,7 @@ Desc: {job['description']}"""
                     if s.get('updated_at'):
                         st.caption(f"Last updated {s['updated_at'][:16]} by {s.get('updated_by', 'unknown')}")
 
-                    with st.expander("âœï¸ Edit / Delete"):
+                    with st.expander("✏️ Edit / Delete"):
                         with st.form(key=f"edit_sys_form_{s['id']}"):
                             e_name = st.text_input("System Name", value=s.get('name', ''))
                             e1, e2 = st.columns(2)
@@ -3111,7 +3111,7 @@ Desc: {job['description']}"""
                                 e_notes = st.text_input("Notes", value=s.get('notes', ''))
 
                             ec1, ec2 = st.columns(2)
-                            if ec1.form_submit_button("ðŸ’¾ Update"):
+                            if ec1.form_submit_button("💾 Update"):
                                 s.update({
                                     'name': e_name,
                                     'username': e_user,
@@ -3125,11 +3125,11 @@ Desc: {job['description']}"""
                                 st.success("System updated!")
                                 st.rerun(scope="fragment")
 
-                            if ec2.form_submit_button("ðŸ—‘ï¸ Delete System"):
+                            if ec2.form_submit_button("🗑️ Delete System"):
                                 loc['systems'] = [x for x in loc['systems'] if x['id'] != s['id']]
                                 get_logger().log(f"{current_user_email} deleted system '{s.get('name')}' from location {loc['id']}")
                                 save_state(invalidate_briefing=False)
-                                st.toast(f"'{s.get('name')}' deleted", icon="ðŸ—‘ï¸")
+                                st.toast(f"'{s.get('name')}' deleted", icon="🗑️")
                                 st.rerun(scope="fragment")
 
     with tab_history:
@@ -3140,22 +3140,22 @@ Desc: {job['description']}"""
             site_jobs = [sj for sj in st.session_state.jobs if sj['locationId'] == loc['id'] and sj['id'] != job_id]
             if site_jobs:
                 site_jobs.sort(key=lambda x: x.get('date', ''), reverse=True)
-                with st.expander(f"ðŸ¢ Site History â€” {len(site_jobs)} other job(s) at {loc['name']}"):
+                with st.expander(f"🏢 Site History — {len(site_jobs)} other job(s) at {loc['name']}"):
                     for sj in site_jobs:
                         sj_tech = get_tech(sj['techId'])
-                        status_icon = "âœ…" if sj['status'] == 'Completed' else "ðŸ”§"
+                        status_icon = "✅" if sj['status'] == 'Completed' else "🔧"
                         sh_c1, sh_c2 = st.columns([4, 1])
-                        sh_c1.markdown(f"{status_icon} **{sj['title']}** ({sj['status']}) â€” {sj.get('date', '')[:10]} Â· ðŸ‘¤ {sj_tech['name'] if sj_tech else 'Unassigned'}")
+                        sh_c1.markdown(f"{status_icon} **{sj['title']}** ({sj['status']}) — {sj.get('date', '')[:10]} · 👤 {sj_tech['name'] if sj_tech else 'Unassigned'}")
                         last_note = next((r.get('content') for r in reversed(sj.get('reports', [])) if r.get('content')), None)
                         if last_note:
-                            sh_c1.caption(f"Last note: {last_note[:120]}{'â€¦' if len(last_note) > 120 else ''}")
+                            sh_c1.caption(f"Last note: {last_note[:120]}{'…' if len(last_note) > 120 else ''}")
                         if sh_c2.button("Open", key=f"site_hist_open_{sj['id']}", use_container_width=True):
                             # Can't open a dialog from inside a dialog - hand off to main()
                             st.session_state["_open_job_after_rerun"] = sj['id']
                             st.rerun()
 
         st.divider()
-        st.write("#### ðŸ“œ History")
+        st.write("#### 📜 History")
         if not job['reports']:
             st.info("No reports filed yet.")
         
@@ -3191,7 +3191,7 @@ Desc: {job['description']}"""
                 hdr_main.markdown(f"**{r_tech['name'] if r_tech else 'Unknown'}** - {r['timestamp'][:16]}")
 
                 if can_manage:
-                    with hdr_move.popover("â†ªï¸ Move"):
+                    with hdr_move.popover("↪️ Move"):
                         st.caption("Filed under the wrong job? Move this entry (notes & photos) to the correct one.")
                         other_jobs = {j['id']: j for j in st.session_state.jobs if j['id'] != job_id}
                         if not other_jobs:
@@ -3200,7 +3200,7 @@ Desc: {job['description']}"""
                             def _fmt_job_option(jid):
                                 j = other_jobs[jid]
                                 j_loc = get_location(j['locationId'])
-                                return f"{j['title']} â€” {j_loc['name'] if j_loc else 'No location'}"
+                                return f"{j['title']} — {j_loc['name'] if j_loc else 'No location'}"
 
                             target_id = st.selectbox("Move to job:", list(other_jobs.keys()), format_func=_fmt_job_option, key=f"move_target_{r['id']}")
                             if st.button("Confirm Move", key=f"move_btn_{r['id']}", type="primary", use_container_width=True):
@@ -3210,36 +3210,36 @@ Desc: {job['description']}"""
                                     st.session_state.jobs[job_index]['reports'] = [x for x in st.session_state.jobs[job_index]['reports'] if x['id'] != r['id']]
                                     get_logger().log(f"{user_email} moved report {r['id']} from job {job_id} to job {target_id}")
                                     save_state(invalidate_briefing=False)
-                                    st.toast(f"Entry moved to '{other_jobs[target_id]['title']}'", icon="â†ªï¸")
+                                    st.toast(f"Entry moved to '{other_jobs[target_id]['title']}'", icon="↪️")
                                     st.rerun(scope="fragment")
 
                     del_confirm_key = f"confirm_del_report_{r['id']}"
-                    if hdr_del.button("ðŸ—‘ï¸", key=f"del_rep_{r['id']}", help="Delete this entry"):
+                    if hdr_del.button("🗑️", key=f"del_rep_{r['id']}", help="Delete this entry"):
                         st.session_state[del_confirm_key] = True
                         st.rerun(scope="fragment")
 
                     if st.session_state.get(del_confirm_key):
                         st.warning("Permanently delete this entry? Its notes and photos will be removed from the job history.")
                         dc1, dc2 = st.columns(2)
-                        if dc1.button("âœ… Yes, Delete", key=f"del_yes_{r['id']}", type="primary", use_container_width=True):
+                        if dc1.button("✅ Yes, Delete", key=f"del_yes_{r['id']}", type="primary", use_container_width=True):
                             st.session_state.jobs[job_index]['reports'] = [x for x in st.session_state.jobs[job_index]['reports'] if x['id'] != r['id']]
                             get_logger().log(f"{user_email} deleted report {r['id']} from job {job_id}")
                             del st.session_state[del_confirm_key]
                             save_state(invalidate_briefing=False)
-                            st.toast("Entry deleted", icon="ðŸ—‘ï¸")
+                            st.toast("Entry deleted", icon="🗑️")
                             st.rerun(scope="fragment")
-                        if dc2.button("âŒ Cancel", key=f"del_no_{r['id']}", use_container_width=True):
+                        if dc2.button("❌ Cancel", key=f"del_no_{r['id']}", use_container_width=True):
                             del st.session_state[del_confirm_key]
                             st.rerun(scope="fragment")
                 
                 if is_daily_report:
                     h1, h2, h3 = st.columns(3)
-                    h1.caption(f"ðŸ•’ Hours: {r.get('hoursWorked')}")
-                    h2.caption(f"â° In: {r.get('timeArrived')}")
-                    h3.caption(f"â° Out: {r.get('timeDeparted')}")
+                    h1.caption(f"🕒 Hours: {r.get('hoursWorked')}")
+                    h2.caption(f"⏰ In: {r.get('timeArrived')}")
+                    h3.caption(f"⏰ Out: {r.get('timeDeparted')}")
                     
                     if is_admin and not is_completion:
-                        if st.button("âœï¸ Edit Report", key=f"edit_rep_{r['id']}"):
+                        if st.button("✏️ Edit Report", key=f"edit_rep_{r['id']}"):
                             st.session_state[f"editing_report_{job_id}"] = r['id']
                             st.rerun(scope="fragment")
                 
@@ -3247,7 +3247,7 @@ Desc: {job['description']}"""
                     st.write(r['content'])
                     
                 if r.get('partsUsed'):
-                    st.caption(f"ðŸ”© Parts: {r['partsUsed']}")
+                    st.caption(f"🔩 Parts: {r['partsUsed']}")
 
                 if r['photos']:
                     cols = st.columns(4)
@@ -3260,17 +3260,17 @@ Desc: {job['description']}"""
                                 is_pdf = True
                             
                             if is_pdf:
-                                st.link_button("ðŸ“„ View PDF", url, use_container_width=True)
+                                st.link_button("📄 View PDF", url, use_container_width=True)
                             else:
                                 st.image(url, use_container_width=True)
 
     with tab_progress:
-        st.write("#### ðŸ“¸ Quick Update")
+        st.write("#### 📸 Quick Update")
         st.caption("Add photos and notes while working. These save to history immediately.")
         
         # Quick Status Buttons
         qs_cols = st.columns(4)
-        status_opts = [("ðŸš— En Route", "En Route to Site"), ("ðŸ“ Arrived", "Arrived on Site"), ("ðŸ¥ª Lunch", "On Lunch Break"), ("âœ… Done for Day", "Finished for the day")]
+        status_opts = [("🚗 En Route", "En Route to Site"), ("📍 Arrived", "Arrived on Site"), ("🥪 Lunch", "On Lunch Break"), ("✅ Done for Day", "Finished for the day")]
         
         for i, (label, note_text) in enumerate(status_opts):
             if qs_cols[i].button(label, key=f"qs_{i}_{job_id}"):
@@ -3287,15 +3287,15 @@ Desc: {job['description']}"""
                 st.session_state.jobs[job_index]['reports'].append(report_payload)
                 
                 # Auto-update status for Arrived
-                if label == "ðŸ“ Arrived" and job['status'] in ['Pending', 'Not Started']:
+                if label == "📍 Arrived" and job['status'] in ['Pending', 'Not Started']:
                     st.session_state.jobs[job_index]['status'] = 'In Progress'
                 
                 save_state()
-                st.toast(f"Status updated: {label}", icon="âœ…")
+                st.toast(f"Status updated: {label}", icon="✅")
                 st.rerun(scope="fragment")
 
         # Voice Note Feature
-        audio_val = st.audio_input("ðŸŽ™ï¸ Record Voice Note", key=f"audio_prog_{job_id}")
+        audio_val = st.audio_input("🎙️ Record Voice Note", key=f"audio_prog_{job_id}")
         transcribed_text = ""
         if audio_val:
             with st.spinner("Transcribing..."):
@@ -3356,7 +3356,7 @@ Desc: {job['description']}"""
         if confirm_key in st.session_state:
             payload = st.session_state[confirm_key]
             
-            st.warning("âš ï¸ **Review & Confirm Daily Report**")
+            st.warning("⚠️ **Review & Confirm Daily Report**")
             st.info("Please double-check your times, photos, and notes below before sending to Admins.")
             
             with st.container(border=True):
@@ -3368,7 +3368,7 @@ Desc: {job['description']}"""
                     st.markdown(f"**Photos:** {len(payload['photos'])} attached")
             
             c_yes, c_no = st.columns(2)
-            if c_yes.button("âœ… Yes, Send Email", key="conf_yes", type="primary"):
+            if c_yes.button("✅ Yes, Send Email", key="conf_yes", type="primary"):
                 # Send Email
                 send_daily_report_email(job, tech, loc, payload)
                 
@@ -3381,20 +3381,20 @@ Desc: {job['description']}"""
                 st.success("Report Sent & Saved!")
                 st.rerun(scope="fragment")
                 
-            if c_no.button("âŒ Cancel", key="conf_no"):
+            if c_no.button("❌ Cancel", key="conf_no"):
                 del st.session_state[confirm_key]
                 st.rerun(scope="fragment")
             
             st.divider()
 
-        st.write("#### ðŸ“ Daily Field Report")
+        st.write("#### 📝 Daily Field Report")
         st.caption("End of day reporting. Submit labor hours, parts, and finalize status.")
 
         if loc and not has_sys_info:
-            st.warning("ðŸ” No system info (logins / IPs) is saved for this site yet. Take a minute to fill out the **IPs & Passwords** tab while you're on site.")
+            st.warning("🔐 No system info (logins / IPs) is saved for this site yet. Take a minute to fill out the **IPs & Passwords** tab while you're on site.")
         
         # Voice Note Feature for Daily Report
-        audio_daily = st.audio_input("ðŸŽ™ï¸ Record Summary", key=f"audio_daily_{job_id}")
+        audio_daily = st.audio_input("🎙️ Record Summary", key=f"audio_daily_{job_id}")
         daily_transcribed = ""
         if audio_daily:
             with st.spinner("Transcribing..."):
@@ -3402,13 +3402,13 @@ Desc: {job['description']}"""
                 if daily_transcribed:
                     st.success("Audio Transcribed!")
 
-        # Prefill arrival/finish times from today's quick-status taps ("ðŸ“ Arrived" / "âœ… Done for Day")
+        # Prefill arrival/finish times from today's quick-status taps ("📍 Arrived" / "✅ Done for Day")
         today_prefix = now_local().strftime('%Y-%m-%d')
         default_arrived = datetime.time(8, 0)
         default_departed = datetime.time(17, 0)
         times_prefilled = False
         for qr in job['reports']:
-            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[ðŸ“ Arrived]'):
+            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[📍 Arrived]'):
                 try:
                     default_arrived = datetime.datetime.fromisoformat(qr['timestamp']).time().replace(second=0, microsecond=0)
                     times_prefilled = True
@@ -3416,7 +3416,7 @@ Desc: {job['description']}"""
                     pass
                 break
         for qr in reversed(job['reports']):
-            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[âœ… Done for Day]'):
+            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[✅ Done for Day]'):
                 try:
                     default_departed = datetime.datetime.fromisoformat(qr['timestamp']).time().replace(second=0, microsecond=0)
                     times_prefilled = True
@@ -3425,7 +3425,7 @@ Desc: {job['description']}"""
                 break
 
         if times_prefilled:
-            st.caption("â±ï¸ Times below were prefilled from your quick-status taps today â€” adjust if needed.")
+            st.caption("⏱️ Times below were prefilled from your quick-status taps today — adjust if needed.")
 
         with st.form(key=f"daily_form_{job_id}"):
             status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged", "Completed"]
@@ -3473,14 +3473,14 @@ Desc: {job['description']}"""
             todays_photos = list(todays_photos_set)
             
             if todays_photos:
-                st.info(f"ðŸ“¸ {len(todays_photos)} photos taken today via 'In-Progress' updates will be automatically attached.")
+                st.info(f"📸 {len(todays_photos)} photos taken today via 'In-Progress' updates will be automatically attached.")
             
             # Allow adding more photos directly here
             daily_photos = st.file_uploader("Attach Additional Photos/Docs (Optional)", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf'], key=f"daily_up_{job_id}")
 
             f_c1, f_c2 = st.columns(2)
             submit_btn = f_c1.form_submit_button("Submit Daily Report")
-            email_btn = f_c2.form_submit_button("ðŸ“§ Email Report to Admins")
+            email_btn = f_c2.form_submit_button("📧 Email Report to Admins")
 
             if submit_btn or email_btn:
                 # Process any new photos uploaded directly in this form
@@ -3554,12 +3554,12 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     status_bg = get_status_color(job['status'])
     
     map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
-    loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">ðŸ“ {loc_name}</a>' if map_url else f"ðŸ“ {loc_name}"
+    loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {loc_name}</a>' if map_url else f"📍 {loc_name}"
 
     stale_days = get_job_stale_days(job)
     stale_html = ""
     if stale_days is not None and stale_days >= STALE_JOB_DAYS:
-        stale_html = f'<div style="color:#f87171; font-size:0.8em; margin-top:6px; font-weight:bold;">ðŸš¨ No updates in {stale_days} days</div>'
+        stale_html = f'<div style="color:#f87171; font-size:0.8em; margin-top:6px; font-weight:bold;">🚨 No updates in {stale_days} days</div>'
 
     with st.container():
         st.markdown(f"""
@@ -3573,8 +3573,8 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             </div>
             <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_html}</div>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
-                 <span>ðŸ‘¤ {tech_name}</span>
-                 <span>ðŸ“… {'ðŸ—“ï¸ ' + job['date'][:10]}</span>
+                 <span>👤 {tech_name}</span>
+                 <span>📅 {'🗓️ ' + job['date'][:10]}</span>
             </div>
             {stale_html}
         </div>
@@ -3607,10 +3607,10 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
                     job_details_dialog(job['id'])
             with c2:
-                if st.button("âœï¸", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
+                if st.button("✏️", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
                     edit_job_dialog(job['id'])
             with c3:
-                if st.button("ðŸ—‘ï¸", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
+                if st.button("🗑️", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
                     if job in st.session_state.jobs:
                         st.session_state.jobs.remove(job)
                         save_state()
@@ -3622,7 +3622,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
 
 
 def render_analytics_dashboard():
-    st.subheader("ðŸ“Š Operational Analytics")
+    st.subheader("📊 Operational Analytics")
 
     if not st.session_state.jobs:
         st.info("No job data available.")
@@ -3674,10 +3674,10 @@ def render_analytics_dashboard():
     st.divider()
     
     # --- AI PARTS ANALYSIS ---
-    st.markdown("#### ðŸ”© AI Parts Usage Tracker")
+    st.markdown("#### 🔩 AI Parts Usage Tracker")
     st.caption("Uses Gemini to extract and aggregate parts data from unstructured technician notes.")
     
-    if st.button("ðŸ¤– Analyze Parts Usage"):
+    if st.button("🤖 Analyze Parts Usage"):
         with st.spinner("Analyzing all job reports..."):
             # 1. Gather all "Parts Used" text
             all_parts_text = []
@@ -3726,7 +3726,7 @@ def render_analytics_dashboard():
 
     st.divider()
     
-    st.markdown("#### ðŸ† Technician Leaderboard (Completed Jobs)")
+    st.markdown("#### 🏆 Technician Leaderboard (Completed Jobs)")
     completed_jobs = df[df["status"] == "Completed"]
     if not completed_jobs.empty:
         tech_map = {t["id"]: t["name"] for t in st.session_state.techs}
@@ -3767,11 +3767,11 @@ def render_hours_report():
     by_job = df.groupby(["Tech", "Job", "Location"], as_index=False)["Hours"].sum().sort_values(["Tech", "Hours"], ascending=[True, False])
     st.dataframe(by_job, use_container_width=True, hide_index=True)
 
-    with st.expander("ðŸ“„ All Entries"):
+    with st.expander("📄 All Entries"):
         st.dataframe(df.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
 
     st.download_button(
-        "â¬‡ï¸ Download CSV (all entries)",
+        "⬇️ Download CSV (all entries)",
         df.sort_values(["Date", "Tech"]).to_csv(index=False).encode("utf-8"),
         file_name=f"hours_{start_date}_{end_date}.csv",
         mime="text/csv",
@@ -3814,7 +3814,7 @@ def render_admin_panel():
             save_state(invalidate_briefing=False)
 
     # --- ADMIN ACCESS MANAGEMENT ---
-    st.subheader("ðŸ”‘ Admin Access Management")
+    st.subheader("🔑 Admin Access Management")
     with st.expander("Manage Admin Emails", expanded=False):
         st.write("Add emails that are allowed to access this Admin Panel.")
         
@@ -3839,7 +3839,7 @@ def render_admin_panel():
             for email in st.session_state.adminEmails:
                 c1, c2 = st.columns([4, 1])
                 c1.write(email)
-                if c2.button("ðŸ—‘ï¸", key=f"del_admin_{email}"):
+                if c2.button("🗑️", key=f"del_admin_{email}"):
                     st.session_state.adminEmails.remove(email)
                     save_state(invalidate_briefing=False)
                     st.rerun()
@@ -3847,7 +3847,7 @@ def render_admin_panel():
     st.divider()
 
     # --- SMTP CONFIG ---
-    st.subheader("ðŸ“§ SMTP Configuration")
+    st.subheader("📧 SMTP Configuration")
     with st.expander("Configure Email Settings", expanded=False):
         with st.form("smtp_config_form"):
             # Load existing from session or secrets
@@ -3881,7 +3881,7 @@ def render_admin_panel():
     st.divider()
 
     # --- TECH MANAGEMENT ---
-    st.subheader("ðŸ‘· Manage Technicians")
+    st.subheader("👷 Manage Technicians")
     with st.expander("Add / Remove Technicians", expanded=False):
         # Add Tech
         with st.form("add_tech_form"):
@@ -3923,11 +3923,11 @@ def render_admin_panel():
                 
                 skills_display = ""
                 if t.get('skills'):
-                    skills_display = f" | ðŸ› ï¸ {', '.join(t['skills'])}"
+                    skills_display = f" | 🛠️ {', '.join(t['skills'])}"
                     
                 c2.write(f"{t['name']}{skills_display}")
                 c3.write(t['email'])
-                if c4.button("ðŸ—‘ï¸", key=f"del_tech_{t['id']}"):
+                if c4.button("🗑️", key=f"del_tech_{t['id']}"):
                     st.session_state.techs.remove(t)
                     save_state(invalidate_briefing=False)
                     st.rerun()
@@ -3935,7 +3935,7 @@ def render_admin_panel():
     st.divider()
 
     # --- LOCATION MANAGEMENT ---
-    st.subheader("ðŸ“ Manage Locations")
+    st.subheader("📍 Manage Locations")
     with st.expander("Add / Remove Locations", expanded=False):
         # Add Location
         with st.form("add_loc_form"):
@@ -3979,14 +3979,14 @@ def render_admin_panel():
                 
                 contact_info = ""
                 if l.get('contact_name') or l.get('contact_phone'):
-                    contact_info = f" | ðŸ“ž {l.get('contact_name','')} {l.get('contact_phone','')}"
+                    contact_info = f" | 📞 {l.get('contact_name','')} {l.get('contact_phone','')}"
                     
                 c2.caption(f"{l['address']}{contact_info}")
                 
-                if c3.button("âœï¸", key=f"edit_loc_{l['id']}"):
+                if c3.button("✏️", key=f"edit_loc_{l['id']}"):
                     edit_location_dialog(l['id'])
                     
-                if c4.button("ðŸ—‘ï¸", key=f"del_loc_{l['id']}"):
+                if c4.button("🗑️", key=f"del_loc_{l['id']}"):
                     st.session_state.locations.remove(l)
                     save_state(invalidate_briefing=False)
                     st.rerun()
@@ -3996,10 +3996,10 @@ def render_admin_panel():
     st.subheader("System Maintenance")
     c_m1, c_m2 = st.columns(2)
     with c_m1:
-        if st.button("ðŸ§¹ Clear App Cache"):
+        if st.button("🧹 Clear App Cache"):
             st.cache_resource.clear()
             st.cache_data.clear()
-            st.toast("Cache cleared!", icon="ðŸ§¹")
+            st.toast("Cache cleared!", icon="🧹")
             st.rerun()
     
     st.divider()
@@ -4008,7 +4008,7 @@ def render_admin_panel():
 
     c_db1, c_db2 = st.columns(2)
     with c_db1:
-        if st.button("ðŸ”„ Reload Data from DB"):
+        if st.button("🔄 Reload Data from DB"):
             state, ver = load_state()
             st.session_state.db = state
             st.session_state._db_version = ver
@@ -4018,14 +4018,14 @@ def render_admin_panel():
             st.session_state.briefing = state["briefing"]
             st.session_state.adminEmails = state["adminEmails"]
             st.session_state.last_reminder_date = state.get("last_reminder_date")
-            st.toast("Reloaded from DB.", icon="ðŸ”„")
+            st.toast("Reloaded from DB.", icon="🔄")
             st.rerun()
 
     with c_db2:
-        if st.button("ðŸ’¾ Save to DB"):
+        if st.button("💾 Save to DB"):
             _sync_session_to_db()
             commit_from_session(invalidate_briefing=False)
-            st.toast("Saved to DB.", icon="ðŸ’¾")
+            st.toast("Saved to DB.", icon="💾")
 
     st.divider()
 
@@ -4037,17 +4037,17 @@ def render_admin_panel():
         csv_data = download_data_as_csv()
         if csv_data:
             st.download_button(
-                label="ðŸ“¥ Download Jobs CSV",
+                label="📥 Download Jobs CSV",
                 data=csv_data,
                 file_name=f"jobs_export_{now_local().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
             )
         else:
-            st.button("ðŸ“¥ Download Jobs CSV", disabled=True)
+            st.button("📥 Download Jobs CSV", disabled=True)
 
         json_data = download_data_as_json()
         st.download_button(
-            label="ðŸ“¦ Download Full Backup (JSON)",
+            label="📦 Download Full Backup (JSON)",
             data=json_data,
             file_name=f"backup_{now_local().strftime('%Y%m%d')}.json",
             mime="application/json",
@@ -4056,7 +4056,7 @@ def render_admin_panel():
     with c_bk2:
         uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"], key="restore_json")
         if uploaded_file is not None:
-            if st.button("âš ï¸ Restore from Backup", key="restore_btn"):
+            if st.button("⚠️ Restore from Backup", key="restore_btn"):
                 try:
                     data = json.load(uploaded_file)
                     required_keys = ["jobs", "techs", "locations"]
@@ -4083,14 +4083,14 @@ def render_admin_panel():
     st.divider()
 
     # --- STORAGE DEBUGGER ---
-    st.subheader("â˜ï¸ Storage Debugger (R2/S3)")
+    st.subheader("☁️ Storage Debugger (R2/S3)")
     with st.expander("Test Storage Connection", expanded=False):
         st.caption("Use this to troubleshoot photo upload issues.")
         
         from object_store import get_r2_client, get_bucket_name, HAS_BOTO3
         
         if not HAS_BOTO3:
-            st.error("âŒ `boto3` library is missing. Cannot connect to storage.")
+            st.error("❌ `boto3` library is missing. Cannot connect to storage.")
         else:
             if st.button("Test Connection"):
                 try:
@@ -4098,9 +4098,9 @@ def render_admin_panel():
                     bucket = get_bucket_name()
                     
                     if not s3:
-                        st.error("âŒ Failed to initialize S3 client. Check credentials (R2_ACCESS_KEY_ID, etc).")
+                        st.error("❌ Failed to initialize S3 client. Check credentials (R2_ACCESS_KEY_ID, etc).")
                     elif not bucket:
-                        st.error("âŒ Bucket name is missing (R2_BUCKET_NAME).")
+                        st.error("❌ Bucket name is missing (R2_BUCKET_NAME).")
                     else:
                         # Display configuration details (masked)
                         endpoint = s3.meta.endpoint_url
@@ -4111,26 +4111,26 @@ def render_admin_panel():
                         st.info(f"**Region:** `{region}`")
                         
                         if endpoint and bucket in endpoint:
-                            st.warning("âš ï¸ **Potential Configuration Issue:** The Bucket Name appears to be part of the Endpoint URL. R2 Endpoint URLs should usually end with `.r2.cloudflarestorage.com` and NOT include the bucket name.")
+                            st.warning("⚠️ **Potential Configuration Issue:** The Bucket Name appears to be part of the Endpoint URL. R2 Endpoint URLs should usually end with `.r2.cloudflarestorage.com` and NOT include the bucket name.")
 
                         # Try listing objects (lightweight check)
                         s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
-                        st.success(f"âœ… Successfully connected to bucket: `{bucket}`")
-                        st.toast("Storage connection verified!", icon="âœ…")
+                        st.success(f"✅ Successfully connected to bucket: `{bucket}`")
+                        st.toast("Storage connection verified!", icon="✅")
                 except Exception as e:
-                    st.error(f"âŒ Connection failed: {e}")
+                    st.error(f"❌ Connection failed: {e}")
                     # Check for common errors
                     if "InvalidAccessKeyId" in str(e):
-                        st.warning("ðŸ’¡ **Tip:** Double-check your Access Key ID. Ensure no leading/trailing spaces.")
+                        st.warning("💡 **Tip:** Double-check your Access Key ID. Ensure no leading/trailing spaces.")
                     elif "SignatureDoesNotMatch" in str(e):
-                        st.warning("ðŸ’¡ **Tip:** Double-check your Secret Access Key. Ensure no leading/trailing spaces.")
+                        st.warning("💡 **Tip:** Double-check your Secret Access Key. Ensure no leading/trailing spaces.")
                     elif "NoSuchBucket" in str(e):
-                        st.warning(f"ðŸ’¡ **Tip:** The bucket `{bucket}` does not exist or is not accessible with these credentials.")
+                        st.warning(f"💡 **Tip:** The bucket `{bucket}` does not exist or is not accessible with these credentials.")
                     elif "EndpointConnectionError" in str(e):
-                         st.warning("ðŸ’¡ **Tip:** Could not connect to the endpoint URL. Check for typos.")
+                         st.warning("💡 **Tip:** Could not connect to the endpoint URL. Check for typos.")
 
     # --- SYSTEM LOGS ---
-    st.subheader("ðŸ“‹ System Event Logs")
+    st.subheader("📋 System Event Logs")
     with st.expander("View Background Logs", expanded=False):
         logs = get_logger().get_logs()
         if not logs:
@@ -4142,13 +4142,13 @@ def render_admin_panel():
     st.divider()
 
     # --- ANALYTICS ---
-    st.subheader("ðŸ¤– AI Service Diagnostics")
+    st.subheader("🤖 AI Service Diagnostics")
     with st.expander("Test Gemini API Connection", expanded=False):
         st.caption("Check your API key status and model accessibility.")
         
         api_key = get_api_key()
         if not api_key:
-            st.error("âŒ No API Key found. Set `GEMINI_API_KEY` in Streamlit Secrets.")
+            st.error("❌ No API Key found. Set `GEMINI_API_KEY` in Streamlit Secrets.")
         else:
             st.code(f"Key Found: {'*' * (len(api_key)-4)}{api_key[-4:]}")
             
@@ -4156,7 +4156,7 @@ def render_admin_panel():
                 try:
                     # 1. Test Client Initialization
                     client = genai.Client(api_key=api_key)
-                    st.success("âœ… Gemini Client Initialized.")
+                    st.success("✅ Gemini Client Initialized.")
                     
                     # 2. List Models
                     with st.spinner("Fetching available models..."):
@@ -4175,39 +4175,39 @@ def render_admin_panel():
                             model=model_name, 
                             contents="Say 'Connection Successful' if you can read this."
                         )
-                        st.success(f"âœ… AI Response: {test_resp.text}")
-                        st.toast("AI System is fully operational!", icon="ðŸ¤–")
+                        st.success(f"✅ AI Response: {test_resp.text}")
+                        st.toast("AI System is fully operational!", icon="🤖")
                 
                 except Exception as e:
                     err_str = str(e)
-                    st.error(f"âŒ Diagnostic Failed: {err_str}")
+                    st.error(f"❌ Diagnostic Failed: {err_str}")
                     
                     if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                        st.warning("âš ï¸ **Rate Limit / Quota Exhausted:** If you are on the **Paid 1** tier, this usually indicates that the account has reached its burst limit or the billing upgrade is still propagating (can take 10-15 mins). On the **Free Tier**, this means you've hit the monthly or daily limit.")
+                        st.warning("⚠️ **Rate Limit / Quota Exhausted:** If you are on the **Paid 1** tier, this usually indicates that the account has reached its burst limit or the billing upgrade is still propagating (can take 10-15 mins). On the **Free Tier**, this means you've hit the monthly or daily limit.")
                     elif "API_KEY_INVALID" in err_str:
-                        st.warning("âš ï¸ **Invalid Key:** Ensure the key is copied exactly from AI Studio.")
+                        st.warning("⚠️ **Invalid Key:** Ensure the key is copied exactly from AI Studio.")
                     elif "billing" in err_str.lower() or "quota" in err_str.lower():
-                        st.warning("âš ï¸ **Quota/Billing:** Your account might have run out of free credits or billing isn't fully active yet.")
+                        st.warning("⚠️ **Quota/Billing:** Your account might have run out of free credits or billing isn't fully active yet.")
 
     st.divider()
-    st.subheader("ðŸ•’ Hours Report")
+    st.subheader("🕒 Hours Report")
     with st.expander("View Hours (Payroll / Invoicing)", expanded=False):
         render_hours_report()
 
     st.divider()
-    with st.expander("ðŸ“Š View Analytics Dashboard", expanded=False):
+    with st.expander("📊 View Analytics Dashboard", expanded=False):
         render_analytics_dashboard()
 
     st.divider()
 
     # --- SYSTEM LOGS (optional) ---
-    st.subheader("ðŸ“ System Logs")
+    st.subheader("📝 System Logs")
     with st.expander("View Background Activity", expanded=False):
         st.caption("Recent keep-awake pings and system events.")
 
         c_log1, c_log2 = st.columns([3, 1])
         with c_log2:
-            if st.button("âš¡ Test Ping Now"):
+            if st.button("⚡ Test Ping Now"):
                 endpoints = [
                     "http://localhost:8501/_stcore/health",
                     "http://127.0.0.1:8501/_stcore/health",
@@ -4217,7 +4217,7 @@ def render_admin_panel():
                     try:
                         requests.get(url, timeout=2)
                         get_logger().log(f"Manual ping successful to {url}")
-                        st.toast(f"Ping successful to {url}!", icon="âœ…")
+                        st.toast(f"Ping successful to {url}!", icon="✅")
                         success = True
                         break
                     except Exception:
@@ -4238,7 +4238,7 @@ def render_admin_panel():
         else:
             st.info("No logs recorded yet.")
 def render_chatbot():
-    st.sidebar.title("ðŸ¤– Tech Assistant")
+    st.sidebar.title("🤖 Tech Assistant")
     st.sidebar.markdown("Ask about jobs, history, or locations.")
     
     # Display History
@@ -4351,7 +4351,7 @@ def main():
     if not st.session_state.adminEmails:
         st.session_state.adminEmails.append(user_email)
         save_state()
-        st.toast(f"First login detected. {user_email} is now Super Admin.", icon="ðŸ›¡ï¸")
+        st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")
     
     is_admin = user_email in st.session_state.adminEmails
 
@@ -4367,7 +4367,7 @@ def main():
             f"""
             <div class="login-container">
                 <div class="login-box">
-                    <h1 style="color:white; margin-bottom: 10px;">ðŸš« Access Not Approved</h1>
+                    <h1 style="color:white; margin-bottom: 10px;">🚫 Access Not Approved</h1>
                     <p style="color:#a1a1aa; margin-bottom: 10px;">
                         <b>{user_email}</b> is not registered on the 5G Security Job Board.
                     </p>
@@ -4389,9 +4389,9 @@ def main():
         st.markdown("---")
         st.write(f"Logged in as: **{user_name}**")
         if is_admin:
-            st.success("ðŸ›¡ï¸ Admin Access")
+            st.success("🛡️ Admin Access")
         else:
-            st.info("ðŸ‘· Technician View")
+            st.info("👷 Technician View")
             
         if st.button("Logout", key="logout_btn"):
             logout()
@@ -4401,11 +4401,11 @@ def main():
     with c1:
         st.title("5G Security Job Board")
     with c2:
-        search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="ðŸ” Search jobs, sites, techs...")
+        search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs, sites, techs...")
     with c3:
         # Restricted Access: Only Admins can create jobs
         if is_admin:
-            if st.button("âž• New Job", use_container_width=True):
+            if st.button("➕ New Job", use_container_width=True):
                 add_job_dialog()
 
     # Filter Jobs based on search (matches title, description, location name/address, tech name)
@@ -4430,20 +4430,20 @@ def main():
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
 
     # Navigation Tabs
-    tabs_list = ["ðŸŒ… Morning Briefing", "ðŸ‘· Tech Board", "ðŸ“… Calendar", "ðŸ§° Service Calls", "ðŸ—ï¸ Projects", "ðŸ¤ Leads", "ðŸ“¦ Archive"]
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive"]
     
     if current_tech:
-        tabs_list.insert(0, "ðŸ™‹â€â™‚ï¸ My Assignments")
+        tabs_list.insert(0, "🙋‍♂️ My Assignments")
         
     if is_admin:
-        tabs_list.append("ðŸ›¡ï¸ Admin")
+        tabs_list.append("🛡️ Admin")
     
     tabs = st.tabs(tabs_list)
     tab_map = {name: tab for name, tab in zip(tabs_list, tabs)}
     
     # 0. My Assignments (Conditional)
     if current_tech:
-        with tab_map["ðŸ™‹â€â™‚ï¸ My Assignments"]:
+        with tab_map["🙋‍♂️ My Assignments"]:
             st.subheader(f"Hello, {current_tech['name'].split()[0]}!")
             
             my_jobs = [j for j in filtered_jobs if j['techId'] == current_tech['id'] and j['status'] != 'Completed']
@@ -4452,14 +4452,14 @@ def main():
             my_jobs.sort(key=lambda j: (priority_rank.get(j.get('priority'), 4), str(j.get('date', ''))))
             
             if not my_jobs:
-                st.info("ðŸŽ‰ No active assignments! Enjoy your day.")
+                st.info("🎉 No active assignments! Enjoy your day.")
             else:
                 st.success(f"You have {len(my_jobs)} active jobs today.")
                 for job in my_jobs:
                     render_job_card(job, compact=False, key_suffix="my_assign")
     
     # 1. Morning Briefing
-    with tab_map["ðŸŒ… Morning Briefing"]:
+    with tab_map["🌅 Morning Briefing"]:
         col_main, col_feed = st.columns([2, 1])
         with col_main:
             st.subheader("Daily Operational Briefing")
@@ -4469,15 +4469,15 @@ def main():
             
             # Controls for briefing
             c1, c2 = st.columns([1, 2])
-            if c1.button("ðŸ”„ Refresh Briefing", use_container_width=True):
-                with st.spinner("ðŸ¤– AI is updating your briefing..."):
+            if c1.button("🔄 Refresh Briefing", use_container_width=True):
+                with st.spinner("🤖 AI is updating your briefing..."):
                     st.session_state.briefing = generate_morning_briefing()
                     save_state(invalidate_briefing=False)
                     st.rerun()
 
             # Automatically generate briefing ONLY if it's the default first-time text
             if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
-                with st.spinner("ðŸ¤– AI is preparing your initial morning briefing..."):
+                with st.spinner("🤖 AI is preparing your initial morning briefing..."):
                     st.session_state.briefing = generate_morning_briefing()
                     save_state(invalidate_briefing=False)
                     st.rerun()
@@ -4498,11 +4498,11 @@ def main():
                     stale_list.append((sj, sd))
             if stale_list:
                 stale_list.sort(key=lambda x: -x[1])
-                st.markdown(f"##### ðŸš¨ Stale Jobs â€” no updates in {STALE_JOB_DAYS}+ days")
+                st.markdown(f"##### 🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days")
                 with st.container(border=True):
                     for sj, sd in stale_list:
                         s_tech = get_tech(sj['techId'])
-                        st.markdown(f"- **{sj['title']}** ({sj['status']}) â€” **{sd} days** since last update Â· ðŸ‘¤ {s_tech['name'] if s_tech else 'Unassigned'}")
+                        st.markdown(f"- **{sj['title']}** ({sj['status']}) — **{sd} days** since last update · 👤 {s_tech['name'] if s_tech else 'Unassigned'}")
 
         with col_feed:
             st.subheader("Priority Feed")
@@ -4522,7 +4522,7 @@ def main():
                 render_job_card(job, compact=True, key_suffix="feed_std")
 
     # 2. Tech Board
-    with tab_map["ðŸ‘· Tech Board"]:
+    with tab_map["👷 Tech Board"]:
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
@@ -4542,8 +4542,8 @@ def main():
                         render_job_card(job, compact=True, key_suffix="board", allow_delete=is_admin)
 
     # 3. Calendar View
-    with tab_map["ðŸ“… Calendar"]:
-        st.subheader("ðŸ“… Job Schedule")
+    with tab_map["📅 Calendar"]:
+        st.subheader("📅 Job Schedule")
         
         # Calendar Controls
         col_cal1, col_cal2 = st.columns([1, 4])
@@ -4557,7 +4557,7 @@ def main():
         with col_cal2:
             only_my_jobs = False
             if current_tech:
-                only_my_jobs = st.toggle("ðŸ‘· Only my jobs", key="cal_only_mine")
+                only_my_jobs = st.toggle("👷 Only my jobs", key="cal_only_mine")
 
         cal_jobs = filtered_jobs
         if only_my_jobs and current_tech:
@@ -4616,28 +4616,28 @@ def main():
                             st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
 
     # 4. Service Calls
-    with tab_map["ðŸ§° Service Calls"]:
+    with tab_map["🧰 Service Calls"]:
         service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
         if not service_jobs: st.info("No active service calls.")
         for job in service_jobs:
             render_job_card(job, key_suffix="service", allow_delete=is_admin)
 
     # 5. Projects
-    with tab_map["ðŸ—ï¸ Projects"]:
+    with tab_map["🏗️ Projects"]:
         proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
         if not proj_jobs: st.info("No active projects.")
         for job in proj_jobs:
             render_job_card(job, key_suffix="project", allow_delete=is_admin)
 
-    # ðŸ¤ Leads
-    with tab_map["ðŸ¤ Leads"]:
+    # 🤝 Leads
+    with tab_map["🤝 Leads"]:
         lead_jobs = [j for j in filtered_jobs if j['type'] == 'Leads' and j['status'] != 'Completed']
         if not lead_jobs: st.info("No active leads.")
         for job in lead_jobs:
             render_job_card(job, key_suffix="leads", allow_delete=is_admin)
 
     # 6. Archive
-    with tab_map["ðŸ“¦ Archive"]:
+    with tab_map["📦 Archive"]:
         archived = [j for j in filtered_jobs if j['status'] == 'Completed']
         if not archived: st.info("No archived jobs.")
         for job in archived:
@@ -4645,7 +4645,7 @@ def main():
 
     # 7. Admin (Only if Admin)
     if is_admin:
-        with tab_map["ðŸ›¡ï¸ Admin"]:
+        with tab_map["🛡️ Admin"]:
             render_admin_panel()
 
     # Sidebar Chatbot
