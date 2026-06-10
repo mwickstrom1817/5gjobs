@@ -1569,6 +1569,51 @@ def build_reminder_email_html(tech, jobs_with_locs, today_str):
 </body>
 </html>"""
 
+def build_admin_email_html(header_label, intro, detail_rows, footer_note):
+    """Branded HTML wrapper for short admin notification emails (the PDF attachment is the payload)."""
+    def esc(s):
+        return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    rows_html = ""
+    for label, value in detail_rows:
+        rows_html += f"""
+            <tr>
+                <td style="padding:8px 12px;background-color:#f4f4f5;color:#71717a;font-size:11px;font-weight:bold;text-transform:uppercase;border-bottom:1px solid #e4e4e7;width:120px;">{esc(label)}</td>
+                <td style="padding:8px 12px;color:#27272a;font-size:14px;border-bottom:1px solid #e4e4e7;">{esc(value)}</td>
+            </tr>"""
+
+    return f"""
+<html>
+<body style="margin:0;padding:0;background-color:#f4f4f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
+    <tr>
+        <td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
+            <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+            <span style="color:#a1a1aa;font-size:13px;">{esc(header_label)}</span>
+        </td>
+    </tr>
+    <tr>
+        <td style="padding:28px 32px;">
+            <p style="color:#27272a;font-size:14px;margin:0 0 18px 0;">{esc(intro)}</p>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 18px 0;border:1px solid #e4e4e7;border-radius:6px;border-collapse:separate;overflow:hidden;">
+                {rows_html}
+            </table>
+            <p style="color:#71717a;font-size:13px;margin:0;">&#128206; {esc(footer_note)}</p>
+        </td>
+    </tr>
+    <tr>
+        <td style="background-color:#f4f4f5;padding:14px 32px;color:#71717a;font-size:11px;border-top:1px solid #e4e4e7;">
+            5G Security &nbsp;|&nbsp; Cameras &middot; Access Control &middot; Alarm Systems &middot; Cabling
+        </td>
+    </tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>"""
+
 def send_assignment_email(job, tech, location):
     """Sends an email notification via SMTP, returning True if successful."""
     # Helper to resolve config priority: Session > Secrets > Env
@@ -1713,14 +1758,36 @@ def send_completion_email(job, tech, location, report_data):
 
         server.login(sender_email, sender_password)
         
+        # Styled HTML body (plain text rides along as the fallback)
+        try:
+            html_body = build_admin_email_html(
+                "Job Completed",
+                f"“{job['title']}” has been marked as Completed.",
+                [
+                    ("Job", job['title']),
+                    ("Technician", tech['name'] if tech else 'Unknown'),
+                    ("Location", location['name'] if location else 'Unknown'),
+                    ("Hours Worked", report_data.get('hoursWorked') or 'N/A'),
+                ],
+                "The full completion report is attached as a PDF.",
+            )
+        except Exception:
+            html_body = None
+
         for recipient in recipients:
-            # Create fresh message for each recipient to avoid header issues
-            msg = MIMEMultipart()
+            # Create fresh message for each recipient to avoid header issues.
+            # mixed( alternative(plain, html), pdf ) so the attachment shows in all clients.
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(body, 'plain'))
+            if html_body:
+                alt.attach(MIMEText(html_body, 'html'))
+
+            msg = MIMEMultipart("mixed")
             msg['From'] = sender_email
             msg['To'] = recipient
             msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
-            
+            msg.attach(alt)
+
             if pdf_bytes:
                 attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
                 attachment.add_header('Content-Disposition', 'attachment', filename=f"Report_{job['id']}.pdf")
@@ -1795,14 +1862,37 @@ def send_daily_report_email(job, tech, location, report_data):
 
         server.login(sender_email, sender_password)
         
+        # Styled HTML body (plain text rides along as the fallback)
+        try:
+            html_body = build_admin_email_html(
+                "Daily Field Report",
+                f"A daily field report was submitted for “{job['title']}”.",
+                [
+                    ("Job", job['title']),
+                    ("Technician", tech['name'] if tech else 'Unknown'),
+                    ("Location", location['name'] if location else 'Unknown'),
+                    ("Date", now_local().strftime('%Y-%m-%d')),
+                    ("Hours Worked", report_data.get('hoursWorked') or 'N/A'),
+                ],
+                "Today's full report is attached as a PDF.",
+            )
+        except Exception:
+            html_body = None
+
         for recipient in recipients:
-            # Create fresh message for each recipient
-            msg = MIMEMultipart()
+            # Create fresh message for each recipient.
+            # mixed( alternative(plain, html), pdf ) so the attachment shows in all clients.
+            alt = MIMEMultipart("alternative")
+            alt.attach(MIMEText(body, 'plain'))
+            if html_body:
+                alt.attach(MIMEText(html_body, 'html'))
+
+            msg = MIMEMultipart("mixed")
             msg['From'] = sender_email
             msg['To'] = recipient
             msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
-            
+            msg.attach(alt)
+
             if pdf_bytes:
                 attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
                 attachment.add_header('Content-Disposition', 'attachment', filename=f"DailyReport_{job['id']}_{now_local().strftime('%Y%m%d')}.pdf")
