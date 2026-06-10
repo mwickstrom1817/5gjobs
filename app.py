@@ -734,6 +734,28 @@ def get_tech(tech_id):
 def get_location(loc_id):
     return next((l for l in st.session_state.locations if l['id'] == loc_id), None)
 
+# Jobs with no history entry for this many days get flagged as stale
+STALE_JOB_DAYS = 5
+
+def get_job_stale_days(job):
+    """Days since the last history entry on an active job.
+    Returns None for completed jobs, future-scheduled jobs, or unparseable dates."""
+    if job.get('status') == 'Completed':
+        return None
+    last_ts = None
+    for r in job.get('reports', []):
+        ts = r.get('timestamp', '')
+        if ts and (last_ts is None or ts > last_ts):
+            last_ts = ts
+    base = last_ts or job.get('date', '')
+    try:
+        base_dt = datetime.datetime.fromisoformat(base[:19])
+    except (ValueError, TypeError):
+        return None
+    if base_dt > now_local():
+        return None
+    return (now_local() - base_dt).days
+
 @st.cache_data(ttl=1800)
 def resolve_image_source(photo_source: str):
     """
@@ -1722,29 +1744,38 @@ def generate_morning_briefing():
 
     active_jobs = [j for j in st.session_state.jobs if j['status'] != 'Completed']
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
-    
+
+    stale_lines = []
+    for j in active_jobs:
+        d = get_job_stale_days(j)
+        if d is not None and d >= STALE_JOB_DAYS:
+            stale_lines.append(f"- {j['title']} ({d} days without an update)")
+
     current_date = now_local().strftime("%B %d, %Y")
 
     prompt = f"""
       You are the Operations Manager for 5G Security. Generate a concise "Morning Briefing" for the dashboard.
       5G Security is a company that specializes in cameras and NVR systems, access control, alarm systems, and infrastructure cabling. We dont do work on 5G Towers.
-     
+
      Today's Date: {current_date}
 
      Data:
      - Active Jobs: {len(active_jobs)}
      - Critical: {len(critical_jobs)}
      - Techs: {', '.join([t['name'] for t in st.session_state.techs])}
-     
+
      Active Job List:
      {chr(10).join([f"- {j['title']} ({j['priority']})" for j in active_jobs])}
 
-     Format: 
+     Stale Jobs (no updates in {STALE_JOB_DAYS}+ days):
+     {chr(10).join(stale_lines) if stale_lines else "None"}
+
+     Format:
      Start with the header: **Morning Briefing: 5G Security - {current_date}**
 
      Then:
      1. Security Focus (Motivation)
-     2. Critical Focus (Briefly summarize the active jobs list, highlighting critical ones if any)
+     2. Critical Focus (Briefly summarize the active jobs list, highlighting critical ones if any. If there are stale jobs, call them out and ask for a status update on them.)
      3. Safety Tip.
 
      Max 150 words. No markdown headers (#), use Bold instead.
@@ -2474,7 +2505,7 @@ Desc: {job['description']}"""
     # Flag the credentials tab when nothing is recorded yet so it doesn't get forgotten
     has_sys_info = location_has_system_info(loc)
     creds_tab_label = "🔐 IPs & Passwords" if has_sys_info else "⚠️ IPs & Passwords"
-    tab_history, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "📄 Documents", "📸 In-Progress", "📝 Daily Report", creds_tab_label])
+    tab_history, tab_photos, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "🖼️ Photos", "📄 Documents", "📸 In-Progress", "📝 Daily Report", creds_tab_label])
 
     with tab_docs:
         st.write("#### 📄 Job Documents")
@@ -2519,6 +2550,41 @@ Desc: {job['description']}"""
                         st.image(url, width=200)
                     
                     d_col2.link_button("👁️ View / Download", url, use_container_width=True)
+
+    with tab_photos:
+        st.write("#### 🖼️ All Job Photos")
+        # Gather every photo/PDF across all history entries, newest first
+        photo_entries = []
+        seen_photo_keys = set()
+        for r in job.get('reports', []):
+            for p_key in (r.get('photos') or []):
+                if p_key in seen_photo_keys:
+                    continue
+                seen_photo_keys.add(p_key)
+                photo_entries.append({'key': p_key, 'timestamp': r.get('timestamp', ''), 'techId': r.get('techId')})
+        photo_entries.sort(key=lambda x: x['timestamp'], reverse=True)
+
+        if not photo_entries:
+            st.info("No photos posted for this job yet.")
+        else:
+            st.caption(f"{len(photo_entries)} photo(s) across all reports, newest first.")
+            show_all_photos = True
+            if len(photo_entries) > 12:
+                show_all_photos = st.checkbox(f"Show all {len(photo_entries)} photos", key=f"show_all_photos_{job_id}")
+                if not show_all_photos:
+                    st.caption("Showing the 12 most recent.")
+            visible_entries = photo_entries if show_all_photos else photo_entries[:12]
+
+            p_cols = st.columns(3)
+            for i, pe in enumerate(visible_entries):
+                with p_cols[i % 3]:
+                    url = resolve_image_source(pe['key'])
+                    p_tech = get_tech(pe['techId'])
+                    cap = f"{pe['timestamp'][:10]} · {p_tech['name'] if p_tech else 'Unknown'}"
+                    if isinstance(pe['key'], str) and pe['key'].lower().endswith('.pdf'):
+                        st.link_button(f"📄 PDF — {cap}", url, use_container_width=True)
+                    else:
+                        st.image(url, caption=cap, use_container_width=True)
 
     with tab_creds:
         st.write("#### 🔐 Site Systems & Network Info")
@@ -3054,7 +3120,12 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     
     map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
     loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {loc_name}</a>' if map_url else f"📍 {loc_name}"
-    
+
+    stale_days = get_job_stale_days(job)
+    stale_html = ""
+    if stale_days is not None and stale_days >= STALE_JOB_DAYS:
+        stale_html = f'<div style="color:#f87171; font-size:0.8em; margin-top:6px; font-weight:bold;">🚨 No updates in {stale_days} days</div>'
+
     with st.container():
         st.markdown(f"""
         <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
@@ -3070,6 +3141,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                  <span>👤 {tech_name}</span>
                  <span>📅 {'🗓️ ' + job['date'][:10]}</span>
             </div>
+            {stale_html}
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
@@ -3236,6 +3308,69 @@ def render_analytics_dashboard():
 
 
     # --- ADMIN ACCESS MANAGEMENT ---
+def render_hours_report():
+    st.caption("Summed from daily report 'Hours Worked'. Hours are credited to every tech listed 'On Site' for a report (or the report author if none were listed).")
+
+    today = now_local().date()
+    hc1, hc2 = st.columns(2)
+    start_date = hc1.date_input("From", value=today - datetime.timedelta(days=13), key="hours_from")
+    end_date = hc2.date_input("To", value=today, key="hours_to")
+
+    name_by_id = {t['id']: t['name'] for t in st.session_state.techs}
+    rows = []
+    for j in st.session_state.jobs:
+        j_loc = get_location(j['locationId'])
+        for r in j.get('reports', []):
+            try:
+                hrs = float(r.get('hoursWorked') or 0)
+            except (ValueError, TypeError):
+                hrs = 0.0
+            if hrs <= 0:
+                continue
+            ts = r.get('timestamp', '')[:10]
+            try:
+                r_date = datetime.datetime.strptime(ts, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if not (start_date <= r_date <= end_date):
+                continue
+            tech_names = [t.strip() for t in (r.get('techsOnSite') or '').split(',') if t.strip()]
+            if not tech_names:
+                tech_names = [name_by_id.get(r.get('techId'), 'Unknown')]
+            for tn in tech_names:
+                rows.append({
+                    "Date": ts,
+                    "Tech": tn,
+                    "Job": j['title'],
+                    "Location": j_loc['name'] if j_loc else "Unknown",
+                    "Hours": hrs,
+                    "Warranty": "Yes" if r.get('isWarranty') else "No",
+                })
+
+    if not rows:
+        st.info("No logged hours in this date range.")
+        return
+
+    df = pd.DataFrame(rows)
+
+    st.write("##### Total Hours by Tech")
+    totals = df.groupby("Tech", as_index=False)["Hours"].sum().sort_values("Hours", ascending=False)
+    st.dataframe(totals, use_container_width=True, hide_index=True)
+
+    st.write("##### Hours by Tech & Job")
+    by_job = df.groupby(["Tech", "Job", "Location"], as_index=False)["Hours"].sum().sort_values(["Tech", "Hours"], ascending=[True, False])
+    st.dataframe(by_job, use_container_width=True, hide_index=True)
+
+    with st.expander("📄 All Entries"):
+        st.dataframe(df.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
+
+    st.download_button(
+        "⬇️ Download CSV (all entries)",
+        df.sort_values(["Date", "Tech"]).to_csv(index=False).encode("utf-8"),
+        file_name=f"hours_{start_date}_{end_date}.csv",
+        mime="text/csv",
+    )
+
 def render_admin_panel():
     # --- DEDUPLICATE IDs (Fix for existing corrupted state) ---
     if st.session_state.techs:
@@ -3649,6 +3784,11 @@ def render_admin_panel():
                         st.warning("⚠️ **Quota/Billing:** Your account might have run out of free credits or billing isn't fully active yet.")
 
     st.divider()
+    st.subheader("🕒 Hours Report")
+    with st.expander("View Hours (Payroll / Invoicing)", expanded=False):
+        render_hours_report()
+
+    st.divider()
     with st.expander("📊 View Analytics Dashboard", expanded=False):
         render_analytics_dashboard()
 
@@ -3877,6 +4017,20 @@ def main():
             s1.metric("Active Jobs", active)
             s2.metric("Critical", crit)
             s3.metric("Techs", len(st.session_state.techs))
+
+            # Stale job alerts: active jobs with no history entry in a while
+            stale_list = []
+            for sj in st.session_state.jobs:
+                sd = get_job_stale_days(sj)
+                if sd is not None and sd >= STALE_JOB_DAYS:
+                    stale_list.append((sj, sd))
+            if stale_list:
+                stale_list.sort(key=lambda x: -x[1])
+                st.markdown(f"##### 🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days")
+                with st.container(border=True):
+                    for sj, sd in stale_list:
+                        s_tech = get_tech(sj['techId'])
+                        st.markdown(f"- **{sj['title']}** ({sj['status']}) — **{sd} days** since last update · 👤 {s_tech['name'] if s_tech else 'Unassigned'}")
 
         with col_feed:
             st.subheader("Priority Feed")
