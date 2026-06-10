@@ -26,6 +26,8 @@ from persistence_pg import (
     commit_from_session,
     force_overwrite_from_session,
     load_state,
+    get_db_version,
+    StaleStateError,
 )
 from object_store import upload_streamlit_file, upload_bytes, get_view_url
 
@@ -226,11 +228,33 @@ def _sync_session_to_db():
     st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
+def refresh_session_from_db():
+    """Reloads the DB row and replaces this session's working data with fresh state."""
+    data, version = load_state()
+    st.session_state.db = data
+    st.session_state._db_version = version
+    st.session_state.jobs = data.get("jobs", [])
+    st.session_state.techs = data.get("techs", [])
+    st.session_state.locations = data.get("locations", [])
+    st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
+    st.session_state.adminEmails = data.get("adminEmails", [])
+    st.session_state.smtp_settings = data.get("smtp_settings", {})
+    st.session_state.last_reminder_date = data.get("last_reminder_date")
+
 def save_state(invalidate_briefing=False):
     if invalidate_briefing:
         st.session_state.briefing = "Data required to generate briefing."
     _sync_session_to_db()
-    commit_from_session(invalidate_briefing=invalidate_briefing)
+    try:
+        commit_from_session(invalidate_briefing=invalidate_briefing)
+    except StaleStateError:
+        # Someone else saved while this session held old data. Don't clobber their
+        # changes - reload fresh state and ask the user to re-apply theirs.
+        refresh_session_from_db()
+        st.warning(
+            "⚠️ Someone else saved changes at the same time. The app has refreshed "
+            "with the latest data — please re-apply your last change."
+        )
 
 def update_job_status_callback(job_id, widget_key):
     """Callback to update job status and save state."""
@@ -713,7 +737,9 @@ def start_background_scheduler():
                             server.quit()
                             
                         state["last_reminder_date"] = today_str
-                        save_state_to_db(state)
+                        # Version-guarded so the scheduler can't clobber a save that
+                        # happened between its load and this write (retries next loop)
+                        save_state_to_db(state, expected_version=version)
                         get_logger().log(f"Sent 7 AM background reminders for {today_str}")
             except Exception as e:
                 get_logger().log(f"Background reminder error: {e}")
@@ -2719,6 +2745,26 @@ Desc: {job['description']}"""
 
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
+
+        # Site History: what else have we done at this location?
+        if loc:
+            site_jobs = [sj for sj in st.session_state.jobs if sj['locationId'] == loc['id'] and sj['id'] != job_id]
+            if site_jobs:
+                site_jobs.sort(key=lambda x: x.get('date', ''), reverse=True)
+                with st.expander(f"🏢 Site History — {len(site_jobs)} other job(s) at {loc['name']}"):
+                    for sj in site_jobs:
+                        sj_tech = get_tech(sj['techId'])
+                        status_icon = "✅" if sj['status'] == 'Completed' else "🔧"
+                        sh_c1, sh_c2 = st.columns([4, 1])
+                        sh_c1.markdown(f"{status_icon} **{sj['title']}** ({sj['status']}) — {sj.get('date', '')[:10]} · 👤 {sj_tech['name'] if sj_tech else 'Unassigned'}")
+                        last_note = next((r.get('content') for r in reversed(sj.get('reports', [])) if r.get('content')), None)
+                        if last_note:
+                            sh_c1.caption(f"Last note: {last_note[:120]}{'…' if len(last_note) > 120 else ''}")
+                        if sh_c2.button("Open", key=f"site_hist_open_{sj['id']}", use_container_width=True):
+                            # Can't open a dialog from inside a dialog - hand off to main()
+                            st.session_state["_open_job_after_rerun"] = sj['id']
+                            st.rerun()
+
         st.divider()
         st.write("#### 📜 History")
         if not job['reports']:
@@ -3915,7 +3961,21 @@ def main():
     user = authenticate()
     if not user:
         return  # Stop rendering if not logged in
-        
+
+    # Pick up other users' saves: if the DB moved on since this session loaded,
+    # refresh so we render current data (and so our next save doesn't conflict).
+    try:
+        db_ver = get_db_version()
+        if db_ver is not None and st.session_state.get('_db_version') is not None and db_ver != st.session_state._db_version:
+            refresh_session_from_db()
+    except Exception:
+        pass
+
+    # Deep-link: open a job dialog requested from elsewhere (e.g. Site History)
+    open_target = st.session_state.pop("_open_job_after_rerun", None)
+    if open_target:
+        job_details_dialog(open_target)
+
     user_email = user.get("email")
     user_name = user.get("name")
     
