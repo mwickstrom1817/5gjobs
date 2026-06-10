@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-from persistence_pg import load_state, save_state_to_db, init_db
+from persistence_pg import load_state, save_state_to_db, init_db, StaleStateError
 from object_store import upload_bytes, get_view_url
 
 # Cloud hosts run on UTC — stamp timestamps in the company timezone instead.
@@ -75,7 +75,14 @@ def save_state(invalidate_briefing: bool = True):
     with _state_lock:
         if invalidate_briefing:
             _state_cache["briefing"] = "Data required to generate briefing."
-        _state_version = save_state_to_db(_state_cache)
+        try:
+            _state_version = save_state_to_db(_state_cache, expected_version=_state_version or None)
+        except StaleStateError:
+            # Another writer (e.g. the Streamlit app) saved first. Drop the stale
+            # cache so the client's retry runs against fresh data.
+            _state_cache = {}
+            _state_version = 0
+            raise HTTPException(status_code=409, detail="Data changed on the server. Please retry the request.")
 
 def reload_state():
     global _state_cache
