@@ -245,15 +245,36 @@ TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12',
 
 # Tech Skills Options
 SKILL_OPTIONS = [
-    "Cabling (Cat6/Fiber)", 
-    "Access Control", 
-    "CCTV / Cameras", 
-    "Alarm Systems", 
-    "Networking / IT", 
-    "Conduit / Pipe", 
+    "Cabling (Cat6/Fiber)",
+    "Access Control",
+    "CCTV / Cameras",
+    "Alarm Systems",
+    "Networking / IT",
+    "Conduit / Pipe",
     "Sound Masking",
     "Locksmithing"
 ]
+
+# Common system types for site credentials
+SYSTEM_PRESETS = [
+    "DW Spectrum",
+    "ICT",
+    "Windows PC / Server",
+    "NVR / DVR",
+    "Camera",
+    "Access Control Panel",
+    "Alarm Panel",
+    "Switch / Router",
+    "Other"
+]
+
+def location_has_system_info(loc):
+    """True if the location has any systems or legacy credentials recorded."""
+    if not loc:
+        return False
+    if loc.get('systems'):
+        return True
+    return any(v for v in (loc.get('credentials') or {}).values())
 
 # --- AUTHENTICATION ---
 
@@ -1929,6 +1950,10 @@ def render_completion_confirmation(job_index, report_payload):
     st.write(f"**Job:** {job['title']}")
     st.warning("You are marking this job as **Completed**. This will archive the job and notify admins.")
 
+    completion_loc = get_location(job['locationId'])
+    if completion_loc and not location_has_system_info(completion_loc):
+        st.error("🔐 No system info (logins / IPs) has been recorded for this site. Please fill out the **IPs & Passwords** tab before closing the job.")
+
     st.write("#### ✅ Completion Checklist")
 
     c1 = st.checkbox("🧹 Messes Cleaned")
@@ -2267,7 +2292,10 @@ Desc: {job['description']}"""
         }.get(job['status'], "gray")
         st.markdown(f":{status_color}-background[{job['status']}]")
 
-    tab_history, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "📄 Documents", "📸 In-Progress", "📝 Daily Report", "🔐 IPs & Passwords"])
+    # Flag the credentials tab when nothing is recorded yet so it doesn't get forgotten
+    has_sys_info = location_has_system_info(loc)
+    creds_tab_label = "🔐 IPs & Passwords" if has_sys_info else "⚠️ IPs & Passwords"
+    tab_history, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "📄 Documents", "📸 In-Progress", "📝 Daily Report", creds_tab_label])
 
     with tab_docs:
         st.write("#### 📄 Job Documents")
@@ -2314,52 +2342,135 @@ Desc: {job['description']}"""
                     d_col2.link_button("👁️ View / Download", url, use_container_width=True)
 
     with tab_creds:
-        st.write("#### 🔐 Site Credentials & Network Info")
-        st.caption("Securely store logins and IP addresses for this location.")
-        
-        if not loc:
-            st.warning("No location assigned to this job. Credentials cannot be saved.")
-        else:
-            # Ensure 'credentials' key exists on the location
-            if 'credentials' not in loc:
-                loc['credentials'] = {}
-                
-            creds = loc['credentials']
-            
-            with st.form(key=f"creds_form_{job_id}"):
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("**Windows Login**")
-                    win_user = st.text_input("Username", value=creds.get('windows_user', ''), key=f"win_u_{job_id}")
-                    win_pass = st.text_input("Password", value=creds.get('windows_pass', ''), key=f"win_p_{job_id}")
-                    
-                    st.markdown("**ICT Login**")
-                    ict_user = st.text_input("Username", value=creds.get('ict_user', ''), key=f"ict_u_{job_id}")
-                    ict_pass = st.text_input("Password", value=creds.get('ict_pass', ''), key=f"ict_p_{job_id}")
-                
-                with c2:
-                    st.markdown("**DW Spectrum Login**")
-                    dw_user = st.text_input("Username", value=creds.get('dw_user', ''), key=f"dw_u_{job_id}")
-                    dw_pass = st.text_input("Password", value=creds.get('dw_pass', ''), key=f"dw_p_{job_id}")
-                    
-                    st.markdown("**Network / IPs**")
-                    ips = st.text_area("IP Addresses & Notes", value=creds.get('ips', ''), height=145, key=f"ips_{job_id}")
+        st.write("#### 🔐 Site Systems & Network Info")
+        st.caption("Logins, IPs, and notes for the systems at this location. Saved to the location, shared across all its jobs.")
 
-                if st.form_submit_button("Save Credentials"):
-                    loc_index = next((i for i, l in enumerate(st.session_state.locations) if l['id'] == loc['id']), -1)
-                    if loc_index != -1:
-                        st.session_state.locations[loc_index]['credentials'] = {
-                            'windows_user': win_user,
-                            'windows_pass': win_pass,
-                            'dw_user': dw_user,
-                            'dw_pass': dw_pass,
-                            'ict_user': ict_user,
-                            'ict_pass': ict_pass,
-                            'ips': ips
-                        }
-                        save_state(invalidate_briefing=False)
-                        st.success("Credentials saved to Location!")
-                        st.rerun()
+        if not loc:
+            st.warning("No location assigned to this job. System info cannot be saved.")
+        else:
+            # One-time migration: convert legacy fixed-field credentials to the flexible systems list
+            if 'systems' not in loc:
+                legacy = loc.get('credentials') or {}
+                migrated = []
+                legacy_logins = [
+                    ("Windows PC / Server", 'windows_user', 'windows_pass'),
+                    ("ICT", 'ict_user', 'ict_pass'),
+                    ("DW Spectrum", 'dw_user', 'dw_pass'),
+                ]
+                for sys_name, u_key, p_key in legacy_logins:
+                    if legacy.get(u_key) or legacy.get(p_key):
+                        migrated.append({
+                            'id': f"s{datetime.datetime.now().timestamp()}_{len(migrated)}",
+                            'name': sys_name,
+                            'username': legacy.get(u_key, ''),
+                            'password': legacy.get(p_key, ''),
+                            'ip': '',
+                            'notes': ''
+                        })
+                if legacy.get('ips'):
+                    migrated.append({
+                        'id': f"s{datetime.datetime.now().timestamp()}_{len(migrated)}",
+                        'name': "Network / IPs",
+                        'username': '',
+                        'password': '',
+                        'ip': '',
+                        'notes': legacy['ips']
+                    })
+                loc['systems'] = migrated
+                if migrated:
+                    save_state(invalidate_briefing=False)
+
+            systems = loc.get('systems', [])
+            current_user_email = st.session_state.user_info.get('email', 'unknown') if "user_info" in st.session_state else 'unknown'
+
+            with st.expander("➕ Add a System", expanded=not systems):
+                with st.form(key=f"add_system_form_{job_id}", clear_on_submit=True):
+                    sys_type = st.selectbox("System Type", SYSTEM_PRESETS)
+                    custom_name = st.text_input("Custom Name (optional)", placeholder="e.g. Front Desk NVR")
+                    a1, a2 = st.columns(2)
+                    with a1:
+                        new_user = st.text_input("Username")
+                        new_ip = st.text_input("IP Address(es)", placeholder="192.168.1.100")
+                    with a2:
+                        new_pass = st.text_input("Password")
+                        new_notes = st.text_input("Notes", placeholder="Port, VLAN, where it lives...")
+
+                    if st.form_submit_button("💾 Save System", use_container_width=True):
+                        if not (new_user or new_pass or new_ip or new_notes):
+                            st.warning("Please fill in at least one field.")
+                        else:
+                            sys_name = custom_name.strip() or sys_type
+                            loc.setdefault('systems', []).append({
+                                'id': f"s{datetime.datetime.now().timestamp()}",
+                                'name': sys_name,
+                                'username': new_user,
+                                'password': new_pass,
+                                'ip': new_ip,
+                                'notes': new_notes,
+                                'updated_by': current_user_email,
+                                'updated_at': datetime.datetime.now().isoformat()
+                            })
+                            save_state(invalidate_briefing=False)
+                            st.success(f"'{sys_name}' saved!")
+                            st.rerun()
+
+            if not systems:
+                st.info("No system info recorded for this site yet. Add the first one above while you're on site.")
+
+            for s in systems:
+                with st.container(border=True):
+                    st.markdown(f"**🖥️ {s.get('name', 'System')}**")
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        if s.get('username'):
+                            st.caption("Username")
+                            st.code(s['username'], language=None)
+                        if s.get('password'):
+                            st.caption("Password")
+                            st.code(s['password'], language=None)
+                    with d2:
+                        if s.get('ip'):
+                            st.caption("IP Address(es)")
+                            st.code(s['ip'], language=None)
+                        if s.get('notes'):
+                            st.caption("Notes")
+                            st.write(s['notes'])
+
+                    if s.get('updated_at'):
+                        st.caption(f"Last updated {s['updated_at'][:16]} by {s.get('updated_by', 'unknown')}")
+
+                    with st.expander("✏️ Edit / Delete"):
+                        with st.form(key=f"edit_sys_form_{s['id']}"):
+                            e_name = st.text_input("System Name", value=s.get('name', ''))
+                            e1, e2 = st.columns(2)
+                            with e1:
+                                e_user = st.text_input("Username", value=s.get('username', ''))
+                                e_ip = st.text_input("IP Address(es)", value=s.get('ip', ''))
+                            with e2:
+                                e_pass = st.text_input("Password", value=s.get('password', ''))
+                                e_notes = st.text_input("Notes", value=s.get('notes', ''))
+
+                            ec1, ec2 = st.columns(2)
+                            if ec1.form_submit_button("💾 Update"):
+                                s.update({
+                                    'name': e_name,
+                                    'username': e_user,
+                                    'password': e_pass,
+                                    'ip': e_ip,
+                                    'notes': e_notes,
+                                    'updated_by': current_user_email,
+                                    'updated_at': datetime.datetime.now().isoformat()
+                                })
+                                save_state(invalidate_briefing=False)
+                                st.success("System updated!")
+                                st.rerun()
+
+                            if ec2.form_submit_button("🗑️ Delete System"):
+                                loc['systems'] = [x for x in loc['systems'] if x['id'] != s['id']]
+                                get_logger().log(f"{current_user_email} deleted system '{s.get('name')}' from location {loc['id']}")
+                                save_state(invalidate_briefing=False)
+                                st.toast(f"'{s.get('name')}' deleted", icon="🗑️")
+                                st.rerun()
 
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
@@ -2382,15 +2493,64 @@ Desc: {job['description']}"""
         # Admin check
         user_email = st.session_state.user_info.get("email") if "user_info" in st.session_state else None
         is_admin = user_email in st.session_state.adminEmails if user_email else False
+        # Current user's tech profile (techs may manage their own entries)
+        viewer_tech = next((t for t in st.session_state.techs if user_email and t['email'].lower() == user_email.lower()), None)
 
         for r in reports_to_show:
             r_tech = get_tech(r['techId'])
+
+            # Check if it's a "Daily Report" (has hours/techs) or "In-Progress" (just content/photos)
+            is_daily_report = r.get('hoursWorked') or r.get('techsOnSite')
+            is_completion = 'completion_checklist' in r
+
+            # Admins can manage any entry; techs can manage their own (except completion reports)
+            can_manage = is_admin or (viewer_tech and r.get('techId') == viewer_tech['id'] and not is_completion)
+
             with st.container(border=True):
-                st.markdown(f"**{r_tech['name'] if r_tech else 'Unknown'}** - {r['timestamp'][:16]}")
-                
-                # Check if it's a "Daily Report" (has hours/techs) or "In-Progress" (just content/photos)
-                is_daily_report = r.get('hoursWorked') or r.get('techsOnSite')
-                is_completion = 'completion_checklist' in r
+                hdr_main, hdr_move, hdr_del = st.columns([4, 1, 1])
+                hdr_main.markdown(f"**{r_tech['name'] if r_tech else 'Unknown'}** - {r['timestamp'][:16]}")
+
+                if can_manage:
+                    with hdr_move.popover("↪️ Move"):
+                        st.caption("Filed under the wrong job? Move this entry (notes & photos) to the correct one.")
+                        other_jobs = {j['id']: j for j in st.session_state.jobs if j['id'] != job_id}
+                        if not other_jobs:
+                            st.caption("No other jobs to move to.")
+                        else:
+                            def _fmt_job_option(jid):
+                                j = other_jobs[jid]
+                                j_loc = get_location(j['locationId'])
+                                return f"{j['title']} — {j_loc['name'] if j_loc else 'No location'}"
+
+                            target_id = st.selectbox("Move to job:", list(other_jobs.keys()), format_func=_fmt_job_option, key=f"move_target_{r['id']}")
+                            if st.button("Confirm Move", key=f"move_btn_{r['id']}", type="primary", use_container_width=True):
+                                target_idx = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == target_id), -1)
+                                if target_idx != -1:
+                                    st.session_state.jobs[target_idx].setdefault('reports', []).append(r)
+                                    st.session_state.jobs[job_index]['reports'] = [x for x in st.session_state.jobs[job_index]['reports'] if x['id'] != r['id']]
+                                    get_logger().log(f"{user_email} moved report {r['id']} from job {job_id} to job {target_id}")
+                                    save_state(invalidate_briefing=False)
+                                    st.toast(f"Entry moved to '{other_jobs[target_id]['title']}'", icon="↪️")
+                                    st.rerun()
+
+                    del_confirm_key = f"confirm_del_report_{r['id']}"
+                    if hdr_del.button("🗑️", key=f"del_rep_{r['id']}", help="Delete this entry"):
+                        st.session_state[del_confirm_key] = True
+                        st.rerun()
+
+                    if st.session_state.get(del_confirm_key):
+                        st.warning("Permanently delete this entry? Its notes and photos will be removed from the job history.")
+                        dc1, dc2 = st.columns(2)
+                        if dc1.button("✅ Yes, Delete", key=f"del_yes_{r['id']}", type="primary", use_container_width=True):
+                            st.session_state.jobs[job_index]['reports'] = [x for x in st.session_state.jobs[job_index]['reports'] if x['id'] != r['id']]
+                            get_logger().log(f"{user_email} deleted report {r['id']} from job {job_id}")
+                            del st.session_state[del_confirm_key]
+                            save_state(invalidate_briefing=False)
+                            st.toast("Entry deleted", icon="🗑️")
+                            st.rerun()
+                        if dc2.button("❌ Cancel", key=f"del_no_{r['id']}", use_container_width=True):
+                            del st.session_state[del_confirm_key]
+                            st.rerun()
                 
                 if is_daily_report:
                     h1, h2, h3 = st.columns(3)
@@ -2549,6 +2709,9 @@ Desc: {job['description']}"""
 
         st.write("#### 📝 Daily Field Report")
         st.caption("End of day reporting. Submit labor hours, parts, and finalize status.")
+
+        if loc and not has_sys_info:
+            st.warning("🔐 No system info (logins / IPs) is saved for this site yet. Take a minute to fill out the **IPs & Passwords** tab while you're on site.")
         
         # Voice Note Feature for Daily Report
         audio_daily = st.audio_input("🎙️ Record Summary", key=f"audio_daily_{job_id}")
