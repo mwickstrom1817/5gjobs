@@ -39,6 +39,11 @@ try:
     from reportlab.pdfgen import canvas
     from reportlab.lib.pagesizes import letter
     from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+        Image as RLImage, KeepTogether, PageBreak,
+    )
     HAS_REPORTLAB = True
 except ImportError:
     HAS_REPORTLAB = False
@@ -1165,253 +1170,225 @@ def get_image_bytes(url):
 
 @st.cache_data(show_spinner="Generating PDF...")
 def generate_job_pdf(job, tech, location, report):
-    """Generates a PDF bytes object for the completed job."""
+    """Generates a styled PDF report for a job (completion or daily field report)."""
     if not HAS_REPORTLAB:
         return None
 
-    buffer = BytesIO()
-    p = canvas.Canvas(buffer, pagesize=letter)
-    width, height = letter
+    is_completion = 'completion_checklist' in report
+    report_type = "Job Completion Report" if is_completion else "Daily Field Report"
+    generated_str = now_local().strftime('%B %d, %Y at %I:%M %p')
 
-    # Title
-    p.setFillColor(colors.darkred)
-    p.setFont("Helvetica-Bold", 20)
-    p.drawString(50, height - 50, "5G Security - Job Completion Report")
+    # Brand palette (mirrors the app theme)
+    BRAND_RED = colors.HexColor("#b91c1c")
+    BRAND_DARK = colors.HexColor("#18181b")
+    INK = colors.HexColor("#27272a")
+    MUTED = colors.HexColor("#71717a")
+    LIGHT = colors.HexColor("#f4f4f5")
+    BORDER = colors.HexColor("#e4e4e7")
 
-    p.setFillColor(colors.black)
-    p.setFont("Helvetica", 10)
-    p.drawString(50, height - 65, f"Generated: {now_local().strftime('%Y-%m-%d %H:%M')}")
+    def esc(s):
+        """Escape text for ReportLab Paragraph markup."""
+        return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-    # Job Info
-    y = height - 100
-    p.setFont("Helvetica-Bold", 12)
-    p.drawString(50, y, "JOB DETAILS")
-    p.line(50, y - 5, width - 50, y - 5)
+    def header_footer(canv, doc):
+        w, h = letter
+        canv.saveState()
+        # Header band
+        canv.setFillColor(BRAND_DARK)
+        canv.rect(0, h - 80, w, 80, fill=1, stroke=0)
+        canv.setFillColor(BRAND_RED)
+        canv.rect(0, h - 84, w, 4, fill=1, stroke=0)
+        canv.setFillColor(colors.white)
+        canv.setFont("Helvetica-Bold", 20)
+        canv.drawString(46, h - 48, "5G SECURITY")
+        canv.setFillColor(colors.HexColor("#d4d4d8"))
+        canv.setFont("Helvetica", 10)
+        canv.drawString(46, h - 64, report_type)
+        canv.setFont("Helvetica", 8)
+        canv.drawRightString(w - 46, h - 48, f"Generated {generated_str}")
+        canv.drawRightString(w - 46, h - 64, f"Job ID: {job.get('id', '')}")
+        # Footer
+        canv.setStrokeColor(BORDER)
+        canv.setLineWidth(0.5)
+        canv.line(46, 46, w - 46, 46)
+        canv.setFont("Helvetica", 8)
+        canv.setFillColor(MUTED)
+        canv.drawString(46, 34, "5G Security  |  Cameras - Access Control - Alarm Systems - Cabling")
+        canv.drawRightString(w - 46, 34, f"Page {canv.getPageNumber()}")
+        canv.restoreState()
 
-    y -= 25
-    p.setFont("Helvetica", 11)
-    p.drawString(50, y, f"Title: {job['title']}")
-    y -= 15
-    p.drawString(50, y, f"Location: {location['name'] if location else 'Unknown'} - {location['address'] if location else ''}")
-    y -= 15
-    p.drawString(50, y, f"Tech Assigned: {tech['name'] if tech else 'Unassigned'}")
-    y -= 15
-    p.drawString(50, y, f"Status: {job['status']}")
+    styles = getSampleStyleSheet()
+    s_title = ParagraphStyle('JobTitle', parent=styles['Heading1'], fontName="Helvetica-Bold",
+                             fontSize=16, textColor=INK, spaceAfter=2)
+    s_sub = ParagraphStyle('Sub', parent=styles['Normal'], fontSize=10, textColor=MUTED, spaceAfter=4)
+    s_section = ParagraphStyle('Section', parent=styles['Heading2'], fontName="Helvetica-Bold",
+                               fontSize=11, textColor=BRAND_RED, spaceBefore=16, spaceAfter=6)
+    s_body = ParagraphStyle('Body', parent=styles['Normal'], fontName="Helvetica",
+                            fontSize=9.5, leading=14, textColor=INK)
+    s_label = ParagraphStyle('Label', parent=s_body, textColor=MUTED, fontSize=8)
+    s_value = ParagraphStyle('Value', parent=s_body, fontName="Helvetica-Bold")
+    s_italic = ParagraphStyle('Ital', parent=s_body, fontName="Helvetica-Oblique")
+    s_caption = ParagraphStyle('Caption', parent=s_label, fontSize=7.5, spaceBefore=2)
 
-    # Report Data
-    y -= 40
-    p.setFont("Helvetica-Bold", 12)
-    p.drawString(50, y, "FIELD REPORT DATA")
-    p.line(50, y - 5, width - 50, y - 5)
+    avail = letter[0] - 92  # usable width inside margins
 
-    y -= 25
-    p.setFont("Helvetica", 11)
+    def info_table(rows):
+        """rows: list of (label, value, label, value) tuples rendered as a styled grid."""
+        data = []
+        for r in rows:
+            cells = []
+            for i, cell in enumerate(r):
+                if i % 2 == 0:
+                    cells.append(Paragraph(esc(cell).upper(), s_label))
+                else:
+                    cells.append(Paragraph(esc(cell), s_value))
+            data.append(cells)
+        t = Table(data, colWidths=[avail * 0.16, avail * 0.40, avail * 0.16, avail * 0.28])
+        t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), LIGHT),
+            ('BACKGROUND', (2, 0), (2, -1), LIGHT),
+            ('GRID', (0, 0), (-1, -1), 0.5, BORDER),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('TOPPADDING', (0, 0), (-1, -1), 6),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ('LEFTPADDING', (0, 0), (-1, -1), 8),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        ]))
+        return t
 
-    data_points = [
-        f"Techs On Site: {report.get('techsOnSite', 'N/A')}",
-        f"Time Arrived: {report.get('timeArrived', 'N/A')}",
-        f"Time Finished: {report.get('timeDeparted', 'N/A')}",
-        f"Hours Worked: {report.get('hoursWorked', 'N/A')}",
-        f"Parts Used: {report.get('partsUsed', 'N/A')}",
-        f"Billable Items: {report.get('billableItems', 'N/A')}",
-    ]
+    loc_name = location['name'] if location else 'Unknown'
+    loc_addr = location['address'] if location else ''
+    tech_name = tech['name'] if tech else 'Unassigned'
 
-    for point in data_points:
-        p.drawString(50, y, point)
-        y -= 20
+    story = []
 
-    # Warranty Info
-    y -= 10
-    p.setFont("Helvetica-Bold", 12)
-    p.drawString(50, y, "WARRANTY INFORMATION")
-    p.line(50, y - 5, width - 50, y - 5)
-    y -= 25
-    p.setFont("Helvetica", 11)
-    is_warranty = "YES" if report.get('isWarranty') else "NO"
-    p.drawString(50, y, f"Warranty Work? {is_warranty}")
-    y -= 20
+    # Title block
+    story.append(Paragraph(esc(job['title']), s_title))
+    story.append(Paragraph(f"{esc(loc_name)} &mdash; {esc(loc_addr)}", s_sub))
 
-    # AI Summary
+    # Job details
+    story.append(Paragraph("JOB DETAILS", s_section))
+    story.append(info_table([
+        ("Technician", tech_name, "Status", job.get('status', 'N/A')),
+        ("Job Type", job.get('type', 'N/A'), "Priority", job.get('priority', 'N/A')),
+        ("Scheduled", str(job.get('date', ''))[:10], "Warranty Work", "Yes" if report.get('isWarranty') else "No"),
+    ]))
+
+    # Field report data
+    story.append(Paragraph("FIELD REPORT", s_section))
+    story.append(info_table([
+        ("Techs On Site", report.get('techsOnSite') or 'N/A', "Hours Worked", report.get('hoursWorked') or 'N/A'),
+        ("Time Arrived", report.get('timeArrived') or 'N/A', "Time Finished", report.get('timeDeparted') or 'N/A'),
+        ("Parts Used", report.get('partsUsed') or 'None', "Billable Items", report.get('billableItems') or 'None'),
+    ]))
+
+    # AI work summary (accent-boxed)
     ai_summary = report.get("ai_summary")
     if ai_summary:
-        y -= 20
-        p.setFont("Helvetica-Bold", 12)
-        p.drawString(50, y, "WORK SUMMARY (AI Generated)")
-        p.line(50, y - 5, width - 50, y - 5)
-        y -= 20
-        p.setFont("Helvetica-Oblique", 10)
+        story.append(Paragraph("WORK SUMMARY", s_section))
+        box = Table([[Paragraph(esc(ai_summary), s_italic)]], colWidths=[avail])
+        box.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, -1), LIGHT),
+            ('LINEBEFORE', (0, 0), (0, -1), 2, BRAND_RED),
+            ('TOPPADDING', (0, 0), (-1, -1), 8),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ('LEFTPADDING', (0, 0), (-1, -1), 10),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ]))
+        story.append(box)
+        story.append(Paragraph("Summary generated by AI from technician notes.", s_caption))
 
-        text_object = p.beginText(50, y)
-        max_width = 80
-        words = ai_summary.split()
-        current_line = []
-        line_count = 0
-
-        for word in words:
-            current_line.append(word)
-            if len(" ".join(current_line)) > max_width:
-                text_object.textLine(" ".join(current_line[:-1]))
-                current_line = [word]
-                line_count += 1
-
-        if current_line:
-            text_object.textLine(" ".join(current_line))
-            line_count += 1
-
-        p.drawText(text_object)
-        y -= (line_count * 14) + 10
-
-    # Completion Checklist
+    # Completion checklist
     checklist = report.get("completion_checklist")
     if checklist:
-        y -= 20
-        p.setFont("Helvetica-Bold", 12)
-        p.drawString(50, y, "COMPLETION CHECKLIST")
-        p.line(50, y - 5, width - 50, y - 5)
-        y -= 20
-        p.setFont("Helvetica", 10)
-
+        items = [Paragraph("COMPLETION CHECKLIST", s_section)]
         for item in checklist:
-            p.drawString(50, y, f"[x] {item}")
-            y -= 15
+            items.append(Paragraph(
+                f'<font name="ZapfDingbats" color="#15803d">4</font>&nbsp;&nbsp;{esc(item)}', s_body))
+        story.append(KeepTogether(items))
 
-    # Content/Notes
-    y -= 20
-    p.setFont("Helvetica-Bold", 12)
-    p.drawString(50, y, "TECHNICIAN NOTES")
-    p.line(50, y - 5, width - 50, y - 5)
-    y -= 25
-    p.setFont("Helvetica", 10)
-
+    # Technician notes
     notes = report.get("content", "")
-    text_object = p.beginText(50, y)
-    text_object.setFont("Helvetica", 10)
+    if notes:
+        story.append(Paragraph("TECHNICIAN NOTES", s_section))
+        for line in notes.split('\n'):
+            if line.strip():
+                story.append(Paragraph(esc(line), s_body))
+            else:
+                story.append(Spacer(1, 6))
 
-    max_width = 80
-    line_count = 0
-    
-    # Handle manual newlines by splitting first
-    note_lines = notes.split('\n')
-    for line in note_lines:
-        words = line.split(' ')
-        current_line = []
-
-        for word in words:
-            current_line.append(word)
-            if len(" ".join(current_line)) > max_width:
-                text_object.textLine(" ".join(current_line[:-1]))
-                current_line = [word]
-                line_count += 1
-
-        if current_line:
-            text_object.textLine(" ".join(current_line))
-            line_count += 1
-
-    p.drawText(text_object)
-    y -= (line_count * 12) + 15  # Update y based on lines printed
-
-    # Signature
+    # Customer signature
     signature_key = report.get("signature_key")
     if signature_key:
         try:
             sig_url = get_view_url(signature_key, expires_seconds=3600)
             sig_bytes = get_image_bytes(sig_url)
             if sig_bytes:
-                if y < 150:
-                    p.showPage()
-                    y = height - 50
-                    p.setFont("Helvetica-Bold", 12)
-                    p.drawString(50, y, "CONTINUED: CUSTOMER SIGNATURE")
-                    y -= 30
-
-                sig_reader = ImageReader(BytesIO(sig_bytes))
-                y -= 60
-                p.drawImage(sig_reader, 50, y, width=150, height=50, mask="auto")
-                p.setFont("Helvetica-Oblique", 8)
-                p.drawString(50, y - 10, "Customer Digital Signature")
-                y -= 20
-        except Exception as e:
+                story.append(KeepTogether([
+                    Paragraph("CUSTOMER SIGN-OFF", s_section),
+                    RLImage(BytesIO(sig_bytes), width=180, height=60),
+                    Paragraph("Customer Digital Signature", s_caption),
+                ]))
+        except Exception:
             pass
 
-    # Photos Section
+    # Site photos (own page, two per row)
     photos = report.get("photos", [])
     if photos:
-        p.showPage()
-
-        y = height - 50
-        p.setFont("Helvetica-Bold", 14)
-        p.drawString(50, y, "SITE PHOTOS")
-        y -= 30
-
-        x_start = 50
-        img_width = 250
-        img_height = 200
-        gap_x = 20
-        gap_y = 20
-
-        col = 0
-        processed_photos = set()
-
+        photo_flowables = []
+        seen_keys = set()
         for photo_key in photos:
-            if photo_key in processed_photos:
+            if photo_key in seen_keys:
                 continue
-            processed_photos.add(photo_key)
-            
+            seen_keys.add(photo_key)
             try:
                 photo_url = get_view_url(photo_key, expires_seconds=3600)
                 img_bytes = get_image_bytes(photo_url)
-                if img_bytes:
-                    # Resize image to reduce PDF size and prevent massive files
-                    try:
-                        img = Image.open(BytesIO(img_bytes))
-                        # Convert to RGB if necessary (e.g. from RGBA)
-                        if img.mode in ("RGBA", "P"):
-                            img = img.convert("RGB")
-                        
-                        # Resize if larger than 1024px (good balance of quality/size)
-                        max_size = 1024
-                        if img.width > max_size or img.height > max_size:
-                            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                        
-                        img_byte_arr = io.BytesIO()
-                        # Save as JPEG with optimized quality
-                        img.save(img_byte_arr, format='JPEG', quality=75, optimize=True)
-                        img_reader = ImageReader(BytesIO(img_byte_arr.getvalue()))
-                    except Exception as e:
-                        # Fallback to original if resizing fails
-                        img_reader = ImageReader(BytesIO(img_bytes))
+                if not img_bytes:
+                    continue
+                img = Image.open(BytesIO(img_bytes))
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                if img.width > 1024 or img.height > 1024:
+                    img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                jb = io.BytesIO()
+                img.save(jb, format='JPEG', quality=75, optimize=True)
+                jb.seek(0)
+                # Fit each photo into its half-page cell, preserving aspect ratio
+                cell_w, cell_h = (avail / 2) - 16, 190
+                ratio = min(cell_w / img.width, cell_h / img.height)
+                photo_flowables.append(RLImage(jb, width=img.width * ratio, height=img.height * ratio))
+            except Exception:
+                continue
 
-                    if y - img_height < 50:
-                        p.showPage()
-                        y = height - 50
-                        p.setFont("Helvetica-Bold", 14)
-                        p.drawString(50, y, "SITE PHOTOS (Cont.)")
-                        y -= 30
-                        col = 0
+        if photo_flowables:
+            story.append(PageBreak())
+            story.append(Paragraph("SITE PHOTOS", s_section))
+            rows = []
+            for i in range(0, len(photo_flowables), 2):
+                pair = photo_flowables[i:i + 2]
+                if len(pair) == 1:
+                    pair.append("")
+                rows.append(pair)
+            pt = Table(rows, colWidths=[avail / 2, avail / 2])
+            pt.setStyle(TableStyle([
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+            ]))
+            story.append(pt)
 
-                    x = x_start + (col * (img_width + gap_x))
-                    draw_y = y - img_height
-
-                    p.drawImage(
-                        img_reader,
-                        x,
-                        draw_y,
-                        width=img_width,
-                        height=img_height,
-                        preserveAspectRatio=True,
-                        anchor="c",
-                    )
-
-                    col += 1
-                    if col > 1:
-                        col = 0
-                        y -= (img_height + gap_y)
-
-            except Exception as e:
-                pass
-
-    p.showPage()
-    p.save()
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter,
+        leftMargin=46, rightMargin=46, topMargin=104, bottomMargin=64,
+        title=f"5G Security - {report_type}",
+    )
+    try:
+        doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
+    except Exception:
+        return None
 
     buffer.seek(0)
     return buffer.getvalue()
@@ -3920,11 +3897,18 @@ def render_chatbot():
             clean_job['reports'] = clean_reports
             simple_jobs.append(clean_job)
         
+        # SECURITY: strip site credentials/systems (logins, passwords, IPs)
+        # before sending location data to the external LLM API
+        safe_locations = [
+            {k: v for k, v in l.items() if k not in ('credentials', 'systems')}
+            for l in st.session_state.locations
+        ]
+
         system_context = f"""
        You are a 5G Security Assistant.
        Current Time: {now_local()}
        Techs: {json.dumps(st.session_state.techs)}
-       Locations: {json.dumps(st.session_state.locations)}
+       Locations: {json.dumps(safe_locations)}
        Jobs: {json.dumps(simple_jobs)}
        
        Answer based strictly on this data. If searching for history, note that detailed reports are not in this context, only summaries.
