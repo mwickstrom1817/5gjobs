@@ -100,11 +100,23 @@ def verify_google_token(authorization: str = Header(None)) -> dict:
                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
         if r.status_code != 200:
             raise HTTPException(status_code=401, detail="Invalid Google token.")
-        return r.json()
+        user = r.json()
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Token validation failed: {e}")
+
+    # ACCESS CONTROL: a valid Google account is not enough - the email must be a
+    # registered admin or tech (or match ALLOWED_EMAIL_DOMAIN) to use the API.
+    email = (user.get("email") or "").lower()
+    state = get_state()
+    is_admin = email in [e.lower() for e in state.get("adminEmails", [])]
+    is_tech = any((t.get("email") or "").lower() == email for t in state.get("techs", []))
+    allowed_domain = os.getenv("ALLOWED_EMAIL_DOMAIN", "")
+    domain_ok = bool(allowed_domain) and email.endswith("@" + allowed_domain.lower().lstrip("@"))
+    if not (is_admin or is_tech or domain_ok):
+        raise HTTPException(status_code=403, detail="Account not registered on the 5G Security Job Board.")
+    return user
 
 def require_admin(user: dict = Depends(verify_google_token)) -> dict:
     state = get_state()
