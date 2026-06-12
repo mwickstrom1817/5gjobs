@@ -2,13 +2,35 @@ name: Keep Streamlit App Awake
 
 on:
   schedule:
-    - cron: "0 */3 * * *"   # every 3 hours (UTC)
+    # Every 2 hours, offset 7 minutes to dodge top-of-hour runner congestion.
+    # Streamlit Community Cloud sleeps apps after extended periods with no
+    # external traffic - this comfortably outpaces any threshold.
+    - cron: "7 */2 * * *"
   workflow_dispatch:
+
+permissions:
+  actions: write
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Curl the app
+      - name: Ping the app
         run: |
-          curl -sS -L "https://5gjobs.streamlit.app/" >/dev/null
+          URL="https://5gjobs.streamlit.app"
+          # Health endpoint (cheap, goes through the platform proxy)
+          curl -sS --max-time 30 "$URL/_stcore/health" || true
+          # Full page GET - this is what counts as viewer traffic
+          BODY=$(curl -sS -L --max-time 60 "$URL/" || true)
+          if echo "$BODY" | grep -qi "gone to sleep\|Zzzz"; then
+            echo "::warning::App appears to be ASLEEP. A ping cannot wake it - open $URL and click 'Yes, get this app back up'."
+            exit 1
+          fi
+          echo "App responded normally."
+
+      - name: Keep this workflow enabled
+        # GitHub silently disables scheduled workflows after 60 days without
+        # repo activity. Re-enabling ourselves on every run resets that timer.
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/keepalive.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}
