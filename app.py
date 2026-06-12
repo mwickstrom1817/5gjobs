@@ -1015,63 +1015,65 @@ def get_api_key():
 def get_available_model(api_key):
     """
     Dynamically lists models available to the API key and returns the client and best model name.
-    This prevents 404 errors by only selecting models that actually exist.
+    Prefers current stable Flash models. (Google retired the Gemini 1.x family -
+    the old hardcoded 1.5 names now 404.)
     """
     client = genai.Client(api_key=api_key)
     logger = get_logger()
-    
+
+    def _gen_actions(m):
+        # google-genai SDK exposes 'supported_actions'; the legacy SDK used
+        # 'supported_generation_methods'. Check both so the filter actually works.
+        return getattr(m, 'supported_actions', None) or getattr(m, 'supported_generation_methods', None)
+
     try:
-        # Get all models available to this API Key
         all_models = list(client.models.list())
-        model_names = [m.name for m in all_models]
-        logger.log(f"Discovery: Found {len(model_names)} available models.")
-        
-        # Filter for models that support 'generateContent'
-        valid_models = []
+        logger.log(f"Discovery: Found {len(all_models)} available models.")
+
+        # Text-capable Gemini models only - specialty variants (TTS, image,
+        # live audio, embeddings) reject plain generate_content calls.
+        EXCLUDE = ('tts', 'image', 'audio', 'live', 'embed', 'veo', 'imagen', 'aqa')
+        candidates = []
         for m in all_models:
-            methods = getattr(m, 'supported_generation_methods', [])
-            if methods and ('generateContent' in methods or 'generate_content' in methods):
-                valid_models.append(m)
-        
-        # If strict filtering returns nothing, try a looser filter based on name
-        if not valid_models:
-            valid_models = [m for m in all_models if 'gemini' in m.name.lower() and ('flash' in m.name.lower() or 'pro' in m.name.lower())]
-        
-        # Preference logic: Try to find latest Flash -> Pro -> generic Gemini
-        
-        # 1. Prefer 1.5 Flash
-        best_model = next((m for m in valid_models if 'gemini-1.5-flash' in m.name), None)
-        
-        # 2. Prefer 2.0 Flash (Experimental)
-        if not best_model:
-            best_model = next((m for m in valid_models if 'gemini-2.0-flash' in m.name), None)
-            
-        # 3. Prefer 1.5 Pro
-        if not best_model:
-            best_model = next((m for m in valid_models if 'gemini-1.5-pro' in m.name), None)
-            
-        # 4. Fallback to generic 'gemini-pro' or 'gemini-1.0-pro'
-        if not best_model:
-            best_model = next((m for m in valid_models if 'gemini-pro' in m.name), None)
-            
-        # 5. Last resort: just take the first valid model
-        if not best_model and valid_models:
-            best_model = valid_models[0]
-            
-        if best_model:
-            # Return the full model name as it appears in the list
-            # Usually 'models/gemini-1.5-flash-001'
-            return client, best_model.name
-            
-        logger.log("No valid Gemini models found. Defaulting to gemini-1.5-flash.")
-        # If we found NO models, maybe the key is wrong or has no access. 
-        # But we return a default to try anyway.
-        return client, 'gemini-1.5-flash'
+            lname = m.name.lower()
+            if 'gemini' not in lname:
+                continue
+            if any(x in lname for x in EXCLUDE):
+                continue
+            actions = _gen_actions(m)
+            if actions and not ('generateContent' in actions or 'generate_content' in actions):
+                continue
+            candidates.append(m)
+
+        # Preference order: newest stable Flash -> rolling alias -> 2.0 Flash -> Pro -> any Flash
+        preferences = ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-pro', 'flash']
+
+        # Pass 1: exact model names
+        for pref in preferences:
+            best = next((m for m in candidates if m.name.lower().split('/')[-1] == pref), None)
+            if best:
+                logger.log(f"Using Gemini model: {best.name}")
+                return client, best.name
+
+        # Pass 2: substring match, preferring stable over preview/experimental builds
+        for pref in preferences:
+            best = next((m for m in candidates if pref in m.name.lower() and 'preview' not in m.name.lower() and 'exp' not in m.name.lower()), None)
+            if not best:
+                best = next((m for m in candidates if pref in m.name.lower()), None)
+            if best:
+                logger.log(f"Using Gemini model: {best.name}")
+                return client, best.name
+
+        if candidates:
+            logger.log(f"Using first available Gemini model: {candidates[0].name}")
+            return client, candidates[0].name
+
+        logger.log("No usable Gemini models found via listing. Defaulting to gemini-flash-latest.")
+        return client, 'gemini-flash-latest'
 
     except Exception as e:
-        logger.log(f"Error listing models: {e}")
-        # Fallback if listing fails
-        return client, 'gemini-1.5-flash'
+        logger.log(f"Error listing models: {e}. Defaulting to gemini-flash-latest.")
+        return client, 'gemini-flash-latest'
 
 def generate_technician_summary(notes, job_title):
     """Uses Gemini to summarize the daily work for the PDF Report."""

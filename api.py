@@ -176,19 +176,27 @@ def _loc(lid): return next((l for l in get_state()["locations"] if l["id"] == li
 def _job(jid): return next((j for j in get_state()["jobs"] if j["id"] == jid), None)
 
 def get_model(api_key):
-    if not HAS_GENAI: return None, "gemini-1.5-flash"
+    if not HAS_GENAI: return None, "gemini-flash-latest"
     client = genai.Client(api_key=api_key)
     try:
         models = list(client.models.list())
-        valid = [m for m in models if hasattr(m, 'supported_generation_methods') and
-                 'generateContent' in (m.supported_generation_methods or [])]
-        if not valid: valid = [m for m in models if 'gemini' in m.name.lower()]
-        for pat in ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-pro']:
-            best = next((m for m in valid if pat in m.name), None)
+        exclude = ('tts', 'image', 'audio', 'live', 'embed', 'veo', 'imagen', 'aqa')
+
+        def text_capable(m):
+            # google-genai SDK uses 'supported_actions'; legacy SDK used 'supported_generation_methods'
+            acts = getattr(m, 'supported_actions', None) or getattr(m, 'supported_generation_methods', None)
+            return not acts or 'generateContent' in acts or 'generate_content' in acts
+
+        valid = [m for m in models if 'gemini' in m.name.lower()
+                 and not any(x in m.name.lower() for x in exclude) and text_capable(m)]
+        for pat in ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-pro', 'flash']:
+            best = (next((m for m in valid if m.name.lower().split('/')[-1] == pat), None)
+                    or next((m for m in valid if pat in m.name.lower() and 'preview' not in m.name.lower()), None)
+                    or next((m for m in valid if pat in m.name.lower()), None))
             if best: return client, best.name
         if valid: return client, valid[0].name
     except Exception: pass
-    return client, 'gemini-1.5-flash'
+    return client, 'gemini-flash-latest'
 
 def weather_for(address):
     try:
