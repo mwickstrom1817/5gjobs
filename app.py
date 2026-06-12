@@ -649,50 +649,53 @@ def get_logger():
 
 def keep_awake():
     """
-    Background thread to keep the app active.
-    Pings the server every 2 minutes to prevent idle timeouts.
+    Background thread to keep the app awake on Streamlit Community Cloud.
+
+    The platform sleeps apps that receive no EXTERNAL traffic, so pinging
+    localhost does nothing - the ping must go through the public URL
+    (APP_URL) to count as real viewer traffic. Localhost is only used as
+    a fallback health check so the logs show the process is alive.
+    Note: this only helps while the app is awake; the GitHub Actions
+    keepalive workflow is the backstop that pings from outside.
     """
+    app_url = os.getenv("APP_URL", "").rstrip("/")
+    if not app_url:
+        try:
+            if "APP_URL" in st.secrets:
+                app_url = str(st.secrets["APP_URL"]).rstrip("/")
+        except Exception:
+            pass
+
     def run():
         logger = get_logger()
         # Wait a bit for server to fully start
         time.sleep(10)
-        
-        # Primary endpoint that we know works
-        primary_url = "http://localhost:3000/_stcore/health"
-        
-        while True:
-            try:
-                requests.get(primary_url, timeout=5)
-                msg = f"Keep-awake ping successful to {primary_url}"
-                logger.log(msg)
-            except Exception as e:
-                # Fallback only if primary fails
-                try:
-                    fallback_url = "http://127.0.0.1:3000/_stcore/health"
-                    requests.get(fallback_url, timeout=5)
-                    msg = f"Primary ping failed, fallback successful to {fallback_url}"
-                    logger.log(msg)
-                except Exception:
-                    msg = f"Keep-awake ping failed: {e}"
-                    # 
 
-                    logger.log(msg)
-            
-            # Wait for next ping
-            time.sleep(120) 
-            
-    # Check if thread is already running to avoid duplicates on rerun
-    # We use a new name to ensure we don't conflict with old zombie threads if any
-    thread_name = "keep_awake_v2"
-    
-    # Check for old threads and log them (we can't kill them easily, but good to know)
+        public_url = f"{app_url}/_stcore/health" if app_url else None
+        local_url = "http://localhost:8501/_stcore/health"
+
+        while True:
+            target = public_url or local_url
+            try:
+                requests.get(target, timeout=10)
+                logger.log(f"Keep-awake ping successful to {target}")
+            except Exception as e:
+                # Fallback: confirm the local server is at least alive
+                try:
+                    requests.get(local_url, timeout=5)
+                    logger.log(f"Public ping failed ({e}), local health OK")
+                except Exception:
+                    logger.log(f"Keep-awake ping failed entirely: {e}")
+
+            # Sleep thresholds are measured in hours - every 10 min is plenty
+            time.sleep(600)
+
+    # v3: public-URL pinger (old versions hit localhost:3000, which Streamlit
+    # Cloud ignores). New thread name so old zombie threads are left behind.
+    thread_name = "keep_awake_v3"
     for t in threading.enumerate():
-        if t.name == "keep_awake_thread":
-            pass
         if t.name == thread_name:
             return
-
-    # 
 
     thread = threading.Thread(target=run, name=thread_name, daemon=True)
     thread.start()
