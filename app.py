@@ -55,6 +55,14 @@ try:
 except ImportError:
     HAS_CANVAS = False
 
+# Try importing Folium for the interactive Map view
+try:
+    import folium
+    from streamlit_folium import st_folium
+    HAS_MAP = True
+except ImportError:
+    HAS_MAP = False
+
 # Try importing Cookie Controller for persistent login
 try:
     from streamlit_cookies_controller import CookieController
@@ -3773,6 +3781,112 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             
 
 
+def render_map_view(jobs):
+    """Interactive Folium map: one dot per job at its location, colored by status
+    (same palette as the Tech Board). Click a dot for a detail card + Navigate link."""
+    if not HAS_MAP:
+        st.info("🗺️ Map view needs the `folium` and `streamlit-folium` packages. "
+                "Add them to requirements.txt and redeploy.")
+        return
+
+    def _m_esc(s):
+        return (str(s if s is not None else "").replace('&', '&amp;')
+                .replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;'))
+
+    # Status legend (matches the Tech Board columns)
+    legend_statuses = ["Not Started", "In Progress", "Customer on Hold",
+                       "Waiting on Parts", "Parts not ordered", "Parts Staged"]
+    legend = '<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:0.8em;color:#a1a1aa;">'
+    for sname in legend_statuses:
+        legend += (f'<span style="display:inline-flex;align-items:center;gap:5px;">'
+                   f'<span style="width:11px;height:11px;border-radius:50%;background:{get_status_color(sname)};'
+                   f'display:inline-block;"></span>{sname}</span>')
+    legend += '</div>'
+    st.markdown(legend, unsafe_allow_html=True)
+
+    # Resolve a lat/lon for each job, geocoding any location that lacks one (then persist)
+    points = []
+    skipped = 0
+    geocoded_any = False
+    with st.spinner("Locating jobs..."):
+        for job in jobs:
+            loc = get_location(job['locationId'])
+            if not loc or not loc.get('address'):
+                skipped += 1
+                continue
+            lat, lon = loc.get('lat'), loc.get('lon')
+            try:
+                lat = float(lat) if lat is not None else None
+                lon = float(lon) if lon is not None else None
+            except (ValueError, TypeError):
+                lat = lon = None
+            if not lat or not lon:
+                lat, lon = get_lat_lon_from_address(loc['address'])
+                if lat and lon:
+                    loc['lat'], loc['lon'] = lat, lon
+                    geocoded_any = True
+            if lat and lon:
+                points.append((job, loc, lat, lon))
+            else:
+                skipped += 1
+    if geocoded_any:
+        save_state(invalidate_briefing=False)
+
+    if not points:
+        st.info("No mappable jobs yet — none of the active jobs have a geocodable address.")
+        return
+
+    avg_lat = sum(p[2] for p in points) / len(points)
+    avg_lon = sum(p[3] for p in points) / len(points)
+    fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=8, tiles="CartoDB positron")
+
+    # Nudge markers that share exact coordinates so they don't fully overlap
+    coord_seen = {}
+    for job, loc, lat, lon in points:
+        key = (round(lat, 5), round(lon, 5))
+        n = coord_seen.get(key, 0)
+        coord_seen[key] = n + 1
+        if n:
+            lat += 0.0005 * n
+            lon += 0.0005 * n
+
+        color = get_status_color(job['status'])
+        jtech = get_tech(job['techId'])
+        nav_url = f"https://www.google.com/maps/dir/?api=1&destination={urllib.parse.quote(loc['address'])}"
+
+        popup_html = (
+            f'<div style="font-family:Arial,sans-serif;width:230px;">'
+            f'<div style="font-weight:bold;font-size:14px;color:#18181b;margin-bottom:5px;">{_m_esc(job["title"])}</div>'
+            f'<span style="background:{color};color:white;padding:1px 8px;border-radius:8px;font-size:11px;">{_m_esc(job["status"])}</span> '
+            f'<span style="background:#3f3f46;color:white;padding:1px 8px;border-radius:8px;font-size:11px;">{_m_esc(job.get("priority", "N/A"))}</span>'
+            f'<div style="font-size:12px;color:#333;margin-top:7px;">📍 <b>{_m_esc(loc["name"])}</b><br>{_m_esc(loc["address"])}</div>'
+            f'<div style="font-size:12px;color:#333;margin-top:4px;">👤 {_m_esc(jtech["name"] if jtech else "Unassigned")}</div>'
+            f'<a href="{nav_url}" target="_blank" style="display:inline-block;margin-top:9px;background:#b91c1c;'
+            f'color:white;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:bold;">🧭 Navigate</a>'
+            f'</div>'
+        )
+
+        folium.CircleMarker(
+            location=[lat, lon],
+            radius=9, color="#27272a", weight=1.5,
+            fill=True, fill_color=color, fill_opacity=0.9,
+            tooltip=job['title'],
+            popup=folium.Popup(popup_html, max_width=260),
+        ).add_to(fmap)
+
+    # Frame all markers
+    lats = [p[2] for p in points]
+    lons = [p[3] for p in points]
+    if len(points) > 1:
+        fmap.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+
+    # returned_objects=[] keeps panning/clicking from triggering heavy app reruns
+    st_folium(fmap, use_container_width=True, height=600, returned_objects=[], key="jobs_map")
+
+    if skipped:
+        st.caption(f"⚠️ {skipped} job(s) not shown — address missing or could not be geocoded.")
+
+
 def render_analytics_dashboard():
     st.subheader("📊 Operational Analytics")
 
@@ -4613,7 +4727,7 @@ def main():
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
 
     # Navigation Tabs
-    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive"]
+    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🗺️ Map", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive"]
     
     if current_tech:
         tabs_list.insert(0, "🙋‍♂️ My Assignments")
@@ -4834,6 +4948,17 @@ def main():
         cal_html += legend
 
         st.markdown(cal_html, unsafe_allow_html=True)
+
+    # 3.5 Map View
+    with tab_map["🗺️ Map"]:
+        st.subheader("🗺️ Job Map")
+        map_only_mine = False
+        if current_tech:
+            map_only_mine = st.toggle("👷 Only my jobs", key="map_only_mine")
+        map_jobs = [j for j in filtered_jobs if j['status'] != 'Completed']
+        if map_only_mine and current_tech:
+            map_jobs = [j for j in map_jobs if j['techId'] == current_tech['id']]
+        render_map_view(map_jobs)
 
     # 4. Service Calls
     with tab_map["🧰 Service Calls"]:
