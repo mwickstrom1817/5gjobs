@@ -1225,17 +1225,17 @@ def get_lat_lon_from_address(address):
         get_logger().log(f"Geocoding failed for '{address}': {e}")
         return None, None
 
-@st.cache_data(ttl=600) # Cache for 10 mins
+@st.cache_data(ttl=1800) # Cache for 30 mins (weather barely moves, and it's just informational)
 def get_weather(lat, lon):
     """Fetches current weather from Open-Meteo (Free, No Key)."""
     try:
         # Ensure floats
         lat = float(lat)
         lon = float(lon)
-        
+
         url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,weather_code&temperature_unit=fahrenheit&timezone=auto"
         headers = {'User-Agent': '5GSecurityJobBoard/1.0'}
-        r = requests.get(url, headers=headers, timeout=5)
+        r = requests.get(url, headers=headers, timeout=3)
         
         if r.status_code != 200:
             return None
@@ -2790,10 +2790,11 @@ def job_details_dialog(job_id):
     tech = get_tech(job['techId'])
 
     # Header
+    weather_ph = None  # backfilled with weather at the end of the dialog (see below)
     c1, c2 = st.columns([3, 1])
     with c1:
         st.subheader(f"{job['title']}")
-        
+
         # Map Link Logic
         if loc:
             map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
@@ -2801,36 +2802,11 @@ def job_details_dialog(job_id):
                 st.markdown(f"📍 **[{loc['name']}]({map_url})**")
             else:
                 st.markdown(f"📍 **{loc['name']}**")
-            
-            # Weather Widget
-            weather_info = ""
-            if loc.get('address'):
-                # Check if we already have lat/lon cached in session for this loc to save API calls
-                lat = loc.get('lat')
-                lon = loc.get('lon')
-                
-                # Validate cached lat/lon
-                try:
-                    if lat is not None: float(lat)
-                    if lon is not None: float(lon)
-                except (ValueError, TypeError):
-                    lat = None
-                    lon = None
-                
-                # If not cached or invalid, try to fetch and save
-                if not lat or not lon:
-                    lat, lon = get_lat_lon_from_address(loc['address'])
-                    if lat and lon:
-                        loc['lat'] = lat
-                        loc['lon'] = lon
-                        save_state(invalidate_briefing=False)
-                
-                if lat and lon:
-                    weather = get_weather(lat, lon)
-                    if weather:
-                        weather_info = f" | {weather}"
-            
-            st.caption(f"{loc['address']}{weather_info}")
+
+            # Paint the address immediately; the weather network call is deferred to
+            # the end of the dialog so it doesn't block the tabs from rendering.
+            weather_ph = st.empty()
+            weather_ph.caption(loc.get('address', ''))
         else:
              st.caption(f"📍 Unknown | 👤 {tech['name'] if tech else 'Unassigned'}")
         
@@ -3677,6 +3653,32 @@ Desc: {job['description']}"""
                         st.success("Daily Report Submitted & Emailed to Admins!")
                         st.rerun(scope="fragment")
 
+    # --- DEFERRED WEATHER ---
+    # The dialog body has now rendered, so the network call below backfills the
+    # weather into the address line without having delayed any of the tabs.
+    if loc and weather_ph is not None and loc.get('address'):
+        try:
+            lat, lon = loc.get('lat'), loc.get('lon')
+            try:
+                lat = float(lat) if lat is not None else None
+                lon = float(lon) if lon is not None else None
+            except (ValueError, TypeError):
+                lat = lon = None
+
+            # Geocode once and persist on the location (skipped on every later view)
+            if not lat or not lon:
+                lat, lon = get_lat_lon_from_address(loc['address'])
+                if lat and lon:
+                    loc['lat'], loc['lon'] = lat, lon
+                    save_state(invalidate_briefing=False)
+
+            if lat and lon:
+                weather = get_weather(lat, lon)
+                if weather:
+                    weather_ph.caption(f"{loc['address']} | {weather}")
+        except Exception:
+            pass
+
 # --- UI COMPONENTS ---
 
 
@@ -3718,9 +3720,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
                  <span>📅 {'🗓️ ' + job['date'][:10]}</span>
-            </div>
-            {stale_html}
-            {parts_html}
+            </div>{stale_html}{parts_html}
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
