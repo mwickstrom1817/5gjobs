@@ -362,6 +362,14 @@ def location_has_system_info(loc):
         return True
     return any(v for v in (loc.get('credentials') or {}).values())
 
+# Priority colors (hot -> cold), shared by the calendar and other UI
+PRIORITY_COLORS = {
+    "Critical": "#ef4444",
+    "High": "#dc2626",
+    "Medium": "#b45309",
+    "Low": "#52525b",
+}
+
 # Parts pipeline: items flow left to right toward being staged for the job
 PART_STATUSES = ["Needed", "Ordered", "Received", "Staged"]
 PART_STATUS_COLORS = {
@@ -4720,75 +4728,112 @@ def main():
     with tab_map["📅 Calendar"]:
         st.subheader("📅 Job Schedule")
         
-        # Calendar Controls
-        col_cal1, col_cal2 = st.columns([1, 4])
-        with col_cal1:
-            # Simple month navigation could be added here, defaulting to current month for now
-            current_date = now_local()
-            cal_year = st.number_input("Year", value=current_date.year, min_value=2024, max_value=2030)
-            cal_month = st.selectbox("Month", list(calendar.month_name)[1:], index=current_date.month - 1)
-            month_num = list(calendar.month_name).index(cal_month)
-            
-        with col_cal2:
-            only_my_jobs = False
-            if current_tech:
-                only_my_jobs = st.toggle("👷 Only my jobs", key="cal_only_mine")
+        # Month navigation (persisted in session so prev/next survive reruns)
+        if "cal_view" not in st.session_state:
+            _now = now_local()
+            st.session_state.cal_view = [_now.year, _now.month]
+        cal_year, month_num = st.session_state.cal_view
+
+        nav_prev, nav_title, nav_next, nav_today, nav_mine = st.columns([1, 3, 1, 1, 2])
+        if nav_prev.button("◀", key="cal_prev", use_container_width=True):
+            month_num -= 1
+            if month_num < 1:
+                month_num, cal_year = 12, cal_year - 1
+            st.session_state.cal_view = [cal_year, month_num]
+            st.rerun()
+        if nav_next.button("▶", key="cal_next", use_container_width=True):
+            month_num += 1
+            if month_num > 12:
+                month_num, cal_year = 1, cal_year + 1
+            st.session_state.cal_view = [cal_year, month_num]
+            st.rerun()
+        if nav_today.button("Today", key="cal_today", use_container_width=True):
+            _now = now_local()
+            st.session_state.cal_view = [_now.year, _now.month]
+            st.rerun()
+        nav_title.markdown(
+            f"<h3 style='text-align:center; margin:0; color:#e4e4e7;'>{calendar.month_name[month_num]} {cal_year}</h3>",
+            unsafe_allow_html=True,
+        )
+
+        only_my_jobs = False
+        if current_tech:
+            only_my_jobs = nav_mine.toggle("👷 Only my jobs", key="cal_only_mine")
 
         cal_jobs = filtered_jobs
         if only_my_jobs and current_tech:
             cal_jobs = [j for j in cal_jobs if j['techId'] == current_tech['id']]
-        
-        # Generate Calendar Grid
+
+        # Build the whole month as one styled HTML grid (uniform cells, today
+        # highlighted, weekends shaded). Pills are hover-only, as before.
+        def _cal_esc(s):
+            return (str(s).replace('&', '&amp;').replace('<', '&lt;')
+                    .replace('>', '&gt;').replace('"', '&quot;'))
+
+        today = now_local().date()
         cal = calendar.monthcalendar(cal_year, month_num)
-        
-        # Weekday Headers
-        cols = st.columns(7)
-        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-        for i, day in enumerate(days):
-            cols[i].markdown(f"**{day}**")
-            
-        # Calendar Rows
+
+        cal_css = (
+            "<style>"
+            ".cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}"
+            ".cal-hdr{text-align:center;font-weight:bold;color:#a1a1aa;font-size:0.75em;"
+            "padding:4px 0;text-transform:uppercase;letter-spacing:0.5px;}"
+            ".cal-cell{background:#18181b;border:1px solid #27272a;border-radius:8px;"
+            "min-height:104px;padding:6px;overflow:hidden;}"
+            ".cal-empty{background:transparent;border:1px solid transparent;}"
+            ".cal-weekend{background:#141417;}"
+            ".cal-today{border:2px solid #b91c1c;background:#201416;}"
+            ".cal-daynum{font-size:0.8em;font-weight:bold;color:#d4d4d8;margin-bottom:4px;}"
+            ".cal-today .cal-daynum{color:#ef4444;}"
+            ".cal-pill{color:white;padding:2px 6px;border-radius:4px;font-size:0.7em;"
+            "margin-bottom:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help;}"
+            ".cal-more{font-size:0.65em;color:#a1a1aa;padding-left:2px;}"
+            "</style>"
+        )
+
+        cal_html = cal_css + '<div class="cal-grid">'
+        for d in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+            cal_html += f'<div class="cal-hdr">{d}</div>'
+
         for week in cal:
-            cols = st.columns(7)
             for i, day in enumerate(week):
-                with cols[i]:
-                    if day == 0:
-                        st.write("") # Empty day from other month
-                    else:
-                        # Render Day Cell
-                        st.markdown(f"**{day}**")
-                        
-                        # Find jobs for this date
-                        # Note: Job 'date' is ISO format string. We compare YYYY-MM-DD.
-                        target_date_str = f"{cal_year}-{month_num:02d}-{day:02d}"
-                        
-                        day_jobs = [j for j in cal_jobs if j['date'].startswith(target_date_str) and j['status'] != 'Completed']
-                        
-                        for job in day_jobs:
-                            tech = get_tech(job['techId'])
-                            tech_initials = tech['initials'] if tech else "Un"
-                            color = tech['color'] if tech else "#52525b"
-                            
-                            # Small pill for the job
-                            st.markdown(f"""
-                            <div style="
-                                background-color: {color}; 
-                                color: white; 
-                                padding: 2px 4px; 
-                                border-radius: 4px; 
-                                font-size: 0.7em; 
-                                margin-bottom: 2px;
-                                white-space: nowrap;
-                                overflow: hidden;
-                                text-overflow: ellipsis;
-                                cursor: help;"
-                                title="{job['title']} ({tech['name'] if tech else 'Unassigned'})">
-                                {tech_initials} - {job['title'][:10]}..
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                        if not day_jobs:
-                            st.markdown("<div style='height: 20px;'></div>", unsafe_allow_html=True)
+                if day == 0:
+                    cal_html += '<div class="cal-cell cal-empty"></div>'
+                    continue
+                is_today = (cal_year == today.year and month_num == today.month and day == today.day)
+                cls = "cal-cell"
+                if is_today:
+                    cls += " cal-today"
+                elif i >= 5:
+                    cls += " cal-weekend"
+
+                target_date_str = f"{cal_year}-{month_num:02d}-{day:02d}"
+                day_jobs = [j for j in cal_jobs if j['date'].startswith(target_date_str) and j['status'] != 'Completed']
+
+                cell = f'<div class="{cls}"><div class="cal-daynum">{day}</div>'
+                for job in day_jobs[:4]:
+                    jtech = get_tech(job['techId'])
+                    color = PRIORITY_COLORS.get(job.get('priority'), "#52525b")
+                    initials = jtech['initials'] if jtech else "Un"
+                    tip = _cal_esc(f"{job['title']} — {jtech['name'] if jtech else 'Unassigned'} [{job.get('priority', 'N/A')} · {job['status']}]")
+                    label = _cal_esc(f"{initials} {job['title'][:12]}")
+                    cell += f'<div class="cal-pill" style="background:{color};" title="{tip}">{label}</div>'
+                if len(day_jobs) > 4:
+                    cell += f'<div class="cal-more">+{len(day_jobs) - 4} more</div>'
+                cell += '</div>'
+                cal_html += cell
+
+        cal_html += '</div>'
+
+        # Priority legend (pills are colored by priority)
+        legend = '<div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:4px; font-size:0.75em; color:#a1a1aa;">'
+        for p_name, p_color in PRIORITY_COLORS.items():
+            legend += (f'<span style="display:inline-flex; align-items:center; gap:5px;">'
+                       f'<span style="width:11px; height:11px; border-radius:3px; background:{p_color}; display:inline-block;"></span>{p_name}</span>')
+        legend += '</div>'
+        cal_html += legend
+
+        st.markdown(cal_html, unsafe_allow_html=True)
 
     # 4. Service Calls
     with tab_map["🧰 Service Calls"]:
