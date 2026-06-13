@@ -273,6 +273,22 @@ def update_job_status_callback(job_id, widget_key):
             st.session_state.jobs[job_idx]['status'] = new_status
             save_state()
 
+def update_part_status_callback(job_id, part_id, widget_key):
+    """Callback to update a single part's status inline and save state."""
+    new_status = st.session_state.get(widget_key)
+    if not new_status:
+        return
+    job_idx = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
+    if job_idx == -1:
+        return
+    for p in st.session_state.jobs[job_idx].get('parts', []):
+        if p['id'] == part_id and p.get('status') != new_status:
+            p['status'] = new_status
+            p['updated_at'] = now_local().isoformat()
+            p['added_by'] = st.session_state.user_info.get('email', p.get('added_by', 'unknown')) if "user_info" in st.session_state else p.get('added_by', 'unknown')
+            save_state(invalidate_briefing=False)
+            break
+
 # --- DB SESSION INITIALIZER (safe) ---
 def init_db_session():
     try:
@@ -345,6 +361,21 @@ def location_has_system_info(loc):
     if loc.get('systems'):
         return True
     return any(v for v in (loc.get('credentials') or {}).values())
+
+# Parts pipeline: items flow left to right toward being staged for the job
+PART_STATUSES = ["Needed", "Ordered", "Received", "Staged"]
+PART_STATUS_COLORS = {
+    "Needed": "#991b1b",
+    "Ordered": "#b45309",
+    "Received": "#3b82f6",
+    "Staged": "#10b981",
+}
+
+def parts_summary(job):
+    """Returns (staged_count, total_count) for a job's parts list."""
+    parts = job.get('parts', [])
+    staged = sum(1 for p in parts if p.get('status') == 'Staged')
+    return staged, len(parts)
 
 # --- AUTHENTICATION ---
 
@@ -2899,7 +2930,10 @@ Desc: {job['description']}"""
     # Flag the credentials tab when nothing is recorded yet so it doesn't get forgotten
     has_sys_info = location_has_system_info(loc)
     creds_tab_label = "🔐 IPs & Passwords" if has_sys_info else "⚠️ IPs & Passwords"
-    tab_history, tab_photos, tab_docs, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "🖼️ Photos", "📄 Documents", "📸 In-Progress", "📝 Daily Report", creds_tab_label])
+    # Parts tab label shows progress at a glance (e.g. "🔩 Parts 2/5")
+    _staged, _total = parts_summary(job)
+    parts_tab_label = f"🔩 Parts {_staged}/{_total}" if _total else "🔩 Parts"
+    tab_history, tab_photos, tab_docs, tab_parts, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "🖼️ Photos", "📄 Documents", parts_tab_label, "📸 In-Progress", "📝 Daily Report", creds_tab_label])
 
     with tab_docs:
         st.write("#### 📄 Documents")
@@ -3005,6 +3039,103 @@ Desc: {job['description']}"""
                         st.link_button(f"📄 PDF — {cap}", url, use_container_width=True)
                     else:
                         st.image(url, caption=cap, use_container_width=True)
+
+    with tab_parts:
+        st.write("#### 🔩 Parts & Materials")
+        st.caption("Track what this job needs, from request through staging. Anyone can add or update items.")
+
+        parts = job.get('parts', [])
+        current_user_email = st.session_state.user_info.get('email', 'unknown') if "user_info" in st.session_state else 'unknown'
+
+        # Progress summary
+        if parts:
+            counts = {s: sum(1 for p in parts if p.get('status') == s) for s in PART_STATUSES}
+            staged, total = parts_summary(job)
+            st.progress(staged / total if total else 0, text=f"{staged} of {total} staged")
+            chip_html = " ".join(
+                f'<span style="background:{PART_STATUS_COLORS[s]};color:white;padding:2px 10px;border-radius:10px;font-size:0.75em;margin-right:4px;">{counts[s]} {s}</span>'
+                for s in PART_STATUSES if counts[s]
+            )
+            st.markdown(chip_html, unsafe_allow_html=True)
+
+            # Offer to sync the job's overall status to match the parts pipeline
+            if total and staged == total and job['status'] != 'Parts Staged':
+                if st.button("✅ All parts staged — mark job 'Parts Staged'", key=f"sync_staged_{job_id}", use_container_width=True):
+                    st.session_state.jobs[job_index]['status'] = 'Parts Staged'
+                    save_state()
+                    st.rerun(scope="fragment")
+            elif any(p.get('status') in ('Needed', 'Ordered') for p in parts) and job['status'] not in ('Waiting on Parts', 'Parts not ordered'):
+                only_needed = all(p.get('status') == 'Needed' for p in parts)
+                suggested = 'Parts not ordered' if only_needed else 'Waiting on Parts'
+                if st.button(f"📦 Mark job '{suggested}'", key=f"sync_waiting_{job_id}", use_container_width=True):
+                    st.session_state.jobs[job_index]['status'] = suggested
+                    save_state()
+                    st.rerun(scope="fragment")
+
+        # Add a part
+        with st.expander("➕ Add Part / Material", expanded=not parts):
+            with st.form(key=f"add_part_form_{job_id}", clear_on_submit=True):
+                ap1, ap2 = st.columns([3, 1])
+                new_name = ap1.text_input("Item", placeholder="e.g. 16ch NVR, Cat6 box, PoE switch")
+                new_qty = ap2.number_input("Qty", min_value=1, step=1, value=1)
+                ap3, ap4, ap5 = st.columns(3)
+                new_status = ap3.selectbox("Status", PART_STATUSES, index=0)
+                new_vendor = ap4.text_input("Vendor (optional)")
+                new_cost = ap5.text_input("Est. Cost (optional)", placeholder="$")
+                new_notes = st.text_input("Notes (optional)", placeholder="PO #, part number, where it's stored...")
+
+                if st.form_submit_button("💾 Add Part", use_container_width=True):
+                    if not new_name.strip():
+                        st.warning("Please enter an item name.")
+                    else:
+                        st.session_state.jobs[job_index].setdefault('parts', []).append({
+                            'id': f"p{datetime.datetime.now().timestamp()}",
+                            'name': new_name.strip(),
+                            'qty': int(new_qty),
+                            'status': new_status,
+                            'vendor': new_vendor.strip(),
+                            'cost': new_cost.strip(),
+                            'notes': new_notes.strip(),
+                            'added_by': current_user_email,
+                            'updated_at': now_local().isoformat(),
+                        })
+                        save_state(invalidate_briefing=False)
+                        st.success(f"Added {new_name.strip()}.")
+                        st.rerun(scope="fragment")
+
+        if not parts:
+            st.info("No parts listed yet. Add what this job needs above.")
+
+        # Part list - status is editable inline via on_change callback
+        for p in parts:
+            with st.container(border=True):
+                pc1, pc2, pc3 = st.columns([3, 2, 1])
+                qty_str = f"{p.get('qty', 1)}× " if p.get('qty') else ""
+                pc1.markdown(f"**{qty_str}{p.get('name', 'Item')}**")
+                meta = []
+                if p.get('vendor'):
+                    meta.append(f"🏬 {p['vendor']}")
+                if p.get('cost'):
+                    meta.append(f"💲 {p['cost']}")
+                if meta:
+                    pc1.caption(" · ".join(meta))
+                if p.get('notes'):
+                    pc1.caption(p['notes'])
+
+                status_key = f"part_status_{p['id']}"
+                pc2.selectbox(
+                    "Status", PART_STATUSES, index=PART_STATUSES.index(p['status']) if p.get('status') in PART_STATUSES else 0,
+                    key=status_key, label_visibility="collapsed",
+                    on_change=update_part_status_callback, args=(job_id, p['id'], status_key),
+                )
+                if pc3.button("🗑️", key=f"del_part_{p['id']}", help="Remove this part", use_container_width=True):
+                    st.session_state.jobs[job_index]['parts'] = [x for x in st.session_state.jobs[job_index].get('parts', []) if x['id'] != p['id']]
+                    save_state(invalidate_briefing=False)
+                    st.rerun(scope="fragment")
+
+                if p.get('updated_at'):
+                    pc1.caption(f"Updated {p['updated_at'][:16]} by {p.get('added_by', 'unknown')}")
+
 
     with tab_creds:
         st.write("#### 🔐 Site Systems & Network Info")
@@ -3566,6 +3697,13 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     if stale_days is not None and stale_days >= STALE_JOB_DAYS:
         stale_html = f'<div style="color:#f87171; font-size:0.8em; margin-top:6px; font-weight:bold;">🚨 No updates in {stale_days} days</div>'
 
+    # Parts progress badge (makes the Tech Board parts columns actionable)
+    staged_parts, total_parts = parts_summary(job)
+    parts_html = ""
+    if total_parts:
+        parts_color = "#10b981" if staged_parts == total_parts else "#a1a1aa"
+        parts_html = f'<div style="color:{parts_color}; font-size:0.8em; margin-top:6px;">🔩 Parts: {staged_parts}/{total_parts} staged</div>'
+
     with st.container():
         st.markdown(f"""
         <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
@@ -3582,6 +3720,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                  <span>📅 {'🗓️ ' + job['date'][:10]}</span>
             </div>
             {stale_html}
+            {parts_html}
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
