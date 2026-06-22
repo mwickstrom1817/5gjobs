@@ -227,6 +227,7 @@ def load_data():
             "locations": [],
             "briefing": "Data required to generate briefing.",
             "adminEmails": [],
+            "construction_emails": [],
             "smtp_settings": {},
             "last_reminder_date": None
         }
@@ -238,6 +239,7 @@ def _sync_session_to_db():
     st.session_state.db["locations"] = st.session_state.locations
     st.session_state.db["briefing"] = st.session_state.briefing
     st.session_state.db["adminEmails"] = st.session_state.adminEmails
+    st.session_state.db["construction_emails"] = st.session_state.get("construction_emails", [])
     st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
@@ -251,6 +253,7 @@ def refresh_session_from_db():
     st.session_state.locations = data.get("locations", [])
     st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
     st.session_state.adminEmails = data.get("adminEmails", [])
+    st.session_state.construction_emails = data.get("construction_emails", [])
     st.session_state.smtp_settings = data.get("smtp_settings", {})
     st.session_state.last_reminder_date = data.get("last_reminder_date")
 
@@ -314,6 +317,7 @@ if "jobs" not in st.session_state:
     st.session_state.locations = db_data.get("locations", [])
     st.session_state.briefing = db_data.get("briefing", "Data required to generate briefing.")
     st.session_state.adminEmails = db_data.get("adminEmails", [])
+    st.session_state.construction_emails = db_data.get("construction_emails", [])
     st.session_state.smtp_settings = db_data.get("smtp_settings", {})
     st.session_state.last_reminder_date = db_data.get("last_reminder_date")
 
@@ -792,7 +796,7 @@ def start_background_scheduler():
                             jobs = state.get("jobs", [])
                             locations = state.get("locations", [])
                             recipients = daily_summary_recipients(techs, state.get("adminEmails", []))
-                            active_exists = any(j.get('status') != 'Completed' for j in jobs)
+                            active_exists = any(j.get('status') != 'Completed' for j in jobs if j.get('company', 'security') != 'construction')
 
                             if recipients and active_exists:
                                 subject, plain_body, html_body = build_ops_summary_email(jobs, techs, locations, today_str)
@@ -906,6 +910,33 @@ def get_tech(tech_id):
 
 def get_location(loc_id):
     return next((l for l in st.session_state.locations if l['id'] == loc_id), None)
+
+# --- COMPANY (multi-company support: 5G Security + 5G Construction) ---
+def job_company(j):
+    """Company a job belongs to. Untagged jobs are treated as Security (back-compat)."""
+    return (j or {}).get('company', 'security')
+
+def tech_company(t):
+    return (t or {}).get('company', 'security')
+
+def company_jobs(company):
+    return [j for j in st.session_state.jobs if job_company(j) == company]
+
+def company_techs(company):
+    return [t for t in st.session_state.techs if tech_company(t) == company]
+
+def get_user_construction_role(user_email):
+    """Returns 'manager' (construction lead/admin), 'crew' (construction tech),
+    or None for the given email. Security admins are handled separately."""
+    if not user_email:
+        return None
+    email_l = user_email.lower()
+    if email_l in [e.lower() for e in st.session_state.get('construction_emails', [])]:
+        return 'manager'
+    t = next((t for t in st.session_state.techs if (t.get('email') or '').lower() == email_l), None)
+    if t and tech_company(t) == 'construction':
+        return 'crew'
+    return None
 
 # Jobs with no history entry for this many days get flagged as stale
 STALE_JOB_DAYS = 5
@@ -1333,6 +1364,7 @@ def download_data_as_json():
         "locations": st.session_state.locations,
         "briefing": st.session_state.briefing,
         "adminEmails": st.session_state.adminEmails,
+        "construction_emails": st.session_state.get("construction_emails", []),
         "last_reminder_date": st.session_state.get("last_reminder_date")
     }
     return json.dumps(data, indent=2)
@@ -1761,20 +1793,25 @@ def build_admin_email_html(header_label, intro, detail_rows, footer_note):
 </html>"""
 
 def daily_summary_recipients(techs, admin_emails):
-    """Unique, case-insensitive list of all tech + admin emails for the daily summary."""
+    """Unique, case-insensitive list of Security tech + admin emails for the daily
+    summary. Construction crew are excluded — they don't see the Security summary."""
     seen, out = set(), []
-    for e in [t.get('email') for t in (techs or [])] + list(admin_emails or []):
+    sec_techs = [t for t in (techs or []) if tech_company(t) != 'construction']
+    for e in [t.get('email') for t in sec_techs] + list(admin_emails or []):
         if e and e.strip() and e.lower() not in seen:
             seen.add(e.lower())
             out.append(e.strip())
     return out
 
 def build_ops_summary_email(jobs, techs, locations, today_str):
-    """Company-wide summary of all active jobs, grouped by tech. Pure/thread-safe.
+    """Company-wide summary of all active SECURITY jobs, grouped by tech. Pure/thread-safe.
     Returns (subject, plain_text, html)."""
     def esc(s):
         return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
+    # Security only — construction has its own section and isn't in this summary
+    techs = [t for t in techs if tech_company(t) != 'construction']
+    jobs = [j for j in jobs if job_company(j) != 'construction']
     loc_by_id = {l['id']: l for l in locations}
     tech_by_id = {t['id']: t for t in techs}
     active = [j for j in jobs if j.get('status') != 'Completed']
@@ -1959,8 +1996,10 @@ def send_completion_email(job, tech, location, report_data):
     sender_email = get_config_val("SMTP_EMAIL")
     sender_password = get_config_val("SMTP_PASSWORD")
     
-    # Get Admin Emails
-    recipients = st.session_state.adminEmails
+    # Get recipients — construction jobs also notify the construction leads
+    recipients = list(st.session_state.adminEmails)
+    if job_company(job) == 'construction':
+        recipients = recipients + [e for e in st.session_state.get('construction_emails', []) if e not in recipients]
     if not recipients:
         st.warning("No admin emails configured to receive completion notification.")
         return
@@ -2063,8 +2102,10 @@ def send_daily_report_email(job, tech, location, report_data):
     sender_email = get_config_val("SMTP_EMAIL")
     sender_password = get_config_val("SMTP_PASSWORD")
     
-    # Get Admin Emails
-    recipients = st.session_state.adminEmails
+    # Get recipients — construction jobs also notify the construction leads
+    recipients = list(st.session_state.adminEmails)
+    if job_company(job) == 'construction':
+        recipients = recipients + [e for e in st.session_state.get('construction_emails', []) if e not in recipients]
     if not recipients:
         st.warning("No admin emails configured.")
         return
@@ -2187,7 +2228,7 @@ def send_daily_reminders():
 
     # 3. Send one company-wide summary to every tech + admin
     recipients = daily_summary_recipients(st.session_state.techs, st.session_state.adminEmails)
-    active_exists = any(j.get('status') != 'Completed' for j in st.session_state.jobs)
+    active_exists = any(j.get('status') != 'Completed' for j in st.session_state.jobs if job_company(j) != 'construction')
     if not recipients or not active_exists:
         # Nothing to send today; mark done so we don't keep retrying
         st.session_state.last_reminder_date = today_str
@@ -2301,7 +2342,9 @@ def generate_morning_briefing():
     # Use dynamic model selector
     client, model_name = get_available_model(api_key)
 
-    active_jobs = [j for j in st.session_state.jobs if j['status'] != 'Completed']
+    # Security briefing only — construction jobs live in their own section
+    sec_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
+    active_jobs = [j for j in sec_jobs if j['status'] != 'Completed']
     critical_jobs = [j for j in active_jobs if j['priority'] in ['Critical', 'High']]
 
     stale_lines = []
@@ -2360,7 +2403,9 @@ def generate_morning_briefing():
 # --- DIALOGS (MODALS) ---
 
 @st.dialog("Create New Job")
-def add_job_dialog():
+def add_job_dialog(company="security"):
+    if company == "construction":
+        st.caption("🏗️ This job will be added to **5G Construction**.")
     if not st.session_state.locations:
         st.error("Please create a Location in the Admin tab first.")
         if st.button("Close"): st.rerun()
@@ -2369,7 +2414,14 @@ def add_job_dialog():
     # Location picker lives OUTSIDE the form so choosing a site can immediately
     # pull in that location's saved contact. (Widgets inside an st.form don't
     # rerun on change, so this prefill can't happen from within the form.)
-    loc_map = {l['name']: l['id'] for l in st.session_state.locations}
+    # Security sees all locations; construction only sees sites it has used before
+    # (plus New Location) so security-only sites aren't exposed on the construction side.
+    if company == "security":
+        visible_locs = st.session_state.locations
+    else:
+        used_loc_ids = {j.get('locationId') for j in company_jobs(company)}
+        visible_locs = [l for l in st.session_state.locations if l['id'] in used_loc_ids]
+    loc_map = {l['name']: l['id'] for l in visible_locs}
     loc_options = list(loc_map.keys()) + ["➕ New Location"]
     loc_selection = st.selectbox("Location", loc_options)
 
@@ -2409,18 +2461,19 @@ def add_job_dialog():
 
         contact3_name = st.text_input("Additional Contact / Notes")
 
-        # Tech Selection
-        tech_map = {t['name']: t['id'] for t in st.session_state.techs}
-        
+        # Tech Selection (scoped to this company's crew)
+        company_crew = company_techs(company)
+        tech_map = {t['name']: t['id'] for t in company_crew}
+
         # Create display labels with skills
         tech_display_map = {}
-        for t in st.session_state.techs:
+        for t in company_crew:
             skills_str = f" ({', '.join(t.get('skills', [])[:2])}..)" if t.get('skills') else ""
             label = f"{t['name']}{skills_str}"
             tech_display_map[label] = t['id']
-            
+
         tech_display_map["Unassigned"] = None
-        
+
         tech_label = st.selectbox("Assign Tech", list(tech_display_map.keys()))
         selected_tech_id = tech_display_map[tech_label]
 
@@ -2485,7 +2538,8 @@ def add_job_dialog():
                 'date': full_date.isoformat(),
                 'contacts': contacts,
                 'reports': [],
-                'documents': doc_keys
+                'documents': doc_keys,
+                'company': company
             }
             st.session_state.jobs.insert(0, new_job)
             
@@ -2575,16 +2629,16 @@ def edit_job_dialog(job_id):
             st.warning("No locations found.")
             loc_name = None
         
-        # Tech Selection
-        tech_map = {t['name']: t['id'] for t in st.session_state.techs}
-        
+        # Tech Selection (scoped to the job's company so crews don't cross over)
+        company_crew = company_techs(job_company(job))
+
         # Create display labels with skills
         tech_display_map = {}
-        for t in st.session_state.techs:
+        for t in company_crew:
             skills_str = f" ({', '.join(t.get('skills', [])[:2])}..)" if t.get('skills') else ""
             label = f"{t['name']}{skills_str}"
             tech_display_map[label] = t['id']
-            
+
         tech_display_map["Unassigned"] = None
         tech_options = list(tech_display_map.keys())
         
@@ -3051,7 +3105,16 @@ Desc: {job['description']}"""
     # Parts tab label shows progress at a glance (e.g. "🔩 Parts 2/5")
     _staged, _total = parts_summary(job)
     parts_tab_label = f"🔩 Parts {_staged}/{_total}" if _total else "🔩 Parts"
-    tab_history, tab_photos, tab_docs, tab_parts, tab_progress, tab_daily, tab_creds = st.tabs(["📋 Details & History", "🖼️ Photos", "📄 Documents", parts_tab_label, "📸 In-Progress", "📝 Daily Report", creds_tab_label])
+
+    # Construction jobs don't get the IPs & Passwords tab — locations can be shared
+    # with Security, and that tab would expose Security site credentials.
+    is_construction_job = job_company(job) == 'construction'
+    _tab_labels = ["📋 Details & History", "🖼️ Photos", "📄 Documents", parts_tab_label, "📸 In-Progress", "📝 Daily Report"]
+    if not is_construction_job:
+        _tab_labels.append(creds_tab_label)
+    _tabs = st.tabs(_tab_labels)
+    tab_history, tab_photos, tab_docs, tab_parts, tab_progress, tab_daily = _tabs[:6]
+    tab_creds = _tabs[6] if not is_construction_job else None
 
     with tab_docs:
         st.write("#### 📄 Documents")
@@ -3255,7 +3318,8 @@ Desc: {job['description']}"""
                     pc1.caption(f"Updated {p['updated_at'][:16]} by {p.get('added_by', 'unknown')}")
 
 
-    with tab_creds:
+    if tab_creds is not None:
+      with tab_creds:
         st.write("#### 🔐 Site Systems & Network Info")
         st.caption("Logins, IPs, and notes for the systems at this location. Saved to the location, shared across all its jobs.")
 
@@ -3389,9 +3453,12 @@ Desc: {job['description']}"""
     with tab_history:
         st.markdown(f"**Description:** {job['description']}")
 
-        # Site History: what else have we done at this location?
+        # Site History: what else have we done at this location? (same company only,
+        # since locations can be shared between Security and Construction)
         if loc:
-            site_jobs = [sj for sj in st.session_state.jobs if sj['locationId'] == loc['id'] and sj['id'] != job_id]
+            site_jobs = [sj for sj in st.session_state.jobs
+                         if sj['locationId'] == loc['id'] and sj['id'] != job_id
+                         and job_company(sj) == job_company(job)]
             if site_jobs:
                 site_jobs.sort(key=lambda x: x.get('date', ''), reverse=True)
                 with st.expander(f"🏢 Site History — {len(site_jobs)} other job(s) at {loc['name']}"):
@@ -3447,7 +3514,8 @@ Desc: {job['description']}"""
                 if can_manage:
                     with hdr_move.popover("↪️ Move"):
                         st.caption("Filed under the wrong job? Move this entry (notes & photos) to the correct one.")
-                        other_jobs = {j['id']: j for j in st.session_state.jobs if j['id'] != job_id}
+                        other_jobs = {j['id']: j for j in st.session_state.jobs
+                                      if j['id'] != job_id and job_company(j) == job_company(job)}
                         if not other_jobs:
                             st.caption("No other jobs to move to.")
                         else:
@@ -3644,7 +3712,7 @@ Desc: {job['description']}"""
         st.write("#### 📝 Daily Field Report")
         st.caption("End of day reporting. Submit labor hours, parts, and finalize status.")
 
-        if loc and not has_sys_info:
+        if loc and not has_sys_info and not is_construction_job:
             st.warning("🔐 No system info (logins / IPs) is saved for this site yet. Take a minute to fill out the **IPs & Passwords** tab while you're on site.")
         
         # Voice Note Feature for Daily Report
@@ -4013,14 +4081,93 @@ def render_map_view(jobs):
         st.caption(f"⚠️ {skipped} job(s) not shown — address missing or could not be geocoded.")
 
 
+def render_construction_board(user_email, can_manage):
+    """Shared 5G Construction board. can_manage=True for the lead/admins (see all jobs,
+    create/edit/delete); False for crew (see only their own assigned jobs)."""
+    # Crew see only their assigned jobs; managers see everything
+    viewer_tech = next((t for t in st.session_state.techs
+                        if (t.get('email') or '').lower() == (user_email or '').lower()
+                        and tech_company(t) == 'construction'), None)
+
+    jobs = company_jobs('construction')
+    if not can_manage:
+        if viewer_tech:
+            jobs = [j for j in jobs if j.get('techId') == viewer_tech['id']]
+        else:
+            jobs = []
+
+    top_l, top_r = st.columns([4, 1])
+    with top_l:
+        search = st.text_input("Search construction jobs...", key="constr_search",
+                               label_visibility="collapsed", placeholder="🔍 Search jobs, sites...")
+    with top_r:
+        if can_manage:
+            if st.button("➕ New Job", key="constr_new_job", use_container_width=True):
+                add_job_dialog(company="construction")
+
+    if search:
+        q = search.lower()
+        def _cm(j):
+            if q in j.get('title', '').lower() or q in j.get('description', '').lower():
+                return True
+            l = get_location(j['locationId'])
+            return bool(l and (q in l.get('name', '').lower() or q in l.get('address', '').lower()))
+        jobs = [j for j in jobs if _cm(j)]
+
+    active = [j for j in jobs if j['status'] != 'Completed']
+    done = [j for j in jobs if j['status'] == 'Completed']
+
+    # Quick stats
+    s1, s2, s3 = st.columns(3)
+    s1.metric("Active Jobs", len(active))
+    s2.metric("Critical/High", len([j for j in active if j.get('priority') in ('Critical', 'High')]))
+    s3.metric("Crew", len(company_techs('construction')))
+
+    st.divider()
+    if not active:
+        st.info("No active construction jobs.")
+    for job in active:
+        render_job_card(job, key_suffix="constr", allow_delete=can_manage)
+
+    if done:
+        with st.expander(f"📦 Completed ({len(done)})"):
+            for job in done:
+                render_job_card(job, key_suffix="constr_done", allow_delete=can_manage)
+
+
+def render_construction_app(user_name, user_email, role):
+    """Full-page app for construction-only users (no access to any Security data)."""
+    can_manage = (role == 'manager')
+
+    with st.sidebar:
+        st.markdown("---")
+        st.write(f"Logged in as: **{user_name}**")
+        if can_manage:
+            st.success("🏗️ Construction Lead")
+        else:
+            st.info("🏗️ Construction Crew")
+        if st.button("Logout", key="logout_btn_constr"):
+            logout()
+
+    st.title("🏗️ 5G Construction")
+    if can_manage:
+        st.caption("Manage all construction jobs, upload photos, and submit daily reports.")
+    else:
+        st.caption(f"Your active jobs, {user_name.split()[0] if user_name else 'there'}. Upload photos and submit daily reports.")
+
+    render_construction_board(user_email, can_manage=can_manage)
+
+
 def render_analytics_dashboard():
     st.subheader("📊 Operational Analytics")
 
-    if not st.session_state.jobs:
+    # Security analytics only — construction is reported in its own section
+    _sec_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
+    if not _sec_jobs:
         st.info("No job data available.")
         return
 
-    df = pd.DataFrame(st.session_state.jobs)
+    df = pd.DataFrame(_sec_jobs)
 
     total = len(df)
     completed = len(df[df["status"] == "Completed"])
@@ -4071,9 +4218,9 @@ def render_analytics_dashboard():
     
     if st.button("🤖 Analyze Parts Usage"):
         with st.spinner("Analyzing all job reports..."):
-            # 1. Gather all "Parts Used" text
+            # 1. Gather all "Parts Used" text (security jobs only)
             all_parts_text = []
-            for j in st.session_state.jobs:
+            for j in _sec_jobs:
                 for r in j.get('reports', []):
                     if r.get('partsUsed'):
                         all_parts_text.append(f"- {r['partsUsed']}")
@@ -4143,7 +4290,9 @@ def render_hours_report():
     start_date = hc1.date_input("From", value=today - datetime.timedelta(days=13), key="hours_from")
     end_date = hc2.date_input("To", value=today, key="hours_to")
 
-    rows = compute_hours_rows(st.session_state.jobs, st.session_state.techs, st.session_state.locations, start_date, end_date)
+    # Security payroll only — construction crew hours are tracked separately
+    sec_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
+    rows = compute_hours_rows(sec_jobs, st.session_state.techs, st.session_state.locations, start_date, end_date)
 
     if not rows:
         st.info("No logged hours in this date range.")
@@ -4236,6 +4385,39 @@ def render_admin_panel():
                     save_state(invalidate_briefing=False)
                     st.rerun()
 
+    # --- CONSTRUCTION ACCESS ---
+    with st.expander("🏗️ Manage 5G Construction Leads", expanded=False):
+        st.write("Emails added here can log in (with any email address) and manage the "
+                 "**5G Construction** side — create jobs and see all construction work. "
+                 "They have no access to the Security side.")
+        st.caption("Construction crew (who only see their own jobs) are added as Technicians "
+                   "below with Company set to Construction.")
+
+        with st.form("add_constr_lead_form"):
+            new_cm_email = st.text_input("Construction Lead Email")
+            if st.form_submit_button("Add Construction Lead"):
+                if new_cm_email and "@" in new_cm_email:
+                    existing = [e.lower() for e in st.session_state.construction_emails]
+                    if new_cm_email.lower() not in existing:
+                        st.session_state.construction_emails.append(new_cm_email.strip())
+                        save_state(invalidate_briefing=False)
+                        st.success(f"Added {new_cm_email}")
+                        st.rerun()
+                    else:
+                        st.warning("Email already exists.")
+                else:
+                    st.error("Invalid email.")
+
+        if st.session_state.get('construction_emails'):
+            st.write("###### Current Construction Leads")
+            for email in st.session_state.construction_emails:
+                c1, c2 = st.columns([4, 1])
+                c1.write(email)
+                if c2.button("🗑️", key=f"del_cm_{email}"):
+                    st.session_state.construction_emails.remove(email)
+                    save_state(invalidate_briefing=False)
+                    st.rerun()
+
     st.divider()
 
     # --- SMTP CONFIG ---
@@ -4281,9 +4463,12 @@ def render_admin_panel():
             new_tech_name = c1.text_input("Name")
             new_tech_email = c2.text_input("Email")
             new_tech_initials = c3.text_input("Initials (2 chars)", max_chars=2)
-            
-            new_tech_skills = st.multiselect("Skills", options=SKILL_OPTIONS)
-            
+
+            cc1, cc2 = st.columns([1, 2])
+            new_tech_company = cc1.selectbox("Company", ["security", "construction"],
+                                             format_func=lambda c: "🛡️ Security" if c == "security" else "🏗️ Construction")
+            new_tech_skills = cc2.multiselect("Skills", options=SKILL_OPTIONS)
+
             if st.form_submit_button("Add Technician"):
                 if new_tech_name and new_tech_email and new_tech_initials:
                     existing_ids = [int(t['id'][1:]) for t in st.session_state.techs if t['id'].startswith('t') and t['id'][1:].isdigit()]
@@ -4291,14 +4476,15 @@ def render_admin_panel():
                     new_id = f"t{next_id}"
                     import random
                     color = random.choice(TECH_COLORS)
-                    
+
                     st.session_state.techs.append({
                         "id": new_id,
                         "name": new_tech_name,
                         "email": new_tech_email,
                         "initials": new_tech_initials.upper(),
                         "color": color,
-                        "skills": new_tech_skills
+                        "skills": new_tech_skills,
+                        "company": new_tech_company
                     })
                     save_state(invalidate_briefing=False)
                     st.success(f"Added {new_tech_name}")
@@ -4311,12 +4497,13 @@ def render_admin_panel():
             st.write("###### Current Technicians")
             for t in st.session_state.techs:
                 c1, c2, c3, c4 = st.columns([1, 3, 4, 1])
-                c1.markdown(f"**{t['initials']}**")
-                
+                co_badge = "🏗️" if tech_company(t) == "construction" else "🛡️"
+                c1.markdown(f"**{t['initials']}** {co_badge}")
+
                 skills_display = ""
                 if t.get('skills'):
                     skills_display = f" | 🛠️ {', '.join(t['skills'])}"
-                    
+
                 c2.write(f"{t['name']}{skills_display}")
                 c3.write(t['email'])
                 if c4.button("🗑️", key=f"del_tech_{t['id']}"):
@@ -4409,6 +4596,7 @@ def render_admin_panel():
             st.session_state.locations = state["locations"]
             st.session_state.briefing = state["briefing"]
             st.session_state.adminEmails = state["adminEmails"]
+            st.session_state.construction_emails = state.get("construction_emails", [])
             st.session_state.last_reminder_date = state.get("last_reminder_date")
             st.toast("Reloaded from DB.", icon="🔄")
             st.rerun()
@@ -4461,6 +4649,7 @@ def render_admin_panel():
                         st.session_state.locations = data["locations"]
                         st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
                         st.session_state.adminEmails = data.get("adminEmails", [])
+                        st.session_state.construction_emails = data.get("construction_emails", [])
                         st.session_state.last_reminder_date = data.get("last_reminder_date")
 
                         ensure_loaded_into_session()
@@ -4676,9 +4865,10 @@ def render_chatbot():
         with st.sidebar.chat_message("user"):
             st.write(prompt)
         
-        # Contextualize Data (remove heavy base64 strings before sending to LLM)
+        # Contextualize Data (remove heavy base64 strings before sending to LLM).
+        # Security chatbot — exclude construction jobs entirely.
         simple_jobs = []
-        for j in st.session_state.jobs:
+        for j in [j for j in st.session_state.jobs if job_company(j) != 'construction']:
             clean_job = {k:v for k,v in j.items() if k != 'reports'}
             
             # Include text content of reports, but strip out photos to save tokens/bandwidth
@@ -4797,9 +4987,19 @@ def main():
     
     is_admin = user_email in st.session_state.adminEmails
 
-    # 2.5 ACCESS CONTROL: only admins, registered techs, or allowed-domain emails get in.
-    # Anyone else with a Google account sees a denial screen instead of company data.
-    is_known_tech = any(t.get('email', '').lower() == (user_email or '').lower() for t in st.session_state.techs)
+    # 2.4 CONSTRUCTION ROUTING: a construction-only user (5G Construction lead or
+    # crew) is locked to the construction app and never sees any Security data.
+    # Security admins are NOT intercepted here — they oversee both (Construction tab).
+    construction_role = get_user_construction_role(user_email)
+    if construction_role and not is_admin:
+        live_update_watcher()
+        render_construction_app(user_name, user_email, construction_role)
+        return
+
+    # 2.5 ACCESS CONTROL: only admins, registered (security) techs, or allowed-domain
+    # emails get in. Anyone else with a Google account sees a denial screen.
+    is_known_tech = any((t.get('email') or '').lower() == (user_email or '').lower()
+                        and tech_company(t) != 'construction' for t in st.session_state.techs)
     allowed_domain = (st.secrets.get("ALLOWED_EMAIL_DOMAIN") if "ALLOWED_EMAIL_DOMAIN" in st.secrets else None) or os.getenv("ALLOWED_EMAIL_DOMAIN", "")
     domain_ok = bool(allowed_domain) and (user_email or '').lower().endswith("@" + allowed_domain.lower().lstrip("@"))
 
@@ -4854,7 +5054,8 @@ def main():
                 add_job_dialog()
 
     # Filter Jobs based on search (matches title, description, location name/address, tech name)
-    filtered_jobs = st.session_state.jobs
+    # Security side never shows construction jobs (those live in their own section)
+    filtered_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
     if search:
         q = search.lower()
 
@@ -4879,12 +5080,20 @@ def main():
     
     if current_tech:
         tabs_list.insert(0, "🙋‍♂️ My Assignments")
-        
+
+    # Admins oversee both companies — give them a Construction section
     if is_admin:
+        tabs_list.append("🏗️ Construction")
         tabs_list.append("🛡️ Admin")
-    
+
     tabs = st.tabs(tabs_list)
     tab_map = {name: tab for name, tab in zip(tabs_list, tabs)}
+
+    # Construction oversight tab (admins only)
+    if is_admin:
+        with tab_map["🏗️ Construction"]:
+            st.subheader("🏗️ 5G Construction")
+            render_construction_board(user_email, can_manage=True)
     
     # 0. My Assignments (Conditional)
     if current_tech:
@@ -4927,17 +5136,18 @@ def main():
                     save_state(invalidate_briefing=False)
                     st.rerun()
             
-            # Stats
+            # Stats (Security side only — construction has its own section)
+            sec_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
             s1, s2, s3 = st.columns(3)
-            active = len([j for j in st.session_state.jobs if j['status'] != 'Completed'])
-            crit = len([j for j in st.session_state.jobs if j['priority'] == 'Critical'])
+            active = len([j for j in sec_jobs if j['status'] != 'Completed'])
+            crit = len([j for j in sec_jobs if j['priority'] == 'Critical'])
             s1.metric("Active Jobs", active)
             s2.metric("Critical", crit)
-            s3.metric("Techs", len(st.session_state.techs))
+            s3.metric("Techs", len(company_techs('security')))
 
             # Stale job alerts: active jobs with no history entry in a while
             stale_list = []
-            for sj in st.session_state.jobs:
+            for sj in sec_jobs:
                 sd = get_job_stale_days(sj)
                 if sd is not None and sd >= STALE_JOB_DAYS:
                     stale_list.append((sj, sd))

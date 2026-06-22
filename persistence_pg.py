@@ -16,6 +16,7 @@ DEFAULT_DATA = {
     "locations": [],
     "briefing": "Data required to generate briefing.",
     "adminEmails": [],
+    "construction_emails": [],
     "last_reminder_date": None
 }
 
