@@ -791,39 +791,23 @@ def start_background_scheduler():
                             techs = state.get("techs", [])
                             jobs = state.get("jobs", [])
                             locations = state.get("locations", [])
-                            
-                            def get_loc(loc_id):
-                                return next((l for l in locations if l['id'] == loc_id), None)
-                            
-                            for tech in techs:
-                                active_jobs = [j for j in jobs if j['techId'] == tech['id'] and j['status'] != 'Completed']
-                                if not active_jobs:
-                                    continue
-                                    
-                                subject = f"📅 Daily Assignment Reminder - {today_str}"
-                                job_list_text = ""
-                                for job in active_jobs:
-                                    loc = get_loc(job['locationId'])
-                                    loc_name = loc['name'] if loc else "Unknown Location"
-                                    loc_addr = loc['address'] if loc else ""
-                                    
-                                    job_list_text += f"\n- {job['title']} ({job['priority']})\n  Location: {loc_name} - {loc_addr}\n  Status: {job['status']}\n"
-                                    
-                                body = f"Hello {tech['name']},\n\nHere is your summary of active assignments for today ({today_str}):\n{job_list_text}\n\nPlease check the 5G Security Job Board for full details and to log your work.\n"
-                                
-                                msg = MIMEMultipart("alternative")
-                                msg['From'] = sender_email
-                                msg['To'] = tech['email']
-                                msg['Subject'] = subject
-                                msg.attach(MIMEText(body, 'plain'))
-                                try:
-                                    jobs_with_locs = [(j, get_loc(j['locationId'])) for j in active_jobs]
-                                    msg.attach(MIMEText(build_reminder_email_html(tech, jobs_with_locs, today_str), 'html'))
-                                except Exception:
-                                    pass  # plain-text version still sends
+                            recipients = daily_summary_recipients(techs, state.get("adminEmails", []))
+                            active_exists = any(j.get('status') != 'Completed' for j in jobs)
 
-                                server.send_message(msg)
-                                
+                            if recipients and active_exists:
+                                subject, plain_body, html_body = build_ops_summary_email(jobs, techs, locations, today_str)
+                                for recipient in recipients:
+                                    try:
+                                        msg = MIMEMultipart("alternative")
+                                        msg['From'] = sender_email
+                                        msg['To'] = recipient
+                                        msg['Subject'] = subject
+                                        msg.attach(MIMEText(plain_body, 'plain'))
+                                        msg.attach(MIMEText(html_body, 'html'))
+                                        server.send_message(msg)
+                                    except Exception:
+                                        continue  # one bad address shouldn't stop the rest
+
                             server.quit()
                             
                         state["last_reminder_date"] = today_str
@@ -1776,6 +1760,108 @@ def build_admin_email_html(header_label, intro, detail_rows, footer_note):
 </body>
 </html>"""
 
+def daily_summary_recipients(techs, admin_emails):
+    """Unique, case-insensitive list of all tech + admin emails for the daily summary."""
+    seen, out = set(), []
+    for e in [t.get('email') for t in (techs or [])] + list(admin_emails or []):
+        if e and e.strip() and e.lower() not in seen:
+            seen.add(e.lower())
+            out.append(e.strip())
+    return out
+
+def build_ops_summary_email(jobs, techs, locations, today_str):
+    """Company-wide summary of all active jobs, grouped by tech. Pure/thread-safe.
+    Returns (subject, plain_text, html)."""
+    def esc(s):
+        return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    loc_by_id = {l['id']: l for l in locations}
+    tech_by_id = {t['id']: t for t in techs}
+    active = [j for j in jobs if j.get('status') != 'Completed']
+    crit = [j for j in active if j.get('priority') in ('Critical', 'High')]
+
+    def loc_name(j):
+        l = loc_by_id.get(j.get('locationId'))
+        return l['name'] if l else 'Unknown location'
+
+    # Group active jobs by assigned tech; unknown/missing techId -> Unassigned
+    groups = {}
+    for j in active:
+        groups.setdefault(j.get('techId'), []).append(j)
+    ordered_tids = sorted([tid for tid in groups if tid in tech_by_id],
+                          key=lambda t: tech_by_id[t]['name'].lower())
+    unassigned = [j for tid, js in groups.items() if tid not in tech_by_id for j in js]
+
+    subject = f"🗓️ Daily Operations Summary - {today_str}"
+
+    # ---- Plain text fallback ----
+    lines = [f"5G Security - Daily Operations Summary ({today_str})", "",
+             f"{len(active)} active job(s), {len(crit)} critical/high, {len(techs)} tech(s).", ""]
+    for tid in ordered_tids:
+        lines.append(f"{tech_by_id[tid]['name']} ({len(groups[tid])}):")
+        for j in groups[tid]:
+            lines.append(f"  - {j['title']} [{j.get('priority')}/{j.get('status')}] @ {loc_name(j)}")
+        lines.append("")
+    if unassigned:
+        lines.append(f"Unassigned ({len(unassigned)}):")
+        for j in unassigned:
+            lines.append(f"  - {j['title']} [{j.get('priority')}/{j.get('status')}] @ {loc_name(j)}")
+        lines.append("")
+    lines.append("Open the 5G Security Job Board for full details.")
+    plain = "\n".join(lines)
+
+    # ---- HTML ----
+    def job_row(j):
+        p_color = PRIORITY_COLORS.get(j.get('priority'), "#52525b")
+        s_color = get_status_color(j.get('status'))
+        return (f'<tr>'
+                f'<td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:13px;color:#18181b;">'
+                f'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{p_color};margin-right:6px;"></span>'
+                f'{esc(j.get("title",""))}</td>'
+                f'<td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:12px;color:#555;">{esc(loc_name(j))}</td>'
+                f'<td style="padding:5px 8px;border-bottom:1px solid #eee;font-size:11px;text-align:right;">'
+                f'<span style="background:{s_color};color:white;padding:1px 7px;border-radius:8px;white-space:nowrap;">{esc(j.get("status",""))}</span></td>'
+                f'</tr>')
+
+    sections = ""
+    for tid in ordered_tids:
+        rows = "".join(job_row(j) for j in groups[tid])
+        sections += (f'<div style="margin-top:16px;"><div style="font-weight:bold;font-size:14px;color:#18181b;'
+                     f'border-bottom:2px solid #b91c1c;padding-bottom:3px;margin-bottom:4px;">{esc(tech_by_id[tid]["name"])} '
+                     f'<span style="color:#a1a1aa;font-weight:normal;">({len(groups[tid])})</span></div>'
+                     f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">{rows}</table></div>')
+    if unassigned:
+        rows = "".join(job_row(j) for j in unassigned)
+        sections += (f'<div style="margin-top:16px;"><div style="font-weight:bold;font-size:14px;color:#991b1b;'
+                     f'border-bottom:2px solid #991b1b;padding-bottom:3px;margin-bottom:4px;">⚠️ Unassigned '
+                     f'<span style="font-weight:normal;">({len(unassigned)})</span></div>'
+                     f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">{rows}</table></div>')
+    if not active:
+        sections = '<p style="color:#555;font-size:14px;">No active jobs right now. 🎉</p>'
+
+    html = f"""<html><body style="margin:0;padding:0;background-color:#f4f4f5;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f4f5;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
+    <tr><td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
+        <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+        <span style="color:#a1a1aa;font-size:13px;">Daily Operations Summary &mdash; {esc(today_str)}</span>
+    </td></tr>
+    <tr><td style="padding:24px 32px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+            <td style="text-align:center;"><div style="font-size:24px;font-weight:bold;color:#18181b;">{len(active)}</div><div style="font-size:11px;color:#71717a;text-transform:uppercase;">Active</div></td>
+            <td style="text-align:center;"><div style="font-size:24px;font-weight:bold;color:#b91c1c;">{len(crit)}</div><div style="font-size:11px;color:#71717a;text-transform:uppercase;">Critical / High</div></td>
+            <td style="text-align:center;"><div style="font-size:24px;font-weight:bold;color:#18181b;">{len(techs)}</div><div style="font-size:11px;color:#71717a;text-transform:uppercase;">Techs</div></td>
+        </tr></table>
+        {sections}
+        <p style="color:#71717a;font-size:12px;margin:20px 0 0 0;">Open the 5G Security Job Board for full details and to log work.</p>
+    </td></tr>
+    <tr><td style="background-color:#f4f4f5;padding:14px 32px;color:#71717a;font-size:11px;border-top:1px solid #e4e4e7;">
+        5G Security &nbsp;|&nbsp; Cameras &middot; Access Control &middot; Alarm Systems &middot; Cabling
+    </td></tr>
+</table></td></tr></table></body></html>"""
+    return subject, plain, html
+
 def send_assignment_email(job, tech, location):
     """Sends an email notification via SMTP, returning True if successful."""
     # Helper to resolve config priority: Session > Secrets > Env
@@ -2099,8 +2185,16 @@ def send_daily_reminders():
     if not (smtp_server and sender_email and sender_password):
         return # Cannot send email
 
-    # 3. Iterate Techs
-    techs_emailed = 0
+    # 3. Send one company-wide summary to every tech + admin
+    recipients = daily_summary_recipients(st.session_state.techs, st.session_state.adminEmails)
+    active_exists = any(j.get('status') != 'Completed' for j in st.session_state.jobs)
+    if not recipients or not active_exists:
+        # Nothing to send today; mark done so we don't keep retrying
+        st.session_state.last_reminder_date = today_str
+        save_state(invalidate_briefing=False)
+        return
+
+    sent = 0
     try:
         # Connect once
         if int(smtp_port) == 465:
@@ -2111,63 +2205,34 @@ def send_daily_reminders():
             server.ehlo()
             server.starttls()
             server.ehlo()
-        
+
         server.login(sender_email, sender_password)
 
-        for tech in st.session_state.techs:
-            # Find active jobs for this tech
-            active_jobs = [j for j in st.session_state.jobs 
-                           if j['techId'] == tech['id'] and j['status'] != 'Completed']
-            
-            if not active_jobs:
-                continue
+        subject, plain_body, html_body = build_ops_summary_email(
+            st.session_state.jobs, st.session_state.techs, st.session_state.locations, today_str)
 
-            # Compose Email
-            subject = f"📅 Daily Assignment Reminder - {today_str}"
-            
-            job_list_text = ""
-            for job in active_jobs:
-                loc = get_location(job['locationId'])
-                loc_name = loc['name'] if loc else "Unknown Location"
-                loc_addr = loc['address'] if loc else ""
-                
-                job_list_text += f"""
-- {job['title']} ({job['priority']})
-  Location: {loc_name} - {loc_addr}
-  Status: {job['status']}
-"""
-
-            body = f"""Hello {tech['name']},
-
-Here is your summary of active assignments for today ({today_str}):
-{job_list_text}
-
-Please check the 5G Security Job Board for full details and to log your work.
-"""
-            
-            msg = MIMEMultipart("alternative")
-            msg['From'] = sender_email
-            msg['To'] = tech['email']
-            msg['Subject'] = subject
-            msg.attach(MIMEText(body, 'plain'))
+        for recipient in recipients:
             try:
-                jobs_with_locs = [(j, get_location(j['locationId'])) for j in active_jobs]
-                msg.attach(MIMEText(build_reminder_email_html(tech, jobs_with_locs, today_str), 'html'))
+                msg = MIMEMultipart("alternative")
+                msg['From'] = sender_email
+                msg['To'] = recipient
+                msg['Subject'] = subject
+                msg.attach(MIMEText(plain_body, 'plain'))
+                msg.attach(MIMEText(html_body, 'html'))
+                server.send_message(msg)
+                sent += 1
             except Exception:
-                pass  # plain-text version still sends
+                continue  # one bad address shouldn't stop the rest
 
-            server.send_message(msg)
-            techs_emailed += 1
-            
         server.quit()
-        
+
         # Update State
         st.session_state.last_reminder_date = today_str
         save_state(invalidate_briefing=False)
-        
-        if techs_emailed > 0:
-            st.toast(f"📧 Sent daily reminders to {techs_emailed} technicians.", icon="✅")
-            
+
+        if sent > 0:
+            st.toast(f"📧 Sent daily ops summary to {sent} recipient(s).", icon="✅")
+
     except Exception as e:
         pass
 
