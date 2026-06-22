@@ -839,65 +839,25 @@ def start_background_scheduler():
                         smtp_port = secrets_dict.get("SMTP_PORT") or os.getenv("SMTP_PORT", 587)
                         sender_email = secrets_dict.get("SMTP_EMAIL") or os.getenv("SMTP_EMAIL")
                         sender_password = secrets_dict.get("SMTP_PASSWORD") or os.getenv("SMTP_PASSWORD")
-                        recipients = state.get("adminEmails", [])
 
                         end_d = now.date()
                         start_d = end_d - datetime.timedelta(days=6)
-                        rows = compute_hours_rows(state.get("jobs", []), state.get("techs", []),
-                                                  state.get("locations", []), start_d, end_d)
+                        admin_emails = state.get("adminEmails", [])
+                        constr_emails = state.get("construction_emails", [])
+                        jobs = state.get("jobs", [])
+                        techs = state.get("techs", [])
+                        locations = state.get("locations", [])
 
-                        if rows and recipients and smtp_server and sender_email and sender_password:
-                            totals = {}
-                            for row in rows:
-                                totals[row["Tech"]] = totals.get(row["Tech"], 0) + row["Hours"]
-                            detail_rows = [(tn, f"{round(th, 2)} hrs") for tn, th in sorted(totals.items(), key=lambda x: -x[1])]
-                            detail_rows.append(("Total", f"{round(sum(totals.values()), 2)} hrs"))
+                        # Security hours digest -> admins only
+                        _send_hours_digest_email('security', 'Security', admin_emails,
+                                                 smtp_server, smtp_port, sender_email, sender_password,
+                                                 jobs, techs, locations, start_d, end_d)
+                        # Construction hours digest -> construction leads + admins
+                        _send_hours_digest_email('construction', 'Construction', list(constr_emails) + list(admin_emails),
+                                                 smtp_server, smtp_port, sender_email, sender_password,
+                                                 jobs, techs, locations, start_d, end_d)
 
-                            subject = f"🕒 Weekly Hours Digest — {start_d} to {end_d}"
-                            plain_body = (
-                                f"Hours logged {start_d} to {end_d}:\n\n"
-                                + "\n".join(f"{a}: {b}" for a, b in detail_rows)
-                                + "\n\nFull entry list attached as CSV."
-                            )
-                            try:
-                                html_body = build_admin_email_html(
-                                    "Weekly Hours Digest",
-                                    f"Hours logged {start_d} to {end_d}:",
-                                    detail_rows,
-                                    "The full entry list is attached as a CSV for payroll/invoicing.",
-                                )
-                            except Exception:
-                                html_body = None
-
-                            csv_str = pd.DataFrame(rows).sort_values(["Date", "Tech"]).to_csv(index=False)
-
-                            if int(smtp_port) == 465:
-                                server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
-                                server.ehlo()
-                            else:
-                                server = smtplib.SMTP(smtp_server, int(smtp_port))
-                                server.ehlo()
-                                server.starttls()
-                                server.ehlo()
-                            server.login(sender_email, sender_password)
-
-                            for recipient in recipients:
-                                alt = MIMEMultipart("alternative")
-                                alt.attach(MIMEText(plain_body, 'plain'))
-                                if html_body:
-                                    alt.attach(MIMEText(html_body, 'html'))
-                                msg = MIMEMultipart("mixed")
-                                msg['From'] = sender_email
-                                msg['To'] = recipient
-                                msg['Subject'] = subject
-                                msg.attach(alt)
-                                attachment = MIMEApplication(csv_str.encode('utf-8'), _subtype="csv")
-                                attachment.add_header('Content-Disposition', 'attachment', filename=f"hours_{start_d}_{end_d}.csv")
-                                msg.attach(attachment)
-                                server.send_message(msg)
-                            server.quit()
-                            get_logger().log(f"Sent weekly hours digest for {start_d} to {end_d}")
-
+                        get_logger().log(f"Sent weekly hours digests for {start_d} to {end_d}")
                         state["last_hours_digest_date"] = today_str
                         save_state_to_db(state, expected_version=version)
             except Exception as e:
@@ -2337,6 +2297,65 @@ def send_ops_summary_email(recipients, subject_prefix=""):
         return sent, None
     except Exception as e:
         return sent, str(e)
+
+def _send_hours_digest_email(company, label, recipients, smtp_server, smtp_port,
+                             sender_email, sender_password, jobs, techs, locations, start_d, end_d):
+    """Builds and emails a weekly hours digest for one company (CSV attached).
+    Pure/thread-safe — used by the Friday scheduler. Returns rows sent (0 if nothing)."""
+    recipients = list(dict.fromkeys([r for r in (recipients or []) if r]))  # dedup, keep order
+    if not (recipients and smtp_server and sender_email and sender_password):
+        return 0
+    co_jobs = [j for j in jobs if (j.get('company', 'security')) == company]
+    rows = compute_hours_rows(co_jobs, techs, locations, start_d, end_d)
+    if not rows:
+        return 0
+
+    totals = {}
+    for row in rows:
+        totals[row["Tech"]] = totals.get(row["Tech"], 0) + row["Hours"]
+    detail_rows = [(tn, f"{round(th, 2)} hrs") for tn, th in sorted(totals.items(), key=lambda x: -x[1])]
+    detail_rows.append(("Total", f"{round(sum(totals.values()), 2)} hrs"))
+
+    subject = f"🕒 {label} Weekly Hours — {start_d} to {end_d}"
+    plain_body = (f"{label} hours logged {start_d} to {end_d}:\n\n"
+                  + "\n".join(f"{a}: {b}" for a, b in detail_rows)
+                  + "\n\nFull entry list attached as CSV.")
+    try:
+        html_body = build_admin_email_html(f"{label} Weekly Hours",
+                                           f"Hours logged {start_d} to {end_d}:", detail_rows,
+                                           "Full entry list attached as a CSV for payroll/invoicing.")
+    except Exception:
+        html_body = None
+
+    csv_str = pd.DataFrame(rows).sort_values(["Date", "Tech"]).to_csv(index=False)
+    try:
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port)); server.ehlo()
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port)); server.ehlo(); server.starttls(); server.ehlo()
+        server.login(sender_email, sender_password)
+        for recipient in recipients:
+            try:
+                alt = MIMEMultipart("alternative")
+                alt.attach(MIMEText(plain_body, 'plain'))
+                if html_body:
+                    alt.attach(MIMEText(html_body, 'html'))
+                msg = MIMEMultipart("mixed")
+                msg['From'] = sender_email
+                msg['To'] = recipient
+                msg['Subject'] = subject
+                msg.attach(alt)
+                attachment = MIMEApplication(csv_str.encode('utf-8'), _subtype="csv")
+                attachment.add_header('Content-Disposition', 'attachment',
+                                      filename=f"{company}_hours_{start_d}_{end_d}.csv")
+                msg.attach(attachment)
+                server.send_message(msg)
+            except Exception:
+                continue
+        server.quit()
+    except Exception:
+        return 0
+    return len(rows)
 
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
@@ -4290,17 +4309,17 @@ def render_analytics_dashboard():
 
 
     # --- ADMIN ACCESS MANAGEMENT ---
-def render_hours_report():
+def render_hours_report(company="security"):
     st.caption("Summed from daily report 'Hours Worked'. Hours are credited to every tech listed 'On Site' for a report (or the report author if none were listed).")
 
     today = now_local().date()
     hc1, hc2 = st.columns(2)
-    start_date = hc1.date_input("From", value=today - datetime.timedelta(days=13), key="hours_from")
-    end_date = hc2.date_input("To", value=today, key="hours_to")
+    start_date = hc1.date_input("From", value=today - datetime.timedelta(days=13), key=f"hours_from_{company}")
+    end_date = hc2.date_input("To", value=today, key=f"hours_to_{company}")
 
-    # Security payroll only — construction crew hours are tracked separately
-    sec_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
-    rows = compute_hours_rows(sec_jobs, st.session_state.techs, st.session_state.locations, start_date, end_date)
+    # Scope to the requested company so the two companies' payroll stay separate
+    co_jobs = [j for j in st.session_state.jobs if job_company(j) == company]
+    rows = compute_hours_rows(co_jobs, st.session_state.techs, st.session_state.locations, start_date, end_date)
 
     if not rows:
         st.info("No logged hours in this date range.")
@@ -4322,8 +4341,9 @@ def render_hours_report():
     st.download_button(
         "⬇️ Download CSV (all entries)",
         df.sort_values(["Date", "Tech"]).to_csv(index=False).encode("utf-8"),
-        file_name=f"hours_{start_date}_{end_date}.csv",
+        file_name=f"{company}_hours_{start_date}_{end_date}.csv",
         mime="text/csv",
+        key=f"hours_csv_{company}",
     )
 
 def render_admin_panel():
@@ -5102,6 +5122,10 @@ def main():
         with tab_map["🏗️ Construction"]:
             st.subheader("🏗️ 5G Construction")
             render_construction_board(user_email, can_manage=True)
+            st.divider()
+            st.subheader("🕒 Construction Hours Report")
+            with st.expander("View Construction Hours (Payroll / Invoicing)", expanded=False):
+                render_hours_report(company="construction")
     
     # 0. My Assignments (Conditional)
     if current_tech:
