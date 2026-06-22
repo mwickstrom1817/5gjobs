@@ -321,6 +321,14 @@ if "jobs" not in st.session_state:
     st.session_state.smtp_settings = db_data.get("smtp_settings", {})
     st.session_state.last_reminder_date = db_data.get("last_reminder_date")
 
+# Back-compat: a session created before multi-company support won't have this key
+# (the block above is skipped because 'jobs' already exists), so initialize it here.
+if "construction_emails" not in st.session_state:
+    try:
+        st.session_state.construction_emails = load_data().get("construction_emails", [])
+    except Exception:
+        st.session_state.construction_emails = []
+
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
         {"role": "model", "parts": ["Hello! I have access to your database. Ask me about active jobs, tech locations, or history."]}
