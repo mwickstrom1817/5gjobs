@@ -2366,39 +2366,47 @@ def add_job_dialog():
         if st.button("Close"): st.rerun()
         return
 
+    # Location picker lives OUTSIDE the form so choosing a site can immediately
+    # pull in that location's saved contact. (Widgets inside an st.form don't
+    # rerun on change, so this prefill can't happen from within the form.)
+    loc_map = {l['name']: l['id'] for l in st.session_state.locations}
+    loc_options = list(loc_map.keys()) + ["➕ New Location"]
+    loc_selection = st.selectbox("Location", loc_options)
+
+    selected_loc = get_location(loc_map[loc_selection]) if loc_selection in loc_map else None
+    prefill_name = (selected_loc or {}).get('contact_name', '') or ''
+    prefill_phone = (selected_loc or {}).get('contact_phone', '') or ''
+    if selected_loc and (prefill_name or prefill_phone):
+        st.caption(f"📇 Loaded the saved contact for **{selected_loc['name']}** — edit below if needed.")
+
     with st.form("new_job_form"):
         title = st.text_input("Job Title")
         desc = st.text_area("Description")
-        
+
         c1, c2 = st.columns(2)
         job_type = c1.selectbox("Type", ["Service", "Project", "Leads"])
         priority = c2.selectbox("Priority", ["Medium", "Low", "High", "Critical"])
-        
+
         # Date Selection
         job_date = st.date_input("Scheduled Date", value=now_local())
-        
-        # Location Selection
-        loc_map = {l['name']: l['id'] for l in st.session_state.locations}
-        loc_options = list(loc_map.keys()) + ["➕ New Location"]
-        loc_selection = st.selectbox("Location", loc_options)
-        
-        # New Location Fields (will be used if "➕ New Location" selected)
+
+        # New Location Fields (used only if "➕ New Location" is selected above)
         st.write("---")
         with st.expander("New Location Details", expanded=(loc_selection == "➕ New Location")):
             new_loc_name = st.text_input("New Location Name")
             new_loc_address = st.text_input("New Location Address")
             new_loc_maps = st.text_input("Google Maps Link (Optional)")
-        
-        # Multiple Site Contacts
+
+        # Multiple Site Contacts (Primary is prefilled from the selected location)
         st.write("---")
         st.write("###### 👥 Site Contacts")
         c1, c2 = st.columns(2)
-        contact1_name = c1.text_input("Primary Contact Name")
-        contact1_phone = c1.text_input("Primary Contact Phone")
-        
+        contact1_name = c1.text_input("Primary Contact Name", value=prefill_name, key=f"njc1_name_{loc_selection}")
+        contact1_phone = c1.text_input("Primary Contact Phone", value=prefill_phone, key=f"njc1_phone_{loc_selection}")
+
         contact2_name = c2.text_input("Secondary Contact Name")
         contact2_phone = c2.text_input("Secondary Contact Phone")
-        
+
         contact3_name = st.text_input("Additional Contact / Notes")
 
         # Tech Selection
