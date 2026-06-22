@@ -2236,6 +2236,59 @@ def send_daily_reminders():
     except Exception as e:
         pass
 
+def send_ops_summary_email(recipients, subject_prefix=""):
+    """Sends the company-wide ops summary to the given recipients immediately.
+    Used by the admin 'send test' button - bypasses the Mon-Fri / once-a-day guards.
+    Returns (sent_count, error_message_or_None)."""
+    def get_config_val(key, default=None):
+        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
+            return st.session_state.smtp_settings[key]
+        if key in st.secrets:
+            return st.secrets[key]
+        return os.getenv(key) or default
+
+    smtp_server = get_config_val("SMTP_SERVER")
+    smtp_port = get_config_val("SMTP_PORT", 587)
+    sender_email = get_config_val("SMTP_EMAIL")
+    sender_password = get_config_val("SMTP_PASSWORD")
+
+    if not (smtp_server and sender_email and sender_password):
+        return 0, "SMTP is not configured (check the SMTP Configuration section)."
+    if not recipients:
+        return 0, "No recipient email address available."
+
+    today_str = now_local().strftime("%Y-%m-%d")
+    sent = 0
+    try:
+        if int(smtp_port) == 465:
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server.ehlo()
+        else:
+            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+        server.login(sender_email, sender_password)
+
+        subject, plain_body, html_body = build_ops_summary_email(
+            st.session_state.jobs, st.session_state.techs, st.session_state.locations, today_str)
+        for recipient in recipients:
+            try:
+                msg = MIMEMultipart("alternative")
+                msg['From'] = sender_email
+                msg['To'] = recipient
+                msg['Subject'] = subject_prefix + subject
+                msg.attach(MIMEText(plain_body, 'plain'))
+                msg.attach(MIMEText(html_body, 'html'))
+                server.send_message(msg)
+                sent += 1
+            except Exception:
+                continue
+        server.quit()
+        return sent, None
+    except Exception as e:
+        return sent, str(e)
+
 def generate_morning_briefing():
     """Generates the morning briefing using Gemini."""
     api_key = get_api_key()
@@ -4519,6 +4572,28 @@ def render_admin_panel():
                         st.warning("⚠️ **Invalid Key:** Ensure the key is copied exactly from AI Studio.")
                     elif "billing" in err_str.lower() or "quota" in err_str.lower():
                         st.warning("⚠️ **Quota/Billing:** Your account might have run out of free credits or billing isn't fully active yet.")
+
+    st.divider()
+    st.subheader("📧 Daily Summary Email")
+    with st.expander("Send a test of the daily ops summary"):
+        recip_count = len(daily_summary_recipients(st.session_state.techs, st.session_state.adminEmails))
+        st.caption(
+            f"The scheduled summary goes to all techs + admins ({recip_count} recipient(s)) at 7 AM, Mon–Fri. "
+            "This test sends the very same email to **you only**, so you can preview it without notifying the team."
+        )
+        current_email = st.session_state.user_info.get("email") if "user_info" in st.session_state else None
+        if st.button("📧 Send Me a Test Summary Now", use_container_width=True):
+            if not current_email:
+                st.error("Could not determine your email address.")
+            else:
+                with st.spinner("Sending test summary..."):
+                    sent, err = send_ops_summary_email([current_email], subject_prefix="[TEST] ")
+                if err:
+                    st.error(f"Failed to send: {err}")
+                elif sent:
+                    st.success(f"✅ Test summary sent to {current_email}. Check your inbox.")
+                else:
+                    st.warning("Nothing was sent.")
 
     st.divider()
     st.subheader("🕒 Hours Report")
