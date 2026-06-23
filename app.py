@@ -103,9 +103,30 @@ def now_local():
     return datetime.datetime.now()
 
 # --- CONFIGURATION & STYLING ---
+# Use the brand icon for the browser tab if present, else fall back to the shield emoji.
+LOGO_PATH = "assets/logo.png"
+ICON_PATH = "assets/icon.png"
+
+def _square_icon(path):
+    """Pad a (possibly non-square) logo onto a transparent square canvas so the
+    browser-tab icon isn't squished — works with a horizontal/wordmark logo."""
+    img = Image.open(path).convert("RGBA")
+    side = max(img.width, img.height)
+    canvas = Image.new("RGBA", (side, side), (0, 0, 0, 0))
+    canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2), img)
+    return canvas
+
+_page_icon = "🛡️"
+try:
+    _icon_src = ICON_PATH if os.path.exists(ICON_PATH) else (LOGO_PATH if os.path.exists(LOGO_PATH) else None)
+    if _icon_src:
+        _page_icon = _square_icon(_icon_src)
+except Exception:
+    _page_icon = "🛡️"
+
 st.set_page_config(
     page_title="5G Security Job Board",
-    page_icon="🛡️",
+    page_icon=_page_icon,
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -213,6 +234,26 @@ st.markdown("""
    }
    </style>
 """, unsafe_allow_html=True)
+
+# Brand logo in the sidebar (no-op until assets/logo.png is committed to the repo)
+try:
+    if os.path.exists(LOGO_PATH):
+        st.logo(LOGO_PATH, icon_image=(ICON_PATH if os.path.exists(ICON_PATH) else LOGO_PATH))
+except Exception:
+    pass
+
+@st.cache_data(show_spinner=False)
+def get_logo_data_uri():
+    """Returns the brand logo as a base64 data URI for embedding in raw HTML
+    (login box, etc.). None if no logo file is present."""
+    try:
+        if os.path.exists(LOGO_PATH):
+            with open(LOGO_PATH, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            return f"data:image/png;base64,{b64}"
+    except Exception:
+        pass
+    return None
 
 # --- PERSISTENCE LAYER (Neon Postgres) ---
 def load_data():
@@ -635,10 +676,14 @@ def authenticate():
     }
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
+    _logo_uri = get_logo_data_uri()
+    login_logo_html = f'<img src="{_logo_uri}" style="max-width:220px; margin-bottom:18px;">' if _logo_uri else ''
+
     st.markdown(
         f"""
         <div class="login-container">
             <div class="login-box">
+                {login_logo_html}
                 <h1 style="color:white; margin-bottom: 10px;">5G Security Job Board</h1>
                 <p style="color:#a1a1aa; margin-bottom: 30px;">Operational Dashboard</p>
                 <a href="{login_url}" style="
@@ -1379,12 +1424,22 @@ def generate_job_pdf(job, tech, location, report):
         canv.rect(0, h - 80, w, 80, fill=1, stroke=0)
         canv.setFillColor(BRAND_RED)
         canv.rect(0, h - 84, w, 4, fill=1, stroke=0)
-        canv.setFillColor(colors.white)
-        canv.setFont("Helvetica-Bold", 20)
-        canv.drawString(46, h - 48, "5G SECURITY")
+        # Brand logo if present, otherwise the text wordmark
+        _logo_drawn = False
+        try:
+            if os.path.exists(LOGO_PATH):
+                canv.drawImage(ImageReader(LOGO_PATH), 46, h - 64, width=150, height=34,
+                               preserveAspectRatio=True, anchor='sw', mask='auto')
+                _logo_drawn = True
+        except Exception:
+            _logo_drawn = False
+        if not _logo_drawn:
+            canv.setFillColor(colors.white)
+            canv.setFont("Helvetica-Bold", 20)
+            canv.drawString(46, h - 48, "5G SECURITY")
         canv.setFillColor(colors.HexColor("#d4d4d8"))
         canv.setFont("Helvetica", 10)
-        canv.drawString(46, h - 64, report_type)
+        canv.drawString(46, h - 76, report_type)
         canv.setFont("Helvetica", 8)
         canv.drawRightString(w - 46, h - 48, f"Generated {generated_str}")
         canv.drawRightString(w - 46, h - 64, f"Job ID: {job.get('id', '')}")
@@ -1574,6 +1629,19 @@ def generate_job_pdf(job, tech, location, report):
     buffer.seek(0)
     return buffer.getvalue()
 
+def email_brand_mark():
+    """Email header brand: an <img> if LOGO_URL is configured (emails need a public
+    URL — they can't read a repo file), otherwise the text wordmark."""
+    url = os.getenv("LOGO_URL")
+    if not url:
+        try:
+            url = st.secrets.get("LOGO_URL")
+        except Exception:
+            url = None
+    if url:
+        return f'<img src="{url}" alt="5G Security" style="height:34px; display:inline-block;">'
+    return '<span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span>'
+
 def build_assignment_email_html(job, tech, location):
     """Branded HTML body for the new-assignment email (plain text is attached as fallback)."""
     def esc(s):
@@ -1621,7 +1689,7 @@ def build_assignment_email_html(job, tech, location):
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
     <tr>
         <td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
-            <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+            {email_brand_mark()}<br>
             <span style="color:#a1a1aa;font-size:13px;">New Job Assignment</span>
         </td>
     </tr>
@@ -1692,7 +1760,7 @@ def build_reminder_email_html(tech, jobs_with_locs, today_str):
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
     <tr>
         <td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
-            <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+            {email_brand_mark()}<br>
             <span style="color:#a1a1aa;font-size:13px;">Daily Assignment Reminder &mdash; {esc(today_str)}</span>
         </td>
     </tr>
@@ -1736,7 +1804,7 @@ def build_admin_email_html(header_label, intro, detail_rows, footer_note):
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
     <tr>
         <td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
-            <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+            {email_brand_mark()}<br>
             <span style="color:#a1a1aa;font-size:13px;">{esc(header_label)}</span>
         </td>
     </tr>
@@ -1849,7 +1917,7 @@ def build_ops_summary_email(jobs, techs, locations, today_str):
 <tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;border:1px solid #e4e4e7;">
     <tr><td style="background-color:#18181b;padding:22px 32px;border-bottom:4px solid #b91c1c;">
-        <span style="color:#ffffff;font-size:22px;font-weight:bold;letter-spacing:1px;">5G SECURITY</span><br>
+        {email_brand_mark()}<br>
         <span style="color:#a1a1aa;font-size:13px;">Daily Operations Summary &mdash; {esc(today_str)}</span>
     </td></tr>
     <tr><td style="padding:24px 32px;">
