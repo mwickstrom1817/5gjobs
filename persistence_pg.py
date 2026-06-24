@@ -17,6 +17,7 @@ DEFAULT_DATA = {
     "briefing": "Data required to generate briefing.",
     "adminEmails": [],
     "construction_emails": [],
+    "agreements": [],
     "last_reminder_date": None
 }
 

@@ -269,6 +269,7 @@ def load_data():
             "briefing": "Data required to generate briefing.",
             "adminEmails": [],
             "construction_emails": [],
+            "agreements": [],
             "smtp_settings": {},
             "last_reminder_date": None
         }
@@ -281,6 +282,7 @@ def _sync_session_to_db():
     st.session_state.db["briefing"] = st.session_state.briefing
     st.session_state.db["adminEmails"] = st.session_state.adminEmails
     st.session_state.db["construction_emails"] = st.session_state.get("construction_emails", [])
+    st.session_state.db["agreements"] = st.session_state.get("agreements", [])
     st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
@@ -295,6 +297,7 @@ def refresh_session_from_db():
     st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
     st.session_state.adminEmails = data.get("adminEmails", [])
     st.session_state.construction_emails = data.get("construction_emails", [])
+    st.session_state.agreements = data.get("agreements", [])
     st.session_state.smtp_settings = data.get("smtp_settings", {})
     st.session_state.last_reminder_date = data.get("last_reminder_date")
 
@@ -359,16 +362,22 @@ if "jobs" not in st.session_state:
     st.session_state.briefing = db_data.get("briefing", "Data required to generate briefing.")
     st.session_state.adminEmails = db_data.get("adminEmails", [])
     st.session_state.construction_emails = db_data.get("construction_emails", [])
+    st.session_state.agreements = db_data.get("agreements", [])
     st.session_state.smtp_settings = db_data.get("smtp_settings", {})
     st.session_state.last_reminder_date = db_data.get("last_reminder_date")
 
-# Back-compat: a session created before multi-company support won't have this key
-# (the block above is skipped because 'jobs' already exists), so initialize it here.
+# Back-compat: sessions created before a new key was added won't have it
+# (the block above is skipped because 'jobs' already exists), so initialize here.
 if "construction_emails" not in st.session_state:
     try:
         st.session_state.construction_emails = load_data().get("construction_emails", [])
     except Exception:
         st.session_state.construction_emails = []
+if "agreements" not in st.session_state:
+    try:
+        st.session_state.agreements = load_data().get("agreements", [])
+    except Exception:
+        st.session_state.agreements = []
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
@@ -997,6 +1006,26 @@ def get_user_construction_role(user_email):
         return 'crew'
     return None
 
+# --- SERVICE AGREEMENTS / CONTRACTS ---
+AGREEMENT_TYPES = ["Monitoring", "Service / Maintenance", "Inspection", "Warranty", "Other"]
+BILLING_CYCLES = ["Monthly", "Quarterly", "Annual", "One-time"]
+# Agreements renewing within this many days are flagged
+AGREEMENT_RENEWAL_DAYS = 60
+
+def agreement_days_left(agr):
+    """Days until an agreement's renewal/end date. Negative = expired.
+    None if no/invalid date or the agreement is cancelled."""
+    if not agr or agr.get('status') == 'Cancelled':
+        return None
+    rd = agr.get('renewal_date')
+    if not rd:
+        return None
+    try:
+        rd_dt = datetime.datetime.strptime(str(rd)[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+    return (rd_dt - now_local().date()).days
+
 # Jobs with no history entry for this many days get flagged as stale
 STALE_JOB_DAYS = 5
 
@@ -1424,6 +1453,7 @@ def download_data_as_json():
         "briefing": st.session_state.briefing,
         "adminEmails": st.session_state.adminEmails,
         "construction_emails": st.session_state.get("construction_emails", []),
+        "agreements": st.session_state.get("agreements", []),
         "last_reminder_date": st.session_state.get("last_reminder_date")
     }
     return json.dumps(data, indent=2)
@@ -4539,6 +4569,153 @@ def render_hours_report(company="security"):
         key=f"hours_csv_{company}",
     )
 
+def _agreement_monthly_value(agr):
+    """Monthly-equivalent recurring value of an agreement (0 for one-time/cancelled)."""
+    if not agr or agr.get('status') == 'Cancelled':
+        return 0.0
+    try:
+        val = float(agr.get('value') or 0)
+    except (ValueError, TypeError):
+        return 0.0
+    cycle = agr.get('billing')
+    if cycle == "Monthly":
+        return val
+    if cycle == "Quarterly":
+        return val / 3
+    if cycle == "Annual":
+        return val / 12
+    return 0.0  # One-time
+
+def render_service_agreements():
+    st.caption("Monitoring, service, inspection, and warranty contracts by site — with renewal alerts.")
+
+    agreements = st.session_state.agreements
+    loc_by_id = {l['id']: l for l in st.session_state.locations}
+
+    # Summary
+    active = [a for a in agreements if a.get('status') != 'Cancelled']
+    expiring = [a for a in active if (agreement_days_left(a) is not None and agreement_days_left(a) <= AGREEMENT_RENEWAL_DAYS)]
+    monthly_total = sum(_agreement_monthly_value(a) for a in active)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Active Contracts", len(active))
+    m2.metric(f"Renewing ≤{AGREEMENT_RENEWAL_DAYS}d", len(expiring))
+    m3.metric("Recurring / mo", f"${monthly_total:,.0f}")
+
+    # Add agreement
+    with st.expander("➕ Add Service Agreement", expanded=not agreements):
+        if not st.session_state.locations:
+            st.warning("Add a location first.")
+        else:
+            with st.form("add_agreement_form", clear_on_submit=True):
+                loc_names = {l['name']: l['id'] for l in st.session_state.locations}
+                a_loc = st.selectbox("Site", list(loc_names.keys()))
+                ac1, ac2 = st.columns(2)
+                a_type = ac1.selectbox("Type", AGREEMENT_TYPES)
+                a_title = ac2.text_input("Title", placeholder="e.g. 24/7 Central Station Monitoring")
+                ac3, ac4 = st.columns(2)
+                a_start = ac3.date_input("Start Date", value=now_local())
+                a_renew = ac4.date_input("Renewal / End Date", value=now_local() + datetime.timedelta(days=365))
+                ac5, ac6 = st.columns(2)
+                a_value = ac5.number_input("Value ($)", min_value=0.0, step=10.0)
+                a_billing = ac6.selectbox("Billing", BILLING_CYCLES)
+                a_auto = st.checkbox("Auto-renews")
+                a_notes = st.text_input("Notes", placeholder="Contract #, terms, contact...")
+
+                if st.form_submit_button("Save Agreement", use_container_width=True):
+                    if not a_title.strip():
+                        st.warning("Please enter a title.")
+                    else:
+                        st.session_state.agreements.append({
+                            'id': f"a{now_local().timestamp()}",
+                            'locationId': loc_names[a_loc],
+                            'type': a_type,
+                            'title': a_title.strip(),
+                            'start_date': str(a_start),
+                            'renewal_date': str(a_renew),
+                            'value': a_value,
+                            'billing': a_billing,
+                            'auto_renew': a_auto,
+                            'notes': a_notes.strip(),
+                            'status': 'Active',
+                        })
+                        save_state(invalidate_briefing=False)
+                        st.success(f"Added '{a_title.strip()}'")
+                        st.rerun()
+
+    if not agreements:
+        st.info("No service agreements recorded yet.")
+        return
+
+    # List, soonest renewal first
+    def _sort_key(a):
+        d = agreement_days_left(a)
+        return (d if d is not None else 999999)
+    for a in sorted(agreements, key=_sort_key):
+        loc = loc_by_id.get(a.get('locationId'))
+        days = agreement_days_left(a)
+        with st.container(border=True):
+            hc1, hc2 = st.columns([3, 1])
+            hc1.markdown(f"**{a.get('title', 'Agreement')}** · {a.get('type', '')}")
+            hc1.caption(f"📍 {loc['name'] if loc else 'Unknown site'}")
+
+            if a.get('status') == 'Cancelled':
+                hc2.markdown(":gray-background[Cancelled]")
+            elif days is None:
+                hc2.caption("No renewal date")
+            elif days < 0:
+                hc2.markdown(f":red-background[Expired {abs(days)}d ago]")
+            elif days <= AGREEMENT_RENEWAL_DAYS:
+                hc2.markdown(f":orange-background[Renews in {days}d]")
+            else:
+                hc2.markdown(f":green-background[Renews in {days}d]")
+
+            meta = []
+            if a.get('value'):
+                meta.append(f"💲{float(a['value']):,.0f} {a.get('billing', '')}")
+            if a.get('renewal_date'):
+                meta.append(f"📅 {a['renewal_date']}")
+            if a.get('auto_renew'):
+                meta.append("🔁 Auto-renews")
+            if meta:
+                hc1.caption(" · ".join(meta))
+            if a.get('notes'):
+                hc1.caption(a['notes'])
+
+            with st.expander("✏️ Edit / Delete"):
+                with st.form(f"edit_agr_{a['id']}"):
+                    e_title = st.text_input("Title", value=a.get('title', ''))
+                    ec1, ec2 = st.columns(2)
+                    e_type = ec1.selectbox("Type", AGREEMENT_TYPES,
+                                           index=AGREEMENT_TYPES.index(a['type']) if a.get('type') in AGREEMENT_TYPES else 0)
+                    e_status = ec2.selectbox("Status", ["Active", "Cancelled"],
+                                             index=0 if a.get('status') != 'Cancelled' else 1)
+                    ec3, ec4 = st.columns(2)
+                    try:
+                        _rv = datetime.datetime.strptime(str(a.get('renewal_date'))[:10], "%Y-%m-%d").date()
+                    except (ValueError, TypeError):
+                        _rv = now_local().date()
+                    e_renew = ec3.date_input("Renewal / End Date", value=_rv, key=f"agr_renew_{a['id']}")
+                    e_value = ec4.number_input("Value ($)", min_value=0.0, step=10.0, value=float(a.get('value') or 0))
+                    ec5, ec6 = st.columns(2)
+                    e_billing = ec5.selectbox("Billing", BILLING_CYCLES,
+                                              index=BILLING_CYCLES.index(a['billing']) if a.get('billing') in BILLING_CYCLES else 0)
+                    e_auto = ec6.checkbox("Auto-renews", value=bool(a.get('auto_renew')))
+                    e_notes = st.text_input("Notes", value=a.get('notes', ''))
+
+                    bc1, bc2 = st.columns(2)
+                    if bc1.form_submit_button("💾 Update"):
+                        a.update({'title': e_title, 'type': e_type, 'status': e_status,
+                                  'renewal_date': str(e_renew), 'value': e_value,
+                                  'billing': e_billing, 'auto_renew': e_auto, 'notes': e_notes})
+                        save_state(invalidate_briefing=False)
+                        st.success("Updated.")
+                        st.rerun()
+                    if bc2.form_submit_button("🗑️ Delete"):
+                        st.session_state.agreements = [x for x in st.session_state.agreements if x['id'] != a['id']]
+                        save_state(invalidate_briefing=False)
+                        st.toast("Agreement deleted", icon="🗑️")
+                        st.rerun()
+
 def render_admin_panel():
     # --- DEDUPLICATE IDs (Fix for existing corrupted state) ---
     if st.session_state.techs:
@@ -4818,6 +4995,7 @@ def render_admin_panel():
             st.session_state.briefing = state["briefing"]
             st.session_state.adminEmails = state["adminEmails"]
             st.session_state.construction_emails = state.get("construction_emails", [])
+            st.session_state.agreements = state.get("agreements", [])
             st.session_state.last_reminder_date = state.get("last_reminder_date")
             st.toast("Reloaded from DB.", icon="🔄")
             st.rerun()
@@ -4871,6 +5049,7 @@ def render_admin_panel():
                         st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
                         st.session_state.adminEmails = data.get("adminEmails", [])
                         st.session_state.construction_emails = data.get("construction_emails", [])
+                        st.session_state.agreements = data.get("agreements", [])
                         st.session_state.last_reminder_date = data.get("last_reminder_date")
 
                         ensure_loaded_into_session()
@@ -5012,6 +5191,11 @@ def render_admin_panel():
                     st.success(f"✅ Test summary sent to {current_email}. Check your inbox.")
                 else:
                     st.warning("Nothing was sent.")
+
+    st.divider()
+    st.subheader("📄 Service Agreements")
+    with st.expander("Manage Contracts & Renewals", expanded=False):
+        render_service_agreements()
 
     st.divider()
     st.subheader("🕒 Hours Report")
@@ -5383,6 +5567,23 @@ def main():
                     for sj, sd in stale_list:
                         s_tech = get_tech(sj['techId'])
                         st.markdown(f"- **{sj['title']}** ({sj['status']}) — **{sd} days** since last update · 👤 {s_tech['name'] if s_tech else 'Unassigned'}")
+
+            # Upcoming contract renewals — admins only (contract values are sensitive)
+            if is_admin:
+                loc_by_id = {l['id']: l for l in st.session_state.locations}
+                renewals = []
+                for a in st.session_state.get('agreements', []):
+                    d = agreement_days_left(a)
+                    if d is not None and d <= AGREEMENT_RENEWAL_DAYS:
+                        renewals.append((a, d))
+                if renewals:
+                    renewals.sort(key=lambda x: x[1])
+                    st.markdown(f"##### 🔔 Upcoming Renewals — within {AGREEMENT_RENEWAL_DAYS} days")
+                    with st.container(border=True):
+                        for a, d in renewals:
+                            loc = loc_by_id.get(a.get('locationId'))
+                            when = f"in {d} days" if d >= 0 else f"**{abs(d)} days ago**"
+                            st.markdown(f"- **{a.get('title', 'Agreement')}** ({a.get('type', '')}) — renews {when} · 📍 {loc['name'] if loc else 'Unknown'}")
 
         with col_feed:
             st.subheader("Priority Feed")
