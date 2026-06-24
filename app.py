@@ -4716,48 +4716,11 @@ def render_service_agreements():
                         st.toast("Agreement deleted", icon="🗑️")
                         st.rerun()
 
-def render_admin_panel():
-    # --- DEDUPLICATE IDs (Fix for existing corrupted state) ---
-    if st.session_state.techs:
-        seen_t_ids = set()
-        # We must iterate over a copy or indices if we were modifying the list structure, 
-        # but here we modify objects inside the list, which is safe.
-        # However, to check for global uniqueness, we need to be careful.
-        # Simple approach: Re-assign ALL IDs if duplicates found? No, that breaks references.
-        # Only re-assign duplicates.
-        # First pass: collect all IDs.
-        all_ids = [t['id'] for t in st.session_state.techs]
-        if len(all_ids) != len(set(all_ids)):
-            # Duplicates exist.
-            seen = set()
-            for t in st.session_state.techs:
-                if t['id'] in seen:
-                    # This is a duplicate. Assign new ID.
-                    # Find max ID number.
-                    existing_nums = [int(x['id'][1:]) for x in st.session_state.techs if x['id'].startswith('t') and x['id'][1:].isdigit()]
-                    next_num = (max(existing_nums) if existing_nums else 0) + 1
-                    t['id'] = f"t{next_num}"
-                seen.add(t['id'])
-            save_state(invalidate_briefing=False)
-
-    if st.session_state.locations:
-        all_l_ids = [l['id'] for l in st.session_state.locations]
-        if len(all_l_ids) != len(set(all_l_ids)):
-            seen = set()
-            for l in st.session_state.locations:
-                if l['id'] in seen:
-                    existing_nums = [int(x['id'][1:]) for x in st.session_state.locations if x['id'].startswith('l') and x['id'][1:].isdigit()]
-                    next_num = (max(existing_nums) if existing_nums else 0) + 1
-                    l['id'] = f"l{next_num}"
-                seen.add(l['id'])
-            save_state(invalidate_briefing=False)
-
-    # --- ADMIN ACCESS MANAGEMENT ---
+def _admin_access():
     st.subheader("🔑 Admin Access Management")
-    with st.expander("Manage Admin Emails", expanded=False):
+    with st.expander("Manage Admin Emails", expanded=True):
         st.write("Add emails that are allowed to access this Admin Panel.")
-        
-        # Add Admin
+
         with st.form("add_admin_form"):
             new_admin_email = st.text_input("New Admin Email")
             if st.form_submit_button("Add Admin"):
@@ -4772,7 +4735,6 @@ def render_admin_panel():
                 else:
                     st.error("Invalid email.")
 
-        # List / Remove Admins
         if st.session_state.adminEmails:
             st.write("###### Current Admins")
             for email in st.session_state.adminEmails:
@@ -4783,13 +4745,12 @@ def render_admin_panel():
                     save_state(invalidate_briefing=False)
                     st.rerun()
 
-    # --- CONSTRUCTION ACCESS ---
     with st.expander("🏗️ Manage 5G Construction Leads", expanded=False):
         st.write("Emails added here can log in (with any email address) and manage the "
                  "**5G Construction** side — create jobs and see all construction work. "
                  "They have no access to the Security side.")
         st.caption("Construction crew (who only see their own jobs) are added as Technicians "
-                   "below with Company set to Construction.")
+                   "with Company set to Construction.")
 
         with st.form("add_constr_lead_form"):
             new_cm_email = st.text_input("Construction Lead Email")
@@ -4816,16 +4777,12 @@ def render_admin_panel():
                     save_state(invalidate_briefing=False)
                     st.rerun()
 
-    st.divider()
 
-    # --- SMTP CONFIG ---
+def _admin_email():
     st.subheader("📧 SMTP Configuration")
-    with st.expander("Configure Email Settings", expanded=False):
+    with st.expander("Configure Email Settings", expanded=True):
         with st.form("smtp_config_form"):
-            # Load existing from session or secrets
             current_smtp = st.session_state.get('smtp_settings', {})
-            
-            # Fallback to secrets if not in session
             if not current_smtp:
                 current_smtp = {
                     "SMTP_SERVER": st.secrets.get("SMTP_SERVER", ""),
@@ -4833,12 +4790,10 @@ def render_admin_panel():
                     "SMTP_EMAIL": st.secrets.get("SMTP_EMAIL", ""),
                     "SMTP_PASSWORD": st.secrets.get("SMTP_PASSWORD", "")
                 }
-
             s_server = st.text_input("SMTP Server", value=current_smtp.get("SMTP_SERVER", ""))
             s_port = st.number_input("SMTP Port", value=int(current_smtp.get("SMTP_PORT", 587)))
             s_email = st.text_input("Sender Email", value=current_smtp.get("SMTP_EMAIL", ""))
             s_pass = st.text_input("Sender Password", value=current_smtp.get("SMTP_PASSWORD", ""), type="password")
-            
             if st.form_submit_button("Save SMTP Settings"):
                 st.session_state.smtp_settings = {
                     "SMTP_SERVER": s_server,
@@ -4849,13 +4804,32 @@ def render_admin_panel():
                 save_state(invalidate_briefing=False)
                 st.success("SMTP Settings Saved to Database!")
                 st.rerun()
-    
-    st.divider()
 
-    # --- TECH MANAGEMENT ---
+    st.subheader("📧 Daily Summary Email")
+    with st.expander("Send a test of the daily ops summary"):
+        recip_count = len(daily_summary_recipients(st.session_state.techs, st.session_state.adminEmails))
+        st.caption(
+            f"The scheduled summary goes to all techs + admins ({recip_count} recipient(s)) at 7 AM, Mon–Fri. "
+            "This test sends the very same email to **you only**, so you can preview it without notifying the team."
+        )
+        current_email = st.session_state.user_info.get("email") if "user_info" in st.session_state else None
+        if st.button("📧 Send Me a Test Summary Now", use_container_width=True):
+            if not current_email:
+                st.error("Could not determine your email address.")
+            else:
+                with st.spinner("Sending test summary..."):
+                    sent, err = send_ops_summary_email([current_email], subject_prefix="[TEST] ")
+                if err:
+                    st.error(f"Failed to send: {err}")
+                elif sent:
+                    st.success(f"✅ Test summary sent to {current_email}. Check your inbox.")
+                else:
+                    st.warning("Nothing was sent.")
+
+
+def _admin_techs():
     st.subheader("👷 Manage Technicians")
-    with st.expander("Add / Remove Technicians", expanded=False):
-        # Add Tech
+    with st.expander("Add / Remove Technicians", expanded=True):
         with st.form("add_tech_form"):
             c1, c2, c3 = st.columns([2, 2, 1])
             new_tech_name = c1.text_input("Name")
@@ -4886,11 +4860,9 @@ def render_admin_panel():
                     })
                     save_state(invalidate_briefing=False)
                     st.success(f"Added {new_tech_name}")
-                    # Removed st.rerun() to prevent thread error
                 else:
                     st.error("All fields required.")
 
-        # List / Remove Techs
         if st.session_state.techs:
             st.write("###### Current Technicians")
             for t in st.session_state.techs:
@@ -4909,29 +4881,24 @@ def render_admin_panel():
                     save_state(invalidate_briefing=False)
                     st.rerun()
 
-    st.divider()
 
-    # --- LOCATION MANAGEMENT ---
+def _admin_locations():
     st.subheader("📍 Manage Locations")
-    with st.expander("Add / Remove Locations", expanded=False):
-        # Add Location
+    with st.expander("Add / Remove Locations", expanded=True):
         with st.form("add_loc_form"):
             l_name = st.text_input("Location Name")
             l_addr = st.text_input("Address")
             l_maps = st.text_input("Google Maps Link (Optional)")
-            
+
             c_l1, c_l2 = st.columns(2)
             l_contact_name = c_l1.text_input("Site Contact Name")
             l_contact_phone = c_l2.text_input("Site Contact Phone")
-            
+
             if st.form_submit_button("Add Location"):
                 if l_name and l_addr:
-                    # Auto-suggest address if API key exists
                     final_addr = suggest_address_with_gemini(l_addr)
-                    
                     existing_ids = [int(l['id'][1:]) for l in st.session_state.locations if l['id'].startswith('l') and l['id'][1:].isdigit()]
                     next_id = (max(existing_ids) if existing_ids else 0) + 1
-                    
                     new_loc = {
                         "id": f"l{next_id}",
                         "name": l_name,
@@ -4947,29 +4914,24 @@ def render_admin_panel():
                 else:
                     st.error("Name and Address required.")
 
-        # List / Remove Locations
         if st.session_state.locations:
             st.write("###### Current Locations")
             for l in st.session_state.locations:
                 c1, c2, c3, c4 = st.columns([3, 4, 1, 1])
                 c1.write(l['name'])
-                
                 contact_info = ""
                 if l.get('contact_name') or l.get('contact_phone'):
                     contact_info = f" | 📞 {l.get('contact_name','')} {l.get('contact_phone','')}"
-                    
                 c2.caption(f"{l['address']}{contact_info}")
-                
                 if c3.button("✏️", key=f"edit_loc_{l['id']}"):
                     edit_location_dialog(l['id'])
-                    
                 if c4.button("🗑️", key=f"del_loc_{l['id']}"):
                     st.session_state.locations.remove(l)
                     save_state(invalidate_briefing=False)
                     st.rerun()
 
-    st.divider()
 
+def _admin_data():
     st.subheader("System Maintenance")
     c_m1, c_m2 = st.columns(2)
     with c_m1:
@@ -4978,11 +4940,9 @@ def render_admin_panel():
             st.cache_data.clear()
             st.toast("Cache cleared!", icon="🧹")
             st.rerun()
-    
+
     st.divider()
-
     st.subheader("Database Management")
-
     c_db1, c_db2 = st.columns(2)
     with c_db1:
         if st.button("🔄 Reload Data from DB"):
@@ -4999,7 +4959,6 @@ def render_admin_panel():
             st.session_state.last_reminder_date = state.get("last_reminder_date")
             st.toast("Reloaded from DB.", icon="🔄")
             st.rerun()
-
     with c_db2:
         if st.button("💾 Save to DB"):
             _sync_session_to_db()
@@ -5007,11 +4966,8 @@ def render_admin_panel():
             st.toast("Saved to DB.", icon="💾")
 
     st.divider()
-
-    # --- BACKUP / RESTORE ---
     st.subheader("Backup & Restore")
     c_bk1, c_bk2 = st.columns(2)
-
     with c_bk1:
         csv_data = download_data_as_csv()
         if csv_data:
@@ -5031,7 +4987,6 @@ def render_admin_panel():
             file_name=f"backup_{now_local().strftime('%Y%m%d')}.json",
             mime="application/json",
         )
-
     with c_bk2:
         uploaded_file = st.file_uploader("Restore Backup (JSON)", type=["json"], key="restore_json")
         if uploaded_file is not None:
@@ -5039,7 +4994,6 @@ def render_admin_panel():
                 try:
                     data = json.load(uploaded_file)
                     required_keys = ["jobs", "techs", "locations"]
-
                     if not all(k in data for k in required_keys):
                         st.error("Invalid backup file format.")
                     else:
@@ -5051,25 +5005,20 @@ def render_admin_panel():
                         st.session_state.construction_emails = data.get("construction_emails", [])
                         st.session_state.agreements = data.get("agreements", [])
                         st.session_state.last_reminder_date = data.get("last_reminder_date")
-
                         ensure_loaded_into_session()
                         _sync_session_to_db()
                         force_overwrite_from_session(invalidate_briefing=False)
-
                         st.success("Data restored successfully (DB overwritten).")
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error restoring file: {e}")
 
-    st.divider()
 
-    # --- STORAGE DEBUGGER ---
+def _admin_diagnostics():
     st.subheader("☁️ Storage Debugger (R2/S3)")
     with st.expander("Test Storage Connection", expanded=False):
         st.caption("Use this to troubleshoot photo upload issues.")
-        
         from object_store import get_r2_client, get_bucket_name, HAS_BOTO3
-        
         if not HAS_BOTO3:
             st.error("❌ `boto3` library is missing. Cannot connect to storage.")
         else:
@@ -5077,30 +5026,23 @@ def render_admin_panel():
                 try:
                     s3 = get_r2_client()
                     bucket = get_bucket_name()
-                    
                     if not s3:
                         st.error("❌ Failed to initialize S3 client. Check credentials (R2_ACCESS_KEY_ID, etc).")
                     elif not bucket:
                         st.error("❌ Bucket name is missing (R2_BUCKET_NAME).")
                     else:
-                        # Display configuration details (masked)
                         endpoint = s3.meta.endpoint_url
                         region = s3.meta.region_name
-                        
                         st.info(f"**Endpoint:** `{endpoint}`")
                         st.info(f"**Bucket:** `{bucket}`")
                         st.info(f"**Region:** `{region}`")
-                        
                         if endpoint and bucket in endpoint:
                             st.warning("⚠️ **Potential Configuration Issue:** The Bucket Name appears to be part of the Endpoint URL. R2 Endpoint URLs should usually end with `.r2.cloudflarestorage.com` and NOT include the bucket name.")
-
-                        # Try listing objects (lightweight check)
                         s3.list_objects_v2(Bucket=bucket, MaxKeys=1)
                         st.success(f"✅ Successfully connected to bucket: `{bucket}`")
                         st.toast("Storage connection verified!", icon="✅")
                 except Exception as e:
                     st.error(f"❌ Connection failed: {e}")
-                    # Check for common errors
                     if "InvalidAccessKeyId" in str(e):
                         st.warning("💡 **Tip:** Double-check your Access Key ID. Ensure no leading/trailing spaces.")
                     elif "SignatureDoesNotMatch" in str(e):
@@ -5108,9 +5050,9 @@ def render_admin_panel():
                     elif "NoSuchBucket" in str(e):
                         st.warning(f"💡 **Tip:** The bucket `{bucket}` does not exist or is not accessible with these credentials.")
                     elif "EndpointConnectionError" in str(e):
-                         st.warning("💡 **Tip:** Could not connect to the endpoint URL. Check for typos.")
+                        st.warning("💡 **Tip:** Could not connect to the endpoint URL. Check for typos.")
 
-    # --- SYSTEM LOGS ---
+    st.divider()
     st.subheader("📋 System Event Logs")
     with st.expander("View Background Logs", expanded=False):
         logs = get_logger().get_logs()
@@ -5121,48 +5063,35 @@ def render_admin_panel():
                 st.code(log_entry, language="text")
 
     st.divider()
-
-    # --- ANALYTICS ---
     st.subheader("🤖 AI Service Diagnostics")
     with st.expander("Test Gemini API Connection", expanded=False):
         st.caption("Check your API key status and model accessibility.")
-        
         api_key = get_api_key()
         if not api_key:
             st.error("❌ No API Key found. Set `GEMINI_API_KEY` in Streamlit Secrets.")
         else:
             st.code(f"Key Found: {'*' * (len(api_key)-4)}{api_key[-4:]}")
-            
             if st.button("Run AI Diagnostics"):
                 try:
-                    # 1. Test Client Initialization
                     client = genai.Client(api_key=api_key)
                     st.success("✅ Gemini Client Initialized.")
-                    
-                    # 2. List Models
                     with st.spinner("Fetching available models..."):
                         all_models = list(client.models.list())
                         model_names = [m.name for m in all_models]
                         st.write(f"**Available Models ({len(model_names)}):**")
-                        st.json(model_names[:10]) # Show first 10
-                    
-                    # 3. Test simple generation
+                        st.json(model_names[:10])
                     with st.spinner("Testing generation..."):
-                        # Get best model
                         _, model_name = get_available_model(api_key)
                         st.info(f"Targeting Model: `{model_name}`")
-                        
                         test_resp = client.models.generate_content(
-                            model=model_name, 
+                            model=model_name,
                             contents="Say 'Connection Successful' if you can read this."
                         )
                         st.success(f"✅ AI Response: {test_resp.text}")
                         st.toast("AI System is fully operational!", icon="🤖")
-                
                 except Exception as e:
                     err_str = str(e)
                     st.error(f"❌ Diagnostic Failed: {err_str}")
-                    
                     if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
                         st.warning("⚠️ **Rate Limit / Quota Exhausted:** If you are on the **Paid 1** tier, this usually indicates that the account has reached its burst limit or the billing upgrade is still propagating (can take 10-15 mins). On the **Free Tier**, this means you've hit the monthly or daily limit.")
                     elif "API_KEY_INVALID" in err_str:
@@ -5171,48 +5100,9 @@ def render_admin_panel():
                         st.warning("⚠️ **Quota/Billing:** Your account might have run out of free credits or billing isn't fully active yet.")
 
     st.divider()
-    st.subheader("📧 Daily Summary Email")
-    with st.expander("Send a test of the daily ops summary"):
-        recip_count = len(daily_summary_recipients(st.session_state.techs, st.session_state.adminEmails))
-        st.caption(
-            f"The scheduled summary goes to all techs + admins ({recip_count} recipient(s)) at 7 AM, Mon–Fri. "
-            "This test sends the very same email to **you only**, so you can preview it without notifying the team."
-        )
-        current_email = st.session_state.user_info.get("email") if "user_info" in st.session_state else None
-        if st.button("📧 Send Me a Test Summary Now", use_container_width=True):
-            if not current_email:
-                st.error("Could not determine your email address.")
-            else:
-                with st.spinner("Sending test summary..."):
-                    sent, err = send_ops_summary_email([current_email], subject_prefix="[TEST] ")
-                if err:
-                    st.error(f"Failed to send: {err}")
-                elif sent:
-                    st.success(f"✅ Test summary sent to {current_email}. Check your inbox.")
-                else:
-                    st.warning("Nothing was sent.")
-
-    st.divider()
-    st.subheader("📄 Service Agreements")
-    with st.expander("Manage Contracts & Renewals", expanded=False):
-        render_service_agreements()
-
-    st.divider()
-    st.subheader("🕒 Hours Report")
-    with st.expander("View Hours (Payroll / Invoicing)", expanded=False):
-        render_hours_report()
-
-    st.divider()
-    with st.expander("📊 View Analytics Dashboard", expanded=False):
-        render_analytics_dashboard()
-
-    st.divider()
-
-    # --- SYSTEM LOGS (optional) ---
     st.subheader("📝 System Logs")
     with st.expander("View Background Activity", expanded=False):
         st.caption("Recent keep-awake pings and system events.")
-
         c_log1, c_log2 = st.columns([3, 1])
         with c_log2:
             if st.button("⚡ Test Ping Now"):
@@ -5230,11 +5120,9 @@ def render_admin_panel():
                         break
                     except Exception:
                         pass
-
                 if not success:
                     get_logger().log("Manual ping failed on all endpoints.")
                     st.error("Ping failed on all endpoints.")
-
                 st.rerun()
 
         logger = get_logger()
@@ -5245,6 +5133,74 @@ def render_admin_panel():
                 st.rerun()
         else:
             st.info("No logs recorded yet.")
+
+
+def render_admin_panel():
+    # --- DEDUPLICATE IDs (Fix for existing corrupted state) ---
+    if st.session_state.techs:
+        all_ids = [t['id'] for t in st.session_state.techs]
+        if len(all_ids) != len(set(all_ids)):
+            seen = set()
+            for t in st.session_state.techs:
+                if t['id'] in seen:
+                    existing_nums = [int(x['id'][1:]) for x in st.session_state.techs if x['id'].startswith('t') and x['id'][1:].isdigit()]
+                    next_num = (max(existing_nums) if existing_nums else 0) + 1
+                    t['id'] = f"t{next_num}"
+                seen.add(t['id'])
+            save_state(invalidate_briefing=False)
+
+    if st.session_state.locations:
+        all_l_ids = [l['id'] for l in st.session_state.locations]
+        if len(all_l_ids) != len(set(all_l_ids)):
+            seen = set()
+            for l in st.session_state.locations:
+                if l['id'] in seen:
+                    existing_nums = [int(x['id'][1:]) for x in st.session_state.locations if x['id'].startswith('l') and x['id'][1:].isdigit()]
+                    next_num = (max(existing_nums) if existing_nums else 0) + 1
+                    l['id'] = f"l{next_num}"
+                seen.add(l['id'])
+            save_state(invalidate_briefing=False)
+
+    # Tile-based navigation: a grid of cards instead of one long scroll
+    tiles = [
+        ("techs", "👷", "Technicians", _admin_techs),
+        ("locations", "📍", "Locations", _admin_locations),
+        ("agreements", "📄", "Service Agreements", render_service_agreements),
+        ("hours", "🕒", "Hours Report", render_hours_report),
+        ("analytics", "📊", "Analytics", render_analytics_dashboard),
+        ("access", "🔑", "Access & Admins", _admin_access),
+        ("email", "📧", "Email & SMTP", _admin_email),
+        ("data", "💾", "Data & Backup", _admin_data),
+        ("diagnostics", "🛠️", "Diagnostics & Logs", _admin_diagnostics),
+    ]
+
+    if "admin_view" not in st.session_state:
+        st.session_state.admin_view = None
+
+    view = st.session_state.admin_view
+
+    if not view:
+        st.caption("Choose a section:")
+        cols = st.columns(3)
+        for i, (key, icon, label, _fn) in enumerate(tiles):
+            with cols[i % 3]:
+                if st.button(f"{icon}  {label}", key=f"admin_tile_{key}", use_container_width=True):
+                    st.session_state.admin_view = key
+                    st.rerun()
+        return
+
+    sel = next((t for t in tiles if t[0] == view), None)
+    bc1, bc2 = st.columns([1, 4])
+    if bc1.button("← Menu", key="admin_back", use_container_width=True):
+        st.session_state.admin_view = None
+        st.rerun()
+    if sel:
+        bc2.markdown(f"### {sel[1]} {sel[2]}")
+    st.divider()
+    if sel:
+        sel[3]()
+
+
 def render_chatbot():
     st.sidebar.title("🤖 Tech Assistant")
     st.sidebar.markdown("Ask about jobs, history, or locations.")
