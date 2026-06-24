@@ -5201,6 +5201,98 @@ def render_admin_panel():
         sel[3]()
 
 
+@st.fragment(run_every="60s")
+def _tv_board():
+    """Auto-refreshing board content for the wall display. Re-reads the DB each
+    minute so the screen stays current without anyone touching it."""
+    try:
+        refresh_session_from_db()
+    except Exception:
+        pass
+
+    def esc(s):
+        return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
+    active = [j for j in jobs if j.get('status') != 'Completed']
+    today_str = now_local().strftime('%Y-%m-%d')
+    completed_today = [j for j in jobs if j.get('status') == 'Completed' and any(
+        r.get('timestamp', '').startswith(today_str) and 'completion_checklist' in r for r in j.get('reports', []))]
+    in_progress = [j for j in active if j.get('status') == 'In Progress']
+    crit = [j for j in active if j.get('priority') in ('Critical', 'High')]
+
+    # Header: logo/title + live clock
+    logo_uri = get_logo_data_uri()
+    brand = (f'<img src="{logo_uri}" style="height:54px;">' if logo_uri
+             else '<span style="font-size:38px;font-weight:bold;color:#fff;letter-spacing:2px;">5G SECURITY</span>')
+    clock = now_local().strftime('%A, %b %d  ·  %I:%M %p').replace(' 0', ' ')
+    st.markdown(
+        f'<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #b91c1c;padding-bottom:14px;margin-bottom:18px;">'
+        f'<div>{brand}<div style="color:#a1a1aa;font-size:18px;margin-top:4px;">Operations Board</div></div>'
+        f'<div style="text-align:right;color:#e4e4e7;font-size:26px;font-weight:bold;">{clock}</div>'
+        f'</div>', unsafe_allow_html=True)
+
+    # Big stat tiles
+    stats = [("ACTIVE JOBS", len(active), "#e4e4e7"), ("CRITICAL / HIGH", len(crit), "#ef4444"),
+             ("IN PROGRESS", len(in_progress), "#3b82f6"), ("COMPLETED TODAY", len(completed_today), "#10b981")]
+    cards = "".join(
+        f'<div style="flex:1;background:#18181b;border:1px solid #27272a;border-radius:12px;padding:18px;text-align:center;">'
+        f'<div style="font-size:52px;font-weight:bold;color:{c};line-height:1;">{v}</div>'
+        f'<div style="font-size:15px;color:#a1a1aa;margin-top:8px;letter-spacing:1px;">{lbl}</div></div>'
+        for lbl, v, c in stats)
+    st.markdown(f'<div style="display:flex;gap:14px;margin-bottom:22px;">{cards}</div>', unsafe_allow_html=True)
+
+    # Status columns (read-only board)
+    board_statuses = ["Not Started", "In Progress", "Waiting on Parts", "Parts Staged", "Customer on Hold"]
+    col_html = ""
+    for status in board_statuses:
+        if status == "Not Started":
+            s_jobs = [j for j in active if j.get('status') in ("Not Started", "Pending")]
+        else:
+            s_jobs = [j for j in active if j.get('status') == status]
+        color = get_status_color(status)
+        tiles = ""
+        for j in s_jobs[:8]:
+            jtech = get_tech(j.get('techId'))
+            jloc = get_location(j.get('locationId'))
+            p_color = PRIORITY_COLORS.get(j.get('priority'), "#52525b")
+            tiles += (f'<div style="background:#0f0f11;border-left:5px solid {p_color};border-radius:6px;padding:9px 11px;margin-bottom:8px;">'
+                      f'<div style="font-size:17px;font-weight:bold;color:#fff;">{esc(j.get("title","")[:34])}</div>'
+                      f'<div style="font-size:14px;color:#a1a1aa;margin-top:3px;">📍 {esc((jloc["name"] if jloc else "—")[:26])}</div>'
+                      f'<div style="font-size:14px;color:#71717a;">👤 {esc(jtech["name"] if jtech else "Unassigned")}</div></div>')
+        if len(s_jobs) > 8:
+            tiles += f'<div style="color:#71717a;font-size:14px;">+{len(s_jobs) - 8} more</div>'
+        if not s_jobs:
+            tiles = '<div style="color:#52525b;font-size:14px;">—</div>'
+        col_html += (f'<div style="flex:1;min-width:0;">'
+                     f'<div style="background:{color};color:#fff;font-size:15px;font-weight:bold;padding:8px 10px;border-radius:8px 8px 0 0;text-align:center;letter-spacing:0.5px;">'
+                     f'{status.upper()} ({len(s_jobs)})</div>'
+                     f'<div style="background:#18181b;border:1px solid #27272a;border-top:none;border-radius:0 0 8px 8px;padding:10px;min-height:120px;">{tiles}</div></div>')
+    st.markdown(f'<div style="display:flex;gap:12px;align-items:flex-start;">{col_html}</div>', unsafe_allow_html=True)
+
+    st.markdown(
+        f'<div style="text-align:right;color:#52525b;font-size:13px;margin-top:14px;">Auto-refreshes every minute · Updated {now_local().strftime("%I:%M %p").lstrip("0")}</div>',
+        unsafe_allow_html=True)
+
+
+def render_tv_display(exitable=False):
+    """Full-screen, read-only wall/TV board. No sensitive data (no credentials,
+    no contract values) — safe for an always-on display."""
+    st.markdown("""
+        <style>
+        [data-testid="stToolbar"], #MainMenu, header, footer,
+        [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+        [data-testid="stAppViewContainer"] .block-container { padding: 1.5rem 2rem !important; max-width: 100% !important; }
+        .stApp { background-color: #09090b; }
+        </style>
+    """, unsafe_allow_html=True)
+    if exitable:
+        if st.button("✕ Exit Display Mode"):
+            st.session_state.kiosk_mode = False
+            st.rerun()
+    _tv_board()
+
+
 def render_chatbot():
     st.sidebar.title("🤖 Tech Assistant")
     st.sidebar.markdown("Ask about jobs, history, or locations.")
@@ -5315,6 +5407,18 @@ def main():
     keep_awake()
     start_background_scheduler()
 
+    # 0. KIOSK / TV DISPLAY (headless): a wall display can land directly on a
+    # read-only board via ?kiosk=<KIOSK_TOKEN>, bypassing login. Shows only
+    # high-level job info — no credentials, contracts, or editing.
+    try:
+        kiosk_param = st.query_params.get("kiosk")
+    except Exception:
+        kiosk_param = None
+    kiosk_token = (st.secrets.get("KIOSK_TOKEN") if "KIOSK_TOKEN" in st.secrets else None) or os.getenv("KIOSK_TOKEN")
+    if kiosk_param and kiosk_token and kiosk_param == kiosk_token:
+        render_tv_display(exitable=False)
+        return
+
     # 1. Authenticate User
     user = authenticate()
     if not user:
@@ -5387,6 +5491,11 @@ def main():
             logout()
         return
 
+    # Display Mode (kiosk) entered via the sidebar button — render the TV board and stop
+    if st.session_state.get('kiosk_mode'):
+        render_tv_display(exitable=True)
+        return
+
     # Live update watcher: keeps this session in sync while idle
     live_update_watcher()
 
@@ -5398,7 +5507,11 @@ def main():
             st.success("🛡️ Admin Access")
         else:
             st.info("👷 Technician View")
-            
+
+        if st.button("📺 Display Mode", key="kiosk_btn", use_container_width=True):
+            st.session_state.kiosk_mode = True
+            st.rerun()
+
         if st.button("Logout", key="logout_btn"):
             logout()
 
