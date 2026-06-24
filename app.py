@@ -446,6 +446,52 @@ def parts_summary(job):
     staged = sum(1 for p in parts if p.get('status') == 'Staged')
     return staged, len(parts)
 
+# --- TIME CLOCK ---
+def _fmt_duration(hours):
+    """0h 0m formatting from a float hours value."""
+    mins = int(round((hours or 0) * 60))
+    return f"{mins // 60}h {mins % 60}m"
+
+def clocked_hours(entries, user_email=None, on_date=None, include_open=True):
+    """Total labor hours from time-clock entries. Optionally filter to one user
+    and/or one date. Open (not-yet-clocked-out) entries count up to 'now'."""
+    total = 0.0
+    now = now_local()
+    for e in (entries or []):
+        if user_email and (e.get('userEmail', '').lower() != user_email.lower()):
+            continue
+        ci = e.get('clock_in')
+        if not ci:
+            continue
+        try:
+            ci_dt = datetime.datetime.fromisoformat(ci)
+        except (ValueError, TypeError):
+            continue
+        if on_date and ci_dt.date() != on_date:
+            continue
+        co = e.get('clock_out')
+        if co:
+            try:
+                co_dt = datetime.datetime.fromisoformat(co)
+            except (ValueError, TypeError):
+                continue
+        else:
+            if not include_open:
+                continue
+            co_dt = now
+            # Safety: a forgotten open timer shouldn't accrue endlessly (cap at 12h)
+            if (co_dt - ci_dt).total_seconds() > 12 * 3600:
+                co_dt = ci_dt + datetime.timedelta(hours=12)
+        if co_dt > ci_dt:
+            total += (co_dt - ci_dt).total_seconds() / 3600
+    return total
+
+def open_time_entry(entries, user_email):
+    """The user's currently-running (not clocked-out) entry, if any."""
+    return next((e for e in (entries or [])
+                 if e.get('userEmail', '').lower() == (user_email or '').lower()
+                 and not e.get('clock_out')), None)
+
 # --- AUTHENTICATION ---
 
 # Persistent login: a signed cookie keeps techs logged in across refreshes.
@@ -3682,9 +3728,76 @@ Desc: {job['description']}"""
                                 st.image(url, use_container_width=True)
 
     with tab_progress:
+        # --- TIME CLOCK ---
+        st.write("#### ⏱️ Time Clock")
+        viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
+        viewer_name = st.session_state.user_info.get('name', '') if "user_info" in st.session_state else ''
+        entries = st.session_state.jobs[job_index].setdefault('time_entries', [])
+        my_open = open_time_entry(entries, viewer_email)
+
+        tc1, tc2 = st.columns([2, 1])
+        if my_open:
+            try:
+                ci_dt = datetime.datetime.fromisoformat(my_open['clock_in'])
+                since_str = ci_dt.strftime('%I:%M %p').lstrip('0')
+            except (ValueError, TypeError):
+                since_str = "earlier"
+            elapsed = clocked_hours([my_open])
+            tc1.success(f"🟢 Clocked in since {since_str} · {_fmt_duration(elapsed)}")
+            if tc2.button("⏹️ Clock Out", key=f"clockout_{job_id}", use_container_width=True):
+                my_open['clock_out'] = now_local().isoformat()
+                save_state(invalidate_briefing=False)
+                st.toast("Clocked out", icon="⏹️")
+                st.rerun(scope="fragment")
+        else:
+            tc1.caption("Not clocked in.")
+            if tc2.button("⏱️ Clock In", key=f"clockin_{job_id}", use_container_width=True):
+                entries.append({
+                    'id': f"tc{now_local().timestamp()}",
+                    'userEmail': viewer_email,
+                    'tech_name': viewer_name or viewer_email,
+                    'clock_in': now_local().isoformat(),
+                    'clock_out': None,
+                })
+                save_state(invalidate_briefing=False)
+                st.toast("Clocked in", icon="⏱️")
+                st.rerun(scope="fragment")
+
+        my_today = clocked_hours(entries, viewer_email, now_local().date())
+        job_total = clocked_hours(entries)
+        st.caption(f"Your time today: **{_fmt_duration(my_today)}**  ·  Everyone, all-time on this job: **{_fmt_duration(job_total)}**")
+
+        # Labor log (per person) — handy for admins
+        if entries:
+            with st.expander("🕒 Time Log"):
+                by_person = {}
+                for e in entries:
+                    by_person.setdefault(e.get('tech_name', 'Unknown'), 0.0)
+                    by_person[e['tech_name'] if e.get('tech_name') else 'Unknown'] += clocked_hours([e])
+                for name, hrs in sorted(by_person.items(), key=lambda x: -x[1]):
+                    st.write(f"**{name}** — {_fmt_duration(hrs)}")
+                st.divider()
+                for e in sorted(entries, key=lambda x: x.get('clock_in', ''), reverse=True):
+                    try:
+                        ci = datetime.datetime.fromisoformat(e['clock_in'])
+                        ci_s = ci.strftime('%b %d, %I:%M %p').replace(' 0', ' ')
+                    except (ValueError, TypeError):
+                        ci_s = e.get('clock_in', '?')
+                    if e.get('clock_out'):
+                        try:
+                            co = datetime.datetime.fromisoformat(e['clock_out'])
+                            co_s = co.strftime('%I:%M %p').lstrip('0')
+                        except (ValueError, TypeError):
+                            co_s = "?"
+                        st.caption(f"{e.get('tech_name', 'Unknown')}: {ci_s} → {co_s} ({_fmt_duration(clocked_hours([e]))})")
+                    else:
+                        st.caption(f"{e.get('tech_name', 'Unknown')}: {ci_s} → 🟢 still clocked in")
+
+        st.divider()
+
         st.write("#### 📸 Quick Update")
         st.caption("Add photos and notes while working. These save to history immediately.")
-        
+
         # Quick Status Buttons
         qs_cols = st.columns(4)
         status_opts = [("🚗 En Route", "En Route to Site"), ("📍 Arrived", "Arrived on Site"), ("🥪 Lunch", "On Lunch Break"), ("✅ Done for Day", "Finished for the day")]
@@ -3844,6 +3957,13 @@ Desc: {job['description']}"""
         if times_prefilled:
             st.caption("⏱️ Times below were prefilled from your quick-status taps today — adjust if needed.")
 
+        # Prefill Hours Worked from the viewer's time clock (today), rounded to 1/4 hr
+        _viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
+        clocked_today = clocked_hours(job.get('time_entries', []), _viewer_email, now_local().date())
+        default_hours = round(clocked_today * 4) / 4 if clocked_today > 0 else 0.0
+        if clocked_today > 0:
+            st.caption(f"⏱️ Hours Worked is prefilled from your time clock today ({_fmt_duration(clocked_today)}) — adjust if needed.")
+
         with st.form(key=f"daily_form_{job_id}"):
             status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged", "Completed"]
             current_status = job['status']
@@ -3866,7 +3986,7 @@ Desc: {job['description']}"""
                 time_arrived = st.time_input("Time Arrived", value=default_arrived)
                 parts_used = st.text_area("Parts/Materials Used")
             with r_col2:
-                hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, help="Leave at 0 to auto-calculate from arrival/finish times.")
+                hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, value=default_hours, help="Prefilled from your time clock; leave at 0 to calc from arrival/finish times.")
                 time_departed = st.time_input("Time Finished", value=default_departed)
                 billable_items = st.text_area("Billable Items / Extras")
 
@@ -3900,6 +4020,11 @@ Desc: {job['description']}"""
             email_btn = f_c2.form_submit_button("📧 Email Report to Admins")
 
             if submit_btn or email_btn:
+                # Wrapping up the day — clock the viewer out if they're still running
+                _open = open_time_entry(job.get('time_entries', []), _viewer_email)
+                if _open:
+                    _open['clock_out'] = now_local().isoformat()
+
                 # Process any new photos uploaded directly in this form
                 if daily_photos:
                     for up_file in daily_photos:
