@@ -190,6 +190,7 @@ st.markdown("""
    .stButton > button p {
        margin: 0 !important;
        line-height: 1.2 !important;
+       white-space: nowrap;
    }
 
    /* Custom Job Card Style */
@@ -4296,37 +4297,56 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             
         widget_key = f"status_change_{job['id']}_{key_suffix}"
 
-        # Inline footer: status dropdown + Details (+ admin ✏️/🗑️) in a single row
-        # instead of full-width stacked controls. Unique keys use job ID + suffix.
-        if allow_delete:
-            f1, f2, f3, f4 = st.columns([3, 2.2, 0.9, 0.9])
-        else:
-            f1, f2 = st.columns([3, 2.2])
-            f3 = f4 = None
+        def _delete_job():
+            if job in st.session_state.jobs:
+                st.session_state.jobs.remove(job)
+                save_state()
+                st.rerun()
 
-        with f1:
+        if compact:
+            # Narrow columns (Tech Board / feeds): dropdown on its own row, then
+            # the button row — tolerates 100% zoom without squishing text.
             st.selectbox(
-                "Change Status",
-                status_options,
-                index=status_idx,
-                key=widget_key,
-                on_change=update_job_status_callback,
-                args=(job['id'], widget_key),
-                label_visibility="collapsed"
-            )
-        with f2:
-            if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-                job_details_dialog(job['id'])
-        if f3 is not None:
-            with f3:
-                if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
-                    edit_job_dialog(job['id'])
-            with f4:
-                if st.button(":material/delete:", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
-                    if job in st.session_state.jobs:
-                        st.session_state.jobs.remove(job)
-                        save_state()
-                        st.rerun()
+                "Change Status", status_options, index=status_idx, key=widget_key,
+                on_change=update_job_status_callback, args=(job['id'], widget_key),
+                label_visibility="collapsed")
+            if allow_delete:
+                b1, b2, b3 = st.columns([3, 1, 1])
+                with b1:
+                    if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+                        job_details_dialog(job['id'])
+                with b2:
+                    if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
+                        edit_job_dialog(job['id'])
+                with b3:
+                    if st.button(":material/delete:", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
+                        _delete_job()
+            else:
+                if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+                    job_details_dialog(job['id'])
+        else:
+            # Wide cards (3-col grid pages): everything in one inline row
+            if allow_delete:
+                f1, f2, f3, f4 = st.columns([3, 2.2, 0.9, 0.9])
+            else:
+                f1, f2 = st.columns([3, 2.2])
+                f3 = f4 = None
+
+            with f1:
+                st.selectbox(
+                    "Change Status", status_options, index=status_idx, key=widget_key,
+                    on_change=update_job_status_callback, args=(job['id'], widget_key),
+                    label_visibility="collapsed")
+            with f2:
+                if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+                    job_details_dialog(job['id'])
+            if f3 is not None:
+                with f3:
+                    if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
+                        edit_job_dialog(job['id'])
+                with f4:
+                    if st.button(":material/delete:", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
+                        _delete_job()
 
 
 def render_job_grid(jobs, key_suffix="", allow_delete=False, cols=3):
