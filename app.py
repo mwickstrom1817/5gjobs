@@ -159,6 +159,11 @@ st.markdown("""
        border-right: 1px solid #27272a;
    }
 
+   /* Tighter page headroom */
+   .block-container {
+       padding-top: 1.6rem !important;
+   }
+
    /* Buttons */
    .stButton > button {
        background-color: #b91c1c;
@@ -166,9 +171,9 @@ st.markdown("""
        border: none;
        border-radius: 8px;
        font-weight: bold;
-       min-height: 2.5rem;
+       min-height: 2rem;
        width: 100%;
-       padding: 0.5rem 1rem !important;
+       padding: 0.3rem 0.8rem !important;
    }
    .stButton > button:hover {
        background-color: #991b1b;
@@ -201,18 +206,31 @@ st.markdown("""
    .priority-Medium { border-left-color: #7f1d1d !important; }
    .priority-Low { border-left-color: #52525b !important; }
 
-   /* Tabs */
+   /* Tabs: underline style (active = white text + red underline) */
    .stTabs [data-baseweb="tab-list"] {
-       gap: 10px;
+       gap: 2px;
+       border-bottom: 1px solid #27272a;
    }
    .stTabs [data-baseweb="tab"] {
-       background-color: #18181b;
-       border-radius: 4px;
+       background-color: transparent;
+       border-radius: 0;
        color: #a1a1aa;
+       padding: 4px 10px;
+   }
+   .stTabs [data-baseweb="tab"]:hover {
+       color: #e4e4e7;
    }
    .stTabs [aria-selected="true"] {
-       background-color: #b91c1c !important;
+       background-color: transparent !important;
        color: white !important;
+       font-weight: bold;
+   }
+   .stTabs [data-baseweb="tab-highlight"] {
+       background-color: #b91c1c !important;
+       height: 3px !important;
+   }
+   .stTabs [data-baseweb="tab-border"] {
+       background-color: #27272a !important;
    }
    
    /* Login Screen Container */
@@ -4276,35 +4294,49 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             status_idx = 0
             
         widget_key = f"status_change_{job['id']}_{key_suffix}"
-        st.selectbox(
-            "Change Status",
-            status_options,
-            index=status_idx,
-            key=widget_key,
-            on_change=update_job_status_callback,
-            args=(job['id'], widget_key),
-            label_visibility="collapsed"
-        )
 
-        # Unique key using job ID AND suffix to prevent Streamlit duplicates
+        # Inline footer: status dropdown + Details (+ admin ✏️/🗑️) in a single row
+        # instead of full-width stacked controls. Unique keys use job ID + suffix.
         if allow_delete:
-            c1, c2, c3 = st.columns([4, 1.2, 1.2])
-            with c1:
-                if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-                    job_details_dialog(job['id'])
-            with c2:
+            f1, f2, f3, f4 = st.columns([3, 2.2, 0.9, 0.9])
+        else:
+            f1, f2 = st.columns([3, 2.2])
+            f3 = f4 = None
+
+        with f1:
+            st.selectbox(
+                "Change Status",
+                status_options,
+                index=status_idx,
+                key=widget_key,
+                on_change=update_job_status_callback,
+                args=(job['id'], widget_key),
+                label_visibility="collapsed"
+            )
+        with f2:
+            if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+                job_details_dialog(job['id'])
+        if f3 is not None:
+            with f3:
                 if st.button("✏️", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
                     edit_job_dialog(job['id'])
-            with c3:
+            with f4:
                 if st.button("🗑️", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
                     if job in st.session_state.jobs:
                         st.session_state.jobs.remove(job)
                         save_state()
                         st.rerun()
-        else:
-            if st.button("View Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-                job_details_dialog(job['id'])
-            
+
+
+def render_job_grid(jobs, key_suffix="", allow_delete=False, cols=3):
+    """Full job cards in a 3-up grid (Streamlit stacks columns on phones, so
+    mobile keeps the familiar single-column feed)."""
+    if not jobs:
+        return
+    columns = st.columns(cols)
+    for i, job in enumerate(jobs):
+        with columns[i % cols]:
+            render_job_card(job, key_suffix=key_suffix, allow_delete=allow_delete)
 
 
 def render_map_view(jobs):
@@ -4458,13 +4490,11 @@ def render_construction_board(user_email, can_manage):
     st.divider()
     if not active:
         st.info("No active construction jobs.")
-    for job in active:
-        render_job_card(job, key_suffix="constr", allow_delete=can_manage)
+    render_job_grid(active, key_suffix="constr", allow_delete=can_manage)
 
     if done:
         with st.expander(f"📦 Completed ({len(done)})"):
-            for job in done:
-                render_job_card(job, key_suffix="constr_done", allow_delete=can_manage)
+            render_job_grid(done, key_suffix="constr_done", allow_delete=can_manage)
 
 
 def render_construction_app(user_name, user_email, role):
@@ -5619,10 +5649,19 @@ def main():
         if st.button("Logout", key="logout_btn"):
             logout()
 
-    # Top Bar
-    c1, c2, c3 = st.columns([4, 4, 2])
+    # Top Bar (compact brand band: logo + wordmark | search | New Job)
+    c1, c2, c3 = st.columns([3, 5, 2], vertical_alignment="center")
     with c1:
-        st.title("5G Security Job Board")
+        _logo_uri = get_logo_data_uri()
+        _mark = (f'<img src="{_logo_uri}" style="height:38px;">' if _logo_uri else
+                 '<div style="width:34px;height:34px;background:#b91c1c;border-radius:7px;display:flex;'
+                 'align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:13px;">5G</div>')
+        _today_lbl = now_local().strftime('%a, %b %d').replace(' 0', ' ')
+        st.markdown(
+            f'<div style="display:flex;align-items:center;gap:10px;">{_mark}'
+            f'<div><div style="color:#fff;font-size:17px;font-weight:bold;letter-spacing:0.5px;line-height:1.1;">5G SECURITY</div>'
+            f'<div style="color:#71717a;font-size:10.5px;letter-spacing:1.5px;">JOB BOARD &nbsp;·&nbsp; {_today_lbl}</div></div></div>',
+            unsafe_allow_html=True)
     with c2:
         search = st.text_input("Search Jobs...", label_visibility="collapsed", placeholder="🔍 Search jobs, sites, techs...")
     with c3:
@@ -5630,6 +5669,7 @@ def main():
         if is_admin:
             if st.button("➕ New Job", use_container_width=True):
                 add_job_dialog()
+    st.markdown('<div style="border-bottom:3px solid #b91c1c;margin:2px 0 8px 0;"></div>', unsafe_allow_html=True)
 
     # Filter Jobs based on search (matches title, description, location name/address, tech name)
     # Security side never shows construction jobs (those live in their own section)
@@ -5654,7 +5694,7 @@ def main():
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
 
     # Navigation Tabs
-    tabs_list = ["🌅 Morning Briefing", "👷 Tech Board", "📅 Calendar", "🗺️ Map", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive"]
+    tabs_list = ["🌅 Briefing", "👷 Tech Board", "📅 Calendar", "🗺️ Map", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive"]
     
     if current_tech:
         tabs_list.insert(0, "🙋‍♂️ My Assignments")
@@ -5680,29 +5720,57 @@ def main():
     # 0. My Assignments (Conditional)
     if current_tech:
         with tab_map["🙋‍♂️ My Assignments"]:
-            st.subheader(f"Hello, {current_tech['name'].split()[0]}!")
-            
+            _first = current_tech['name'].split()[0]
+
             my_jobs = [j for j in filtered_jobs if j['techId'] == current_tech['id'] and j['status'] != 'Completed']
             # Most urgent first: Critical > High > Medium > Low, then soonest date
             priority_rank = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
             my_jobs.sort(key=lambda j: (priority_rank.get(j.get('priority'), 4), str(j.get('date', ''))))
-            
+
+            # Slim greeting strip (replaces subheader + tall banner)
             if not my_jobs:
-                st.info("🎉 No active assignments! Enjoy your day.")
+                _greet = f'👋 <b>Hello, {_first}</b> — no active assignments. Enjoy your day! 🎉'
             else:
-                st.success(f"You have {len(my_jobs)} active jobs today.")
-                for job in my_jobs:
-                    render_job_card(job, compact=False, key_suffix="my_assign")
+                _greet = (f'👋 <b>Hello, {_first}</b> — you have '
+                          f'<b style="color:#6ee7b7;">{len(my_jobs)} active job{"s" if len(my_jobs) != 1 else ""}</b> today.')
+            st.markdown(
+                f'<div style="background:#18181b;border:1px solid #27272a;border-left:4px solid #10b981;'
+                f'border-radius:8px;padding:9px 14px;margin-bottom:12px;color:#e4e4e7;font-size:0.95em;">{_greet}</div>',
+                unsafe_allow_html=True)
+
+            render_job_grid(my_jobs, key_suffix="my_assign")
     
     # 1. Morning Briefing
-    with tab_map["🌅 Morning Briefing"]:
+    with tab_map["🌅 Briefing"]:
         col_main, col_feed = st.columns([2, 1])
         with col_main:
             st.subheader("Daily Operational Briefing")
-            
+
+            # Stats + stale list computed up front so the tiles show live counts
+            sec_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
+            active = len([j for j in sec_jobs if j['status'] != 'Completed'])
+            crit = len([j for j in sec_jobs if j['priority'] == 'Critical'])
+
+            stale_list = []
+            for sj in sec_jobs:
+                sd = get_job_stale_days(sj)
+                if sd is not None and sd >= STALE_JOB_DAYS:
+                    stale_list.append((sj, sd))
+            stale_list.sort(key=lambda x: -x[1])
+
+            # Stat tiles (matches the TV board design language)
+            _tiles = [("ACTIVE", active, "#e4e4e7"), ("CRITICAL", crit, "#ef4444"),
+                      ("TECHS", len(company_techs('security')), "#e4e4e7"), ("STALE", len(stale_list), "#f87171")]
+            _tiles_html = "".join(
+                f'<div style="flex:1;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:12px;text-align:center;">'
+                f'<div style="font-size:30px;font-weight:bold;color:{c};line-height:1;">{v}</div>'
+                f'<div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;letter-spacing:1px;">{lbl}</div></div>'
+                for lbl, v, c in _tiles)
+            st.markdown(f'<div style="display:flex;gap:10px;margin-bottom:12px;">{_tiles_html}</div>', unsafe_allow_html=True)
+
             # Briefing display box
             st.container(border=True).markdown(st.session_state.briefing)
-            
+
             # Controls for briefing
             c1, c2 = st.columns([1, 2])
             if c1.button("🔄 Refresh Briefing", use_container_width=True):
@@ -5717,29 +5785,27 @@ def main():
                     st.session_state.briefing = generate_morning_briefing()
                     save_state(invalidate_briefing=False)
                     st.rerun()
-            
-            # Stats (Security side only — construction has its own section)
-            sec_jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
-            s1, s2, s3 = st.columns(3)
-            active = len([j for j in sec_jobs if j['status'] != 'Completed'])
-            crit = len([j for j in sec_jobs if j['priority'] == 'Critical'])
-            s1.metric("Active Jobs", active)
-            s2.metric("Critical", crit)
-            s3.metric("Techs", len(company_techs('security')))
 
-            # Stale job alerts: active jobs with no history entry in a while
-            stale_list = []
-            for sj in sec_jobs:
-                sd = get_job_stale_days(sj)
-                if sd is not None and sd >= STALE_JOB_DAYS:
-                    stale_list.append((sj, sd))
+            # Stale job alerts: badged rows (red = ancient, amber = recent)
             if stale_list:
-                stale_list.sort(key=lambda x: -x[1])
-                st.markdown(f"##### 🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days")
-                with st.container(border=True):
-                    for sj, sd in stale_list:
-                        s_tech = get_tech(sj['techId'])
-                        st.markdown(f"- **{sj['title']}** ({sj['status']}) — **{sd} days** since last update · 👤 {s_tech['name'] if s_tech else 'Unassigned'}")
+                def _b_esc(s):
+                    return (str(s if s is not None else "").replace('&', '&amp;')
+                            .replace('<', '&lt;').replace('>', '&gt;'))
+                _rows = ""
+                for sj, sd in stale_list:
+                    s_tech = get_tech(sj['techId'])
+                    _bg, _fg = ("#7f1d1d", "#fecaca") if sd >= 30 else ("#b45309", "#fde68a")
+                    _rows += (f'<div style="display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid #27272a;">'
+                              f'<span style="background:{_bg};color:{_fg};font-size:11px;font-weight:bold;padding:2px 8px;'
+                              f'border-radius:10px;min-width:46px;text-align:center;flex-shrink:0;">{sd}d</span>'
+                              f'<span style="color:#e4e4e7;font-size:13.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{_b_esc(sj["title"])}</span>'
+                              f'<span style="color:#71717a;font-size:12px;white-space:nowrap;">{_b_esc(sj["status"])} · {_b_esc(s_tech["name"] if s_tech else "Unassigned")}</span>'
+                              f'</div>')
+                st.markdown(
+                    f'<div style="background:#18181b;border:1px solid #27272a;border-radius:8px;padding:10px 14px;margin-top:12px;">'
+                    f'<div style="color:#f87171;font-size:13px;font-weight:bold;margin-bottom:6px;">🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days</div>'
+                    f'{_rows}</div>',
+                    unsafe_allow_html=True)
 
             # Upcoming contract renewals — admins only (contract values are sensitive)
             if is_admin:
@@ -5784,12 +5850,17 @@ def main():
             cols = st.columns(len(board_statuses))
             for i, status in enumerate(board_statuses):
                 with cols[i]:
-                    st.markdown(f"<h4 style='color:{get_status_color(status)}; border-bottom: 2px solid {get_status_color(status)}; padding-bottom: 5px; margin-bottom: 15px;'>{status}</h4>", unsafe_allow_html=True)
                     if status == "Not Started":
                         status_jobs = [j for j in filtered_jobs if j['status'] in ["Not Started", "Pending"]]
                     else:
                         status_jobs = [j for j in filtered_jobs if j['status'] == status]
-                    
+
+                    _s_color = get_status_color(status)
+                    st.markdown(
+                        f"<h4 style='color:{_s_color}; border-bottom: 3px solid {_s_color}; padding-bottom: 5px; margin-bottom: 15px; font-size:1.0em;'>"
+                        f"{status} <span style='color:#52525b; font-weight:normal;'>({len(status_jobs)})</span></h4>",
+                        unsafe_allow_html=True)
+
                     if not status_jobs:
                         st.caption("No jobs.")
                     for job in status_jobs:
@@ -5921,29 +5992,25 @@ def main():
     with tab_map["🧰 Service Calls"]:
         service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
         if not service_jobs: st.info("No active service calls.")
-        for job in service_jobs:
-            render_job_card(job, key_suffix="service", allow_delete=is_admin)
+        render_job_grid(service_jobs, key_suffix="service", allow_delete=is_admin)
 
     # 5. Projects
     with tab_map["🏗️ Projects"]:
         proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
         if not proj_jobs: st.info("No active projects.")
-        for job in proj_jobs:
-            render_job_card(job, key_suffix="project", allow_delete=is_admin)
+        render_job_grid(proj_jobs, key_suffix="project", allow_delete=is_admin)
 
     # 🤝 Leads
     with tab_map["🤝 Leads"]:
         lead_jobs = [j for j in filtered_jobs if j['type'] == 'Leads' and j['status'] != 'Completed']
         if not lead_jobs: st.info("No active leads.")
-        for job in lead_jobs:
-            render_job_card(job, key_suffix="leads", allow_delete=is_admin)
+        render_job_grid(lead_jobs, key_suffix="leads", allow_delete=is_admin)
 
     # 6. Archive
     with tab_map["📦 Archive"]:
         archived = [j for j in filtered_jobs if j['status'] == 'Completed']
         if not archived: st.info("No archived jobs.")
-        for job in archived:
-            render_job_card(job, key_suffix="archive", allow_delete=is_admin)
+        render_job_grid(archived, key_suffix="archive", allow_delete=is_admin)
 
     # 7. Admin (Only if Admin)
     if is_admin:
