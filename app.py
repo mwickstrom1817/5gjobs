@@ -921,6 +921,21 @@ def start_background_scheduler():
                                         continue  # one bad address shouldn't stop the rest
 
                             server.quit()
+
+                            # Morning push to techs' phones (ntfy) — generic payload,
+                            # topics are only read here (never generated in the thread)
+                            for t in techs:
+                                if (t.get('company', 'security')) == 'construction':
+                                    continue
+                                topic = t.get('notify_topic')
+                                if not topic:
+                                    continue
+                                n_active = len([j for j in jobs
+                                                if j.get('techId') == t.get('id') and j.get('status') != 'Completed'])
+                                if n_active:
+                                    send_push(topic, "Good Morning",
+                                              f"You have {n_active} active job(s) today — check the board for your day.",
+                                              tags=["sunrise"])
                             
                         state["last_reminder_date"] = today_str
                         # Version-guarded so the scheduler can't clobber a save that
@@ -1704,6 +1719,65 @@ def generate_job_pdf(job, tech, location, report):
 
     buffer.seek(0)
     return buffer.getvalue()
+
+# --- PUSH NOTIFICATIONS (ntfy) ---
+def get_ntfy_server():
+    """ntfy server to publish to. Defaults to the public ntfy.sh; override with
+    NTFY_SERVER (secret/env) if we ever self-host or move to ntfy Pro."""
+    server = os.getenv("NTFY_SERVER")
+    if not server:
+        try:
+            server = st.secrets.get("NTFY_SERVER")
+        except Exception:
+            server = None
+    return (server or "https://ntfy.sh").rstrip("/")
+
+def send_push(topic, title, message, tags=None, priority=3):
+    """Sends a push notification via ntfy. Pure/thread-safe (safe in the scheduler).
+    Keep payloads generic — job titles only, never addresses or credentials.
+    Returns True on success."""
+    if not topic:
+        return False
+    try:
+        r = requests.post(
+            get_ntfy_server() + "/",
+            json={
+                "topic": topic,
+                "title": title,
+                "message": message,
+                "tags": tags or ["hammer_and_wrench"],
+                "priority": priority,
+            },
+            timeout=8,
+        )
+        return r.status_code == 200
+    except Exception:
+        return False
+
+def get_or_create_notify_topic(tech):
+    """Returns the tech's personal push topic, generating and persisting an
+    unguessable one on first use (random suffix = the 'password')."""
+    if not tech:
+        return None
+    if not tech.get('notify_topic'):
+        slug = re.sub(r'[^a-z0-9]', '', (tech.get('name') or 'tech').lower())[:10] or 'tech'
+        tech['notify_topic'] = f"5gsec-{slug}-{os.urandom(4).hex()}"
+        save_state(invalidate_briefing=False)
+    return tech['notify_topic']
+
+def push_assignment(job, tech):
+    """New-assignment push to the tech's phone. Generic payload by design.
+    Generates the tech's topic on first use so pushes work out of the box
+    (they just won't be received until the tech subscribes in the ntfy app)."""
+    if not tech:
+        return False
+    topic = get_or_create_notify_topic(tech)
+    return send_push(
+        topic,
+        "New Job Assignment",
+        f"{job.get('title', 'A job')} ({job.get('priority', 'N/A')}) — open the job board for details.",
+        tags=["clipboard"],
+    )
 
 def email_brand_mark():
     """Email header brand: an <img> if LOGO_URL is configured (emails need a public
@@ -2724,6 +2798,8 @@ def add_job_dialog(company="security"):
                     success = send_assignment_email(new_job, tech, loc)
                     if not success:
                         email_status_msg = "SMTP not configured. Use the 'Email' button in Job Details to notify manually."
+                    # Push notification to the tech's phone (ntfy)
+                    push_assignment(new_job, tech)
 
             # Invalidate briefing so it regenerates with new data
             st.session_state.briefing = "Data required to generate briefing."
@@ -2893,12 +2969,18 @@ def edit_job_dialog(job_id):
                 if loc_name:
                     st.session_state.jobs[job_index]['locationId'] = loc_map[loc_name]
                 
+                # Push-notify the new tech if the job changed hands
+                _prev_tech_id = st.session_state.jobs[job_index].get('techId')
                 st.session_state.jobs[job_index]['techId'] = selected_tech_id
-                
+                if selected_tech_id and selected_tech_id != _prev_tech_id:
+                    _new_tech = get_tech(selected_tech_id)
+                    if _new_tech:
+                        push_assignment(st.session_state.jobs[job_index], _new_tech)
+
                 # Invalidate briefing so it regenerates with new data
                 st.session_state.briefing = "Data required to generate briefing."
                 save_state()  # Save changes
-                
+
                 st.toast("Job updated successfully!", icon="✅")
                 st.rerun()
             else:
@@ -4849,6 +4931,7 @@ def _admin_techs():
                     import random
                     color = random.choice(TECH_COLORS)
 
+                    _slug = re.sub(r'[^a-z0-9]', '', new_tech_name.lower())[:10] or 'tech'
                     st.session_state.techs.append({
                         "id": new_id,
                         "name": new_tech_name,
@@ -4856,7 +4939,8 @@ def _admin_techs():
                         "initials": new_tech_initials.upper(),
                         "color": color,
                         "skills": new_tech_skills,
-                        "company": new_tech_company
+                        "company": new_tech_company,
+                        "notify_topic": f"5gsec-{_slug}-{os.urandom(4).hex()}"
                     })
                     save_state(invalidate_briefing=False)
                     st.success(f"Added {new_tech_name}")
@@ -4880,6 +4964,26 @@ def _admin_techs():
                     st.session_state.techs.remove(t)
                     save_state(invalidate_briefing=False)
                     st.rerun()
+
+    st.subheader("📳 Push Notifications (ntfy)")
+    with st.expander("Phone Push Setup & Testing", expanded=False):
+        st.write("Each tech installs the free **ntfy** app (App Store / Google Play) and subscribes "
+                 "to their personal topic below. After that, new job assignments buzz their phone instantly.")
+        st.caption("Treat topic names like passwords — anyone who knows one can receive (and send) its notifications. "
+                   "Notifications only contain the job title, never addresses or credentials.")
+        for t in st.session_state.techs:
+            topic = get_or_create_notify_topic(t)
+            pc1, pc2, pc3 = st.columns([2, 3, 1])
+            pc1.write(f"**{t['name']}**")
+            pc2.code(topic, language=None)
+            if pc3.button("📳 Test", key=f"push_test_{t['id']}", use_container_width=True):
+                ok = send_push(topic, "Test Notification",
+                               f"Hey {t['name'].split()[0]}! Push notifications from the 5G job board are working.",
+                               tags=["tada"])
+                if ok:
+                    st.toast(f"Test push sent to {t['name']}", icon="📳")
+                else:
+                    st.error("Push failed — check the network or NTFY_SERVER setting.")
 
 
 def _admin_locations():
