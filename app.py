@@ -159,9 +159,10 @@ st.markdown("""
        border-right: 1px solid #27272a;
    }
 
-   /* Tighter page headroom */
+   /* Tighter page headroom (Streamlit's fixed header bar is ~3.75rem tall and
+      floats over content, so padding must clear it) */
    .block-container {
-       padding-top: 1.6rem !important;
+       padding-top: 4.2rem !important;
    }
 
    /* Buttons */
