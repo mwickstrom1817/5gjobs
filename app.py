@@ -2948,7 +2948,7 @@ def edit_job_dialog(job_id):
             for i, d in enumerate(existing_docs):
                 c_d1, c_d2 = st.columns([4, 1])
                 c_d1.write(f"📎 {d['name']}")
-                if c_d2.button("🗑️", key=f"del_doc_{job_id}_{i}"):
+                if c_d2.button(":material/delete:", key=f"del_doc_{job_id}_{i}"):
                     existing_docs.pop(i)
                     st.session_state.jobs[job_index]['documents'] = existing_docs
                     save_state(invalidate_briefing=False)
@@ -3581,7 +3581,7 @@ Desc: {job['description']}"""
                     key=status_key, label_visibility="collapsed",
                     on_change=update_part_status_callback, args=(job_id, p['id'], status_key),
                 )
-                if pc3.button("🗑️", key=f"del_part_{p['id']}", help="Remove this part", use_container_width=True):
+                if pc3.button(":material/delete:", key=f"del_part_{p['id']}", help="Remove this part", use_container_width=True):
                     st.session_state.jobs[job_index]['parts'] = [x for x in st.session_state.jobs[job_index].get('parts', []) if x['id'] != p['id']]
                     save_state(invalidate_briefing=False)
                     st.rerun(scope="fragment")
@@ -3808,7 +3808,7 @@ Desc: {job['description']}"""
                                     st.rerun(scope="fragment")
 
                     del_confirm_key = f"confirm_del_report_{r['id']}"
-                    if hdr_del.button("🗑️", key=f"del_rep_{r['id']}", help="Delete this entry"):
+                    if hdr_del.button(":material/delete:", key=f"del_rep_{r['id']}", help="Delete this entry"):
                         st.session_state[del_confirm_key] = True
                         st.rerun(scope="fragment")
 
@@ -4280,7 +4280,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_html}</div>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
-                 <span>📅 {'🗓️ ' + job['date'][:10]}</span>
+                 <span>📅 {job['date'][:10]}</span>
             </div>{stale_html}{parts_html}
         </div>
         """, unsafe_allow_html=True)
@@ -4319,10 +4319,10 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 job_details_dialog(job['id'])
         if f3 is not None:
             with f3:
-                if st.button("✏️", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
+                if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
                     edit_job_dialog(job['id'])
             with f4:
-                if st.button("🗑️", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
+                if st.button(":material/delete:", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
                     if job in st.session_state.jobs:
                         st.session_state.jobs.remove(job)
                         save_state()
@@ -4853,7 +4853,7 @@ def _admin_access():
             for email in st.session_state.adminEmails:
                 c1, c2 = st.columns([4, 1])
                 c1.write(email)
-                if c2.button("🗑️", key=f"del_admin_{email}"):
+                if c2.button(":material/delete:", key=f"del_admin_{email}"):
                     st.session_state.adminEmails.remove(email)
                     save_state(invalidate_briefing=False)
                     st.rerun()
@@ -4885,7 +4885,7 @@ def _admin_access():
             for email in st.session_state.construction_emails:
                 c1, c2 = st.columns([4, 1])
                 c1.write(email)
-                if c2.button("🗑️", key=f"del_cm_{email}"):
+                if c2.button(":material/delete:", key=f"del_cm_{email}"):
                     st.session_state.construction_emails.remove(email)
                     save_state(invalidate_briefing=False)
                     st.rerun()
@@ -4991,7 +4991,7 @@ def _admin_techs():
 
                 c2.write(f"{t['name']}{skills_display}")
                 c3.write(t['email'])
-                if c4.button("🗑️", key=f"del_tech_{t['id']}"):
+                if c4.button(":material/delete:", key=f"del_tech_{t['id']}"):
                     st.session_state.techs.remove(t)
                     save_state(invalidate_briefing=False)
                     st.rerun()
@@ -5058,9 +5058,9 @@ def _admin_locations():
                 if l.get('contact_name') or l.get('contact_phone'):
                     contact_info = f" | 📞 {l.get('contact_name','')} {l.get('contact_phone','')}"
                 c2.caption(f"{l['address']}{contact_info}")
-                if c3.button("✏️", key=f"edit_loc_{l['id']}"):
+                if c3.button(":material/edit:", key=f"edit_loc_{l['id']}"):
                     edit_location_dialog(l['id'])
-                if c4.button("🗑️", key=f"del_loc_{l['id']}"):
+                if c4.button(":material/delete:", key=f"del_loc_{l['id']}"):
                     st.session_state.locations.remove(l)
                     save_state(invalidate_briefing=False)
                     st.rerun()
