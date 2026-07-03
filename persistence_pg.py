@@ -110,16 +110,49 @@ def load_state() -> tuple[dict, int]:
         conn.close()
 
 
-def save_state_to_db(data: dict) -> int:
+class StaleStateError(Exception):
+    """
+    Raised when the DB row has advanced past the version a caller loaded,
+    meaning a save would silently overwrite another writer's changes.
+    """
+    pass
+
+
+def get_db_version():
+    """Return the current version of the global_state row (None if it's missing)."""
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT version FROM app_state WHERE key = 'global_state'")
+            row = cur.fetchone()
+            return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def save_state_to_db(data: dict, expected_version: int = None) -> int:
     """
     Persist data to the database, incrementing the version counter.
 
-    Returns the new version number.
-    Raises on DB errors (caller should handle).
+    If expected_version is provided and the stored row has moved past it
+    (another writer saved first), raises StaleStateError instead of
+    overwriting their changes.
+
+    Returns the new version number. Raises on DB errors (caller should handle).
     """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            if expected_version is not None:
+                cur.execute(
+                    "SELECT version FROM app_state WHERE key = 'global_state' FOR UPDATE"
+                )
+                row = cur.fetchone()
+                current_version = row[0] if row else None
+                if current_version is not None and current_version != expected_version:
+                    raise StaleStateError(
+                        f"DB is at version {current_version}, caller had {expected_version}."
+                    )
             cur.execute(
                 """
                 INSERT INTO app_state (key, value)
@@ -136,6 +169,9 @@ def save_state_to_db(data: dict) -> int:
             new_version = cur.fetchone()[0]
         conn.commit()
         return new_version
+    except StaleStateError:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         logger.error("save_state_to_db failed: %s", e)
