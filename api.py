@@ -14,8 +14,21 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-from persistence_pg import load_state, save_state_to_db, init_db
+from persistence_pg import load_state, save_state_to_db, init_db, StaleStateError, get_db_version
 from object_store import upload_bytes, get_view_url
+
+# Cloud hosts run on UTC — stamp timestamps in the company timezone instead.
+# Override with the APP_TIMEZONE env var (IANA name, e.g. "America/Chicago").
+try:
+    from zoneinfo import ZoneInfo
+    _APP_TZ = ZoneInfo(os.getenv("APP_TIMEZONE", "America/Chicago"))
+except Exception:
+    _APP_TZ = None
+
+def now_local():
+    if _APP_TZ:
+        return datetime.datetime.now(_APP_TZ).replace(tzinfo=None)
+    return datetime.datetime.now()
 
 try:
     from google import genai
@@ -51,10 +64,23 @@ _state_lock = threading.Lock()
 def get_state() -> dict:
     global _state_cache, _state_version
     with _state_lock:
+        # First load populates the cache.
         if not _state_cache:
             data, version = load_state()
             _state_cache = data
             _state_version = version
+            return _state_cache
+        # Otherwise do a cheap version check and only reload the full state when
+        # another writer (the Streamlit app, another API worker) moved the DB
+        # forward. This is what keeps the iOS app in sync with web-side changes.
+        try:
+            db_ver = get_db_version()
+            if db_ver is not None and db_ver != _state_version:
+                data, version = load_state()
+                _state_cache = data
+                _state_version = version
+        except Exception:
+            pass
         return _state_cache
 
 def save_state(invalidate_briefing: bool = True):
@@ -62,7 +88,14 @@ def save_state(invalidate_briefing: bool = True):
     with _state_lock:
         if invalidate_briefing:
             _state_cache["briefing"] = "Data required to generate briefing."
-        _state_version = save_state_to_db(_state_cache)
+        try:
+            _state_version = save_state_to_db(_state_cache, expected_version=_state_version or None)
+        except StaleStateError:
+            # Another writer (e.g. the Streamlit app) saved first. Drop the stale
+            # cache so the client's retry runs against fresh data.
+            _state_cache = {}
+            _state_version = 0
+            raise HTTPException(status_code=409, detail="Data changed on the server. Please retry the request.")
 
 def reload_state():
     global _state_cache
@@ -80,11 +113,23 @@ def verify_google_token(authorization: str = Header(None)) -> dict:
                          headers={"Authorization": f"Bearer {token}"}, timeout=10)
         if r.status_code != 200:
             raise HTTPException(status_code=401, detail="Invalid Google token.")
-        return r.json()
+        user = r.json()
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Token validation failed: {e}")
+
+    # ACCESS CONTROL: a valid Google account is not enough - the email must be a
+    # registered admin or tech (or match ALLOWED_EMAIL_DOMAIN) to use the API.
+    email = (user.get("email") or "").lower()
+    state = get_state()
+    is_admin = email in [e.lower() for e in state.get("adminEmails", [])]
+    is_tech = any((t.get("email") or "").lower() == email for t in state.get("techs", []))
+    allowed_domain = os.getenv("ALLOWED_EMAIL_DOMAIN", "")
+    domain_ok = bool(allowed_domain) and email.endswith("@" + allowed_domain.lower().lstrip("@"))
+    if not (is_admin or is_tech or domain_ok):
+        raise HTTPException(status_code=403, detail="Account not registered on the 5G Security Job Board.")
+    return user
 
 def require_admin(user: dict = Depends(verify_google_token)) -> dict:
     state = get_state()
@@ -144,19 +189,27 @@ def _loc(lid): return next((l for l in get_state()["locations"] if l["id"] == li
 def _job(jid): return next((j for j in get_state()["jobs"] if j["id"] == jid), None)
 
 def get_model(api_key):
-    if not HAS_GENAI: return None, "gemini-1.5-flash"
+    if not HAS_GENAI: return None, "gemini-flash-latest"
     client = genai.Client(api_key=api_key)
     try:
         models = list(client.models.list())
-        valid = [m for m in models if hasattr(m, 'supported_generation_methods') and
-                 'generateContent' in (m.supported_generation_methods or [])]
-        if not valid: valid = [m for m in models if 'gemini' in m.name.lower()]
-        for pat in ['gemini-1.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-pro']:
-            best = next((m for m in valid if pat in m.name), None)
+        exclude = ('tts', 'image', 'audio', 'live', 'embed', 'veo', 'imagen', 'aqa')
+
+        def text_capable(m):
+            # google-genai SDK uses 'supported_actions'; legacy SDK used 'supported_generation_methods'
+            acts = getattr(m, 'supported_actions', None) or getattr(m, 'supported_generation_methods', None)
+            return not acts or 'generateContent' in acts or 'generate_content' in acts
+
+        valid = [m for m in models if 'gemini' in m.name.lower()
+                 and not any(x in m.name.lower() for x in exclude) and text_capable(m)]
+        for pat in ['gemini-2.5-flash', 'gemini-flash-latest', 'gemini-2.0-flash', 'gemini-2.5-pro', 'flash']:
+            best = (next((m for m in valid if m.name.lower().split('/')[-1] == pat), None)
+                    or next((m for m in valid if pat in m.name.lower() and 'preview' not in m.name.lower()), None)
+                    or next((m for m in valid if pat in m.name.lower()), None))
             if best: return client, best.name
         if valid: return client, valid[0].name
     except Exception: pass
-    return client, 'gemini-1.5-flash'
+    return client, 'gemini-flash-latest'
 
 def weather_for(address):
     try:
@@ -212,7 +265,7 @@ def make_pdf(job, tech, loc, report):
     p.setFillColor(colors.darkred); p.setFont("Helvetica-Bold", 20)
     p.drawString(50, h-50, "5G Security - Job Completion Report")
     p.setFillColor(colors.black); p.setFont("Helvetica", 10)
-    p.drawString(50, h-65, f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    p.drawString(50, h-65, f"Generated: {now_local().strftime('%Y-%m-%d %H:%M')}")
     y = h-100; p.setFont("Helvetica-Bold", 12); p.drawString(50, y, "JOB DETAILS")
     p.line(50, y-5, w-50, y-5); y -= 25; p.setFont("Helvetica", 11)
     p.drawString(50, y, f"Title: {job.get('title','')}"); y -= 15
@@ -238,7 +291,7 @@ def gen_briefing(state):
     if not HAS_GENAI: return "⚠️ google-genai not installed."
     active = [j for j in state["jobs"] if j["status"] != "Completed"]
     critical = [j for j in active if j["priority"] in ["Critical","High"]]
-    today = datetime.datetime.now().strftime("%B %d, %Y")
+    today = now_local().strftime("%B %d, %Y")
     prompt = f"""You are Operations Manager for 5G Security (cameras, access control, alarms, cabling).
 Generate a Morning Briefing. Today: {today}
 Active: {len(active)} | Critical/High: {len(critical)}
@@ -254,7 +307,7 @@ Cover: 1. Security Focus 2. Critical Jobs 3. Safety Tip. Max 150 words. Use **bo
 # ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health(): return {"status": "ok", "timestamp": datetime.datetime.now().isoformat()}
+def health(): return {"status": "ok", "timestamp": now_local().isoformat()}
 
 @app.get("/auth/me")
 def get_me(user: dict = Depends(verify_google_token)):
@@ -276,26 +329,17 @@ def list_jobs(search: Optional[str] = None, user: dict = Depends(verify_google_t
 @app.post("/jobs", status_code=201)
 def create_job(job: JobIn, user: dict = Depends(require_admin)):
     state = get_state()
-    nj = {"id": f"j{len(state['jobs'])+100}_{datetime.datetime.now().timestamp()}",
+    nj = {"id": f"j{len(state['jobs'])+100}_{now_local().timestamp()}",
           "title": job.title, "description": job.description, "type": job.type,
           "priority": job.priority, "status": "Pending", "locationId": job.locationId,
           "techId": job.techId, "date": job.date, "reports": []}
     state["jobs"].insert(0, nj); save_state()
-
     if job.techId and job.locationId:
         t = _tech(job.techId); l = _loc(job.locationId)
         if t and l:
-            tech_snapshot = dict(t)
-            loc_snapshot  = dict(l)
-            job_snapshot  = dict(nj)
-            def notify_tech():
-                send_email(
-                    f"Assignment: {job_snapshot['title']}",
-                    f"Hello {tech_snapshot['name']},\n\nNew: {job_snapshot['title']} ({job_snapshot['priority']})\n\n{loc_snapshot['name']}\n{loc_snapshot['address']}\n\n{job_snapshot['description']}",
-                    [tech_snapshot["email"]]
-                )
-            threading.Thread(target=notify_tech, daemon=True).start()
-
+            send_email(f"Assignment: {job.title}",
+                       f"Hello {t['name']},\n\nNew: {job.title} ({job.priority})\n\n{l['name']}\n{l['address']}\n\n{job.description}",
+                       [t["email"]])
     return nj
 
 @app.get("/jobs/{job_id}")
@@ -325,7 +369,7 @@ def add_report(job_id: str, report: ReportIn, user: dict = Depends(verify_google
     idx = next((i for i,j in enumerate(state["jobs"]) if j["id"]==job_id), -1)
     if idx == -1: raise HTTPException(404, "Job not found")
     rd = report.dict(); rd["id"] = str(uuid.uuid4())
-    rd["timestamp"] = datetime.datetime.now().isoformat(); rd["authorEmail"] = user.get("email")
+    rd["timestamp"] = now_local().isoformat(); rd["authorEmail"] = user.get("email")
     api_key = get_api_key()
     if api_key and HAS_GENAI and report.content:
         try:
@@ -335,33 +379,12 @@ def add_report(job_id: str, report: ReportIn, user: dict = Depends(verify_google
         except Exception: pass
     state["jobs"][idx].setdefault("reports", []).append(rd)
     save_state(invalidate_briefing=False)
-
-    # Capture what we need for the background task before returning
-    job_snapshot = dict(state["jobs"][idx])
-    admins = list(state.get("adminEmails", []))
-
-    def background_tasks():
-        try:
-            t = _tech(job_snapshot.get("techId"))
-            l = _loc(job_snapshot.get("locationId"))
-            pdf = make_pdf(job_snapshot, t, l, rd)
-            if admins and pdf:
-                status = job_snapshot.get("status", "In Progress")
-                if status == "Completed":
-                    subject = f"✅ Job Completed: {job_snapshot['title']}"
-                    body = "Job has been completed. See attached PDF report."
-                else:
-                    subject = f"📋 Daily Report: {job_snapshot['title']}"
-                    body = f"A field report was submitted for '{job_snapshot['title']}' (Status: {status}). See attached PDF."
-                success, msg = send_email(subject, body, admins, pdf, f"Report_{job_id}.pdf")
-                print(f"Email result: success={success}, msg={msg}")
-            else:
-                print(f"Email skipped: admins={admins}, pdf={'yes' if pdf else 'no'}")
-        except Exception as e:
-            print(f"Background task error: {e}")
-
-    threading.Thread(target=background_tasks, daemon=True).start()
-
+    if state["jobs"][idx].get("status") == "Completed":
+        t = _tech(state["jobs"][idx].get("techId")); l = _loc(state["jobs"][idx].get("locationId"))
+        pdf = make_pdf(state["jobs"][idx], t, l, rd)
+        admins = state.get("adminEmails", [])
+        if admins: send_email(f"✅ Job Completed: {state['jobs'][idx]['title']}",
+                              f"Job completed. See attached PDF.", admins, pdf, f"Report_{job_id}.pdf")
     return rd
 
 @app.get("/jobs/{job_id}/pdf")
@@ -382,7 +405,7 @@ def download_ics(job_id: str, user: dict = Depends(verify_google_token)):
     try:
         ds = datetime.datetime.fromisoformat(j["date"]) if "T" in j["date"] else datetime.datetime.strptime(j["date"][:10],"%Y-%m-%d").replace(hour=9)
         de = ds + datetime.timedelta(hours=2); fmt = "%Y%m%dT%H%M%S"
-        ics = f"BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:{j['id']}@5gsecurity.app\nDTSTAMP:{datetime.datetime.now().strftime(fmt)}\nDTSTART:{ds.strftime(fmt)}\nDTEND:{de.strftime(fmt)}\nSUMMARY:🛡️ {j['title']}\nLOCATION:{l['name']+' - '+l['address'] if l else 'Unknown'}\nEND:VEVENT\nEND:VCALENDAR"
+        ics = f"BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:{j['id']}@5gsecurity.app\nDTSTAMP:{now_local().strftime(fmt)}\nDTSTART:{ds.strftime(fmt)}\nDTEND:{de.strftime(fmt)}\nSUMMARY:🛡️ {j['title']}\nLOCATION:{l['name']+' - '+l['address'] if l else 'Unknown'}\nEND:VEVENT\nEND:VCALENDAR"
         return StreamingResponse(BytesIO(ics.encode()), media_type="text/calendar",
                                  headers={"Content-Disposition": f"attachment; filename=job_{job_id}.ics"})
     except Exception as e: raise HTTPException(500, str(e))
@@ -394,7 +417,7 @@ def list_techs(user: dict = Depends(verify_google_token)): return {"techs": get_
 def create_tech(tech: TechIn, user: dict = Depends(require_admin)):
     state = get_state()
     colors = ['#7f1d1d','#3f3f46','#b91c1c','#52525b','#991b1b','#7c2d12','#292524']
-    nt = {"id": f"t{len(state['techs'])+1}_{datetime.datetime.now().timestamp()}",
+    nt = {"id": f"t{len(state['techs'])+1}_{now_local().timestamp()}",
           "name": tech.name, "email": tech.email, "initials": tech.initials,
           "color": tech.color or colors[len(state["techs"]) % len(colors)], "skills": tech.skills or []}
     state["techs"].append(nt); save_state(invalidate_briefing=False); return nt
@@ -420,7 +443,7 @@ def list_locations(user: dict = Depends(verify_google_token)): return {"location
 @app.post("/locations", status_code=201)
 def create_location(loc: LocationIn, user: dict = Depends(require_admin)):
     state = get_state()
-    nl = {"id": f"l{len(state['locations'])+1}_{datetime.datetime.now().timestamp()}",
+    nl = {"id": f"l{len(state['locations'])+1}_{now_local().timestamp()}",
           "name": loc.name, "address": loc.address, "contact_name": loc.contact_name or "",
           "contact_phone": loc.contact_phone or "", "contact_email": loc.contact_email or ""}
     w = weather_for(loc.address)
@@ -473,7 +496,7 @@ def chat(msg: ChatIn, user: dict = Depends(verify_google_token)):
 @app.post("/upload/photo")
 async def upload_photo(file: UploadFile = File(...), folder: str = "photos", user: dict = Depends(verify_google_token)):
     data = await file.read()
-    key = f"{folder}/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+    key = f"{folder}/{now_local().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
     result = upload_bytes(data, key, file.content_type or "image/jpeg")
     if not result: raise HTTPException(500, "Upload failed")
     return {"key": result}
@@ -481,7 +504,7 @@ async def upload_photo(file: UploadFile = File(...), folder: str = "photos", use
 @app.post("/upload/signature")
 async def upload_signature(file: UploadFile = File(...), user: dict = Depends(verify_google_token)):
     data = await file.read()
-    key = f"signatures/{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_sig.png"
+    key = f"signatures/{now_local().strftime('%Y%m%d_%H%M%S')}_sig.png"
     result = upload_bytes(data, key, "image/png")
     if not result: raise HTTPException(500, "Upload failed")
     return {"key": result}
@@ -523,7 +546,7 @@ def export_csv(user: dict = Depends(require_admin)):
 def send_reminders(user: dict = Depends(require_admin)):
     state = get_state(); srv, port, sender, pwd = smtp_cfg()
     if not all([srv, sender, pwd]): raise HTTPException(503, "SMTP not configured")
-    today = datetime.datetime.now().strftime("%Y-%m-%d"); count = 0
+    today = now_local().strftime("%Y-%m-%d"); count = 0
     try:
         s = smtp_connect(srv, port, sender, pwd)
         for t in state["techs"]:
