@@ -4415,8 +4415,12 @@ def render_map_view(jobs):
         st.info("No mappable jobs yet — none of the active jobs have a geocodable address.")
         return
 
-    # Default view centers on the TX / NM operating area; markers refine it below
-    fmap = folium.Map(location=[32.3, -103.0], zoom_start=6, tiles="CartoDB positron")
+    # Center on the middle of the actual jobs, but at a FIXED regional zoom so the
+    # default view frames the TX / NM operating area (never zoomed to the world or
+    # jammed into a single cluster). Users can still pan/zoom freely from there.
+    avg_lat = sum(p[2] for p in points) / len(points)
+    avg_lon = sum(p[3] for p in points) / len(points)
+    fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=6, tiles="CartoDB positron")
 
     # Nudge markers that share exact coordinates so they don't fully overlap
     coord_seen = {}
@@ -4451,20 +4455,6 @@ def render_map_view(jobs):
             tooltip=job['title'],
             popup=folium.Popup(popup_html, max_width=260),
         ).add_to(fmap)
-
-    # Frame all markers. Expand a too-small box so folium doesn't over-zoom or
-    # bail out to a whole-world view when jobs cluster tightly / share a spot.
-    lats = [p[2] for p in points]
-    lons = [p[3] for p in points]
-    min_lat, max_lat = min(lats), max(lats)
-    min_lon, max_lon = min(lons), max(lons)
-    if max_lat - min_lat < 0.1:
-        min_lat -= 0.3
-        max_lat += 0.3
-    if max_lon - min_lon < 0.1:
-        min_lon -= 0.3
-        max_lon += 0.3
-    fmap.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(30, 30))
 
     # returned_objects=[] keeps panning/clicking from triggering heavy app reruns
     st_folium(fmap, use_container_width=True, height=600, returned_objects=[], key="jobs_map")
