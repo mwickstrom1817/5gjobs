@@ -14,7 +14,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 
-from persistence_pg import load_state, save_state_to_db, init_db, StaleStateError
+from persistence_pg import load_state, save_state_to_db, init_db, StaleStateError, get_db_version
 from object_store import upload_bytes, get_view_url
 
 # Cloud hosts run on UTC — stamp timestamps in the company timezone instead.
@@ -64,10 +64,23 @@ _state_lock = threading.Lock()
 def get_state() -> dict:
     global _state_cache, _state_version
     with _state_lock:
+        # First load populates the cache.
         if not _state_cache:
             data, version = load_state()
             _state_cache = data
             _state_version = version
+            return _state_cache
+        # Otherwise do a cheap version check and only reload the full state when
+        # another writer (the Streamlit app, another API worker) moved the DB
+        # forward. This is what keeps the iOS app in sync with web-side changes.
+        try:
+            db_ver = get_db_version()
+            if db_ver is not None and db_ver != _state_version:
+                data, version = load_state()
+                _state_cache = data
+                _state_version = version
+        except Exception:
+            pass
         return _state_cache
 
 def save_state(invalidate_briefing: bool = True):
