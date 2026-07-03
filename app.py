@@ -5353,8 +5353,8 @@ def render_admin_panel():
         sel[3]()
 
 
-# TV rotation: the wall display cycles through these screens, one per refresh
-TV_VIEWS = [("board", "Operations Board"), ("schedule", "Schedule"), ("attention", "Needs Attention")]
+# TV rotation: the wall display cycles through these screens
+TV_VIEWS = [("board", "Operations Board"), ("schedule", "Schedule"), ("map", "Job Map")]
 
 def _tv_esc(s):
     return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -5396,9 +5396,12 @@ def _tv_board():
     except Exception:
         pass
 
-    # Advance rotation (starts on the board on first load)
-    st.session_state.tv_view_idx = (st.session_state.get('tv_view_idx', -1) + 1) % len(TV_VIEWS)
-    idx = st.session_state.tv_view_idx
+    # Advance rotation on a TIME basis (not per-run) so the interactive map
+    # component's postbacks can't skip a screen. ~20s dwell per screen.
+    if time.time() - st.session_state.get('tv_last_rotate', 0) >= 18:
+        st.session_state.tv_view_idx = (st.session_state.get('tv_view_idx', -1) + 1) % len(TV_VIEWS)
+        st.session_state.tv_last_rotate = time.time()
+    idx = st.session_state.get('tv_view_idx', 0)
     view_key, view_label = TV_VIEWS[idx]
 
     jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
@@ -5468,22 +5471,45 @@ def _tv_board():
             ("LATER", "#3f3f46", buckets["later"]),
         ]), unsafe_allow_html=True)
 
-    else:  # attention
-        stale = []
+    else:  # map — job dots across the TX/NM area
+        # Only plot jobs whose location is already geocoded; never geocode or write
+        # to the DB from the kiosk (it bypasses auth and runs unattended).
+        map_points = []
         for j in active:
-            d = get_job_stale_days(j)
-            if d is not None and d >= STALE_JOB_DAYS:
-                stale.append((j, d))
-        stale.sort(key=lambda x: -x[1])
-        stale_jobs = [j for j, d in stale]
-        stale_days = {id(j): d for j, d in stale}
-        unassigned = [j for j in active if not j.get('techId')]
-        st.markdown(_tv_columns([
-            ("🚨 STALE — NO UPDATES", "#b91c1c", stale_jobs, lambda j: f"🚨 {stale_days.get(id(j), '')} days"),
-            ("👤 UNASSIGNED", "#f97316", unassigned),
-        ], cap=12), unsafe_allow_html=True)
-        if not stale_jobs and not unassigned:
-            st.markdown('<div style="text-align:center;color:#10b981;font-size:28px;margin-top:30px;">✅ Nothing needs attention — all jobs assigned and current.</div>', unsafe_allow_html=True)
+            jloc = get_location(j.get('locationId'))
+            if not jloc:
+                continue
+            lat, lon = jloc.get('lat'), jloc.get('lon')
+            try:
+                lat = float(lat) if lat is not None else None
+                lon = float(lon) if lon is not None else None
+            except (ValueError, TypeError):
+                lat = lon = None
+            if lat and lon:
+                map_points.append((j, lat, lon))
+
+        if HAS_MAP and map_points:
+            avg_lat = sum(p[1] for p in map_points) / len(map_points)
+            avg_lon = sum(p[2] for p in map_points) / len(map_points)
+            fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=6, tiles="CartoDB dark_matter")
+            coord_seen = {}
+            for j, lat, lon in map_points:
+                ckey = (round(lat, 5), round(lon, 5))
+                n = coord_seen.get(ckey, 0)
+                coord_seen[ckey] = n + 1
+                if n:
+                    lat += 0.0005 * n
+                    lon += 0.0005 * n
+                folium.CircleMarker(
+                    location=[lat, lon], radius=10, color="#000000", weight=1,
+                    fill=True, fill_color=get_status_color(j['status']), fill_opacity=0.95,
+                    tooltip=j['title'],
+                ).add_to(fmap)
+            st_folium(fmap, use_container_width=True, height=470, returned_objects=[], key="tv_map")
+        elif not HAS_MAP:
+            st.markdown('<div style="text-align:center;color:#71717a;font-size:22px;margin-top:40px;">Map unavailable (folium not installed).</div>', unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="text-align:center;color:#52525b;font-size:22px;margin-top:40px;">No mapped jobs yet.</div>', unsafe_allow_html=True)
 
     # Footer: rotation indicator + last-updated
     dots = "".join(
