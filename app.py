@@ -4415,9 +4415,8 @@ def render_map_view(jobs):
         st.info("No mappable jobs yet — none of the active jobs have a geocodable address.")
         return
 
-    avg_lat = sum(p[2] for p in points) / len(points)
-    avg_lon = sum(p[3] for p in points) / len(points)
-    fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=8, tiles="CartoDB positron")
+    # Default view centers on the TX / NM operating area; markers refine it below
+    fmap = folium.Map(location=[32.3, -103.0], zoom_start=6, tiles="CartoDB positron")
 
     # Nudge markers that share exact coordinates so they don't fully overlap
     coord_seen = {}
@@ -4453,11 +4452,19 @@ def render_map_view(jobs):
             popup=folium.Popup(popup_html, max_width=260),
         ).add_to(fmap)
 
-    # Frame all markers
+    # Frame all markers. Expand a too-small box so folium doesn't over-zoom or
+    # bail out to a whole-world view when jobs cluster tightly / share a spot.
     lats = [p[2] for p in points]
     lons = [p[3] for p in points]
-    if len(points) > 1:
-        fmap.fit_bounds([[min(lats), min(lons)], [max(lats), max(lons)]])
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+    if max_lat - min_lat < 0.1:
+        min_lat -= 0.3
+        max_lat += 0.3
+    if max_lon - min_lon < 0.1:
+        min_lon -= 0.3
+        max_lon += 0.3
+    fmap.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(30, 30))
 
     # returned_objects=[] keeps panning/clicking from triggering heavy app reruns
     st_folium(fmap, use_container_width=True, height=600, returned_objects=[], key="jobs_map")
@@ -5356,17 +5363,53 @@ def render_admin_panel():
         sel[3]()
 
 
-@st.fragment(run_every="60s")
+# TV rotation: the wall display cycles through these screens, one per refresh
+TV_VIEWS = [("board", "Operations Board"), ("schedule", "Schedule"), ("attention", "Needs Attention")]
+
+def _tv_esc(s):
+    return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+def _tv_tile(j, badge=None):
+    jtech = get_tech(j.get('techId'))
+    jloc = get_location(j.get('locationId'))
+    p_color = PRIORITY_COLORS.get(j.get('priority'), "#52525b")
+    badge_html = (f'<div style="font-size:13px;color:#f87171;font-weight:bold;margin-top:3px;">{badge}</div>'
+                  if badge else '')
+    return (f'<div style="background:#0f0f11;border-left:5px solid {p_color};border-radius:6px;padding:9px 11px;margin-bottom:8px;">'
+            f'<div style="font-size:17px;font-weight:bold;color:#fff;">{_tv_esc(j.get("title", "")[:34])}</div>'
+            f'<div style="font-size:14px;color:#a1a1aa;margin-top:3px;">📍 {_tv_esc((jloc["name"] if jloc else "—")[:26])}</div>'
+            f'<div style="font-size:14px;color:#71717a;">👤 {_tv_esc(jtech["name"] if jtech else "Unassigned")}</div>{badge_html}</div>')
+
+def _tv_columns(columns_data, cap=8):
+    """columns_data: list of (label, header_color, jobs, optional badge_fn)."""
+    col_html = ""
+    for entry in columns_data:
+        label, color, s_jobs = entry[0], entry[1], entry[2]
+        badge_fn = entry[3] if len(entry) > 3 else None
+        tiles = "".join(_tv_tile(j, badge_fn(j) if badge_fn else None) for j in s_jobs[:cap])
+        if len(s_jobs) > cap:
+            tiles += f'<div style="color:#71717a;font-size:14px;">+{len(s_jobs) - cap} more</div>'
+        if not s_jobs:
+            tiles = '<div style="color:#52525b;font-size:14px;">—</div>'
+        col_html += (f'<div style="flex:1;min-width:0;">'
+                     f'<div style="background:{color};color:#fff;font-size:15px;font-weight:bold;padding:8px 10px;border-radius:8px 8px 0 0;text-align:center;letter-spacing:0.5px;">'
+                     f'{label} ({len(s_jobs)})</div>'
+                     f'<div style="background:#18181b;border:1px solid #27272a;border-top:none;border-radius:0 0 8px 8px;padding:10px;min-height:120px;">{tiles}</div></div>')
+    return f'<div style="display:flex;gap:12px;align-items:flex-start;">{col_html}</div>'
+
+@st.fragment(run_every="20s")
 def _tv_board():
-    """Auto-refreshing board content for the wall display. Re-reads the DB each
-    minute so the screen stays current without anyone touching it."""
+    """Auto-refreshing, rotating wall display. Each ~20s refresh re-reads the DB
+    and advances to the next screen (board -> schedule -> attention)."""
     try:
         refresh_session_from_db()
     except Exception:
         pass
 
-    def esc(s):
-        return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    # Advance rotation (starts on the board on first load)
+    st.session_state.tv_view_idx = (st.session_state.get('tv_view_idx', -1) + 1) % len(TV_VIEWS)
+    idx = st.session_state.tv_view_idx
+    view_key, view_label = TV_VIEWS[idx]
 
     jobs = [j for j in st.session_state.jobs if job_company(j) != 'construction']
     active = [j for j in jobs if j.get('status') != 'Completed']
@@ -5376,18 +5419,18 @@ def _tv_board():
     in_progress = [j for j in active if j.get('status') == 'In Progress']
     crit = [j for j in active if j.get('priority') in ('Critical', 'High')]
 
-    # Header: logo/title + live clock
+    # Header: logo/title + live clock (persistent across all screens)
     logo_uri = get_logo_data_uri()
     brand = (f'<img src="{logo_uri}" style="height:54px;">' if logo_uri
              else '<span style="font-size:38px;font-weight:bold;color:#fff;letter-spacing:2px;">5G SECURITY</span>')
     clock = now_local().strftime('%A, %b %d  ·  %I:%M %p').replace(' 0', ' ')
     st.markdown(
         f'<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #b91c1c;padding-bottom:14px;margin-bottom:18px;">'
-        f'<div>{brand}<div style="color:#a1a1aa;font-size:18px;margin-top:4px;">Operations Board</div></div>'
+        f'<div>{brand}<div style="color:#a1a1aa;font-size:18px;margin-top:4px;">{view_label}</div></div>'
         f'<div style="text-align:right;color:#e4e4e7;font-size:26px;font-weight:bold;">{clock}</div>'
         f'</div>', unsafe_allow_html=True)
 
-    # Big stat tiles
+    # Big stat tiles (persistent across all screens)
     stats = [("ACTIVE JOBS", len(active), "#e4e4e7"), ("CRITICAL / HIGH", len(crit), "#ef4444"),
              ("IN PROGRESS", len(in_progress), "#3b82f6"), ("COMPLETED TODAY", len(completed_today), "#10b981")]
     cards = "".join(
@@ -5397,37 +5440,70 @@ def _tv_board():
         for lbl, v, c in stats)
     st.markdown(f'<div style="display:flex;gap:14px;margin-bottom:22px;">{cards}</div>', unsafe_allow_html=True)
 
-    # Status columns (read-only board)
-    board_statuses = ["Not Started", "In Progress", "Waiting on Parts", "Parts Staged", "Customer on Hold"]
-    col_html = ""
-    for status in board_statuses:
-        if status == "Not Started":
-            s_jobs = [j for j in active if j.get('status') in ("Not Started", "Pending")]
-        else:
-            s_jobs = [j for j in active if j.get('status') == status]
-        color = get_status_color(status)
-        tiles = ""
-        for j in s_jobs[:8]:
-            jtech = get_tech(j.get('techId'))
-            jloc = get_location(j.get('locationId'))
-            p_color = PRIORITY_COLORS.get(j.get('priority'), "#52525b")
-            tiles += (f'<div style="background:#0f0f11;border-left:5px solid {p_color};border-radius:6px;padding:9px 11px;margin-bottom:8px;">'
-                      f'<div style="font-size:17px;font-weight:bold;color:#fff;">{esc(j.get("title","")[:34])}</div>'
-                      f'<div style="font-size:14px;color:#a1a1aa;margin-top:3px;">📍 {esc((jloc["name"] if jloc else "—")[:26])}</div>'
-                      f'<div style="font-size:14px;color:#71717a;">👤 {esc(jtech["name"] if jtech else "Unassigned")}</div></div>')
-        if len(s_jobs) > 8:
-            tiles += f'<div style="color:#71717a;font-size:14px;">+{len(s_jobs) - 8} more</div>'
-        if not s_jobs:
-            tiles = '<div style="color:#52525b;font-size:14px;">—</div>'
-        col_html += (f'<div style="flex:1;min-width:0;">'
-                     f'<div style="background:{color};color:#fff;font-size:15px;font-weight:bold;padding:8px 10px;border-radius:8px 8px 0 0;text-align:center;letter-spacing:0.5px;">'
-                     f'{status.upper()} ({len(s_jobs)})</div>'
-                     f'<div style="background:#18181b;border:1px solid #27272a;border-top:none;border-radius:0 0 8px 8px;padding:10px;min-height:120px;">{tiles}</div></div>')
-    st.markdown(f'<div style="display:flex;gap:12px;align-items:flex-start;">{col_html}</div>', unsafe_allow_html=True)
+    # --- Rotating content ---
+    if view_key == "board":
+        board_statuses = ["Not Started", "In Progress", "Waiting on Parts", "Parts Staged", "Customer on Hold"]
+        cols = []
+        for status in board_statuses:
+            if status == "Not Started":
+                s_jobs = [j for j in active if j.get('status') in ("Not Started", "Pending")]
+            else:
+                s_jobs = [j for j in active if j.get('status') == status]
+            cols.append((status.upper(), get_status_color(status), s_jobs))
+        st.markdown(_tv_columns(cols), unsafe_allow_html=True)
 
+    elif view_key == "schedule":
+        today_d = now_local().date()
+        def _bucket(j):
+            try:
+                d = datetime.datetime.fromisoformat(j['date'][:19]).date()
+            except (ValueError, TypeError, KeyError):
+                return "later"
+            if d <= today_d:
+                return "today"
+            if d == today_d + datetime.timedelta(days=1):
+                return "tomorrow"
+            if d <= today_d + datetime.timedelta(days=7):
+                return "week"
+            return "later"
+        buckets = {"today": [], "tomorrow": [], "week": [], "later": []}
+        for j in active:
+            buckets[_bucket(j)].append(j)
+        for k in buckets:
+            buckets[k].sort(key=lambda j: str(j.get('date', '')))
+        st.markdown(_tv_columns([
+            ("TODAY / OVERDUE", "#b91c1c", buckets["today"]),
+            ("TOMORROW", "#3b82f6", buckets["tomorrow"]),
+            ("THIS WEEK", "#52525b", buckets["week"]),
+            ("LATER", "#3f3f46", buckets["later"]),
+        ]), unsafe_allow_html=True)
+
+    else:  # attention
+        stale = []
+        for j in active:
+            d = get_job_stale_days(j)
+            if d is not None and d >= STALE_JOB_DAYS:
+                stale.append((j, d))
+        stale.sort(key=lambda x: -x[1])
+        stale_jobs = [j for j, d in stale]
+        stale_days = {id(j): d for j, d in stale}
+        unassigned = [j for j in active if not j.get('techId')]
+        st.markdown(_tv_columns([
+            ("🚨 STALE — NO UPDATES", "#b91c1c", stale_jobs, lambda j: f"🚨 {stale_days.get(id(j), '')} days"),
+            ("👤 UNASSIGNED", "#f97316", unassigned),
+        ], cap=12), unsafe_allow_html=True)
+        if not stale_jobs and not unassigned:
+            st.markdown('<div style="text-align:center;color:#10b981;font-size:28px;margin-top:30px;">✅ Nothing needs attention — all jobs assigned and current.</div>', unsafe_allow_html=True)
+
+    # Footer: rotation indicator + last-updated
+    dots = "".join(
+        f'<span style="color:{"#b91c1c" if i == idx else "#3f3f46"};font-size:16px;margin:0 3px;">●</span>'
+        for i in range(len(TV_VIEWS)))
     st.markdown(
-        f'<div style="text-align:right;color:#52525b;font-size:13px;margin-top:14px;">Auto-refreshes every minute · Updated {now_local().strftime("%I:%M %p").lstrip("0")}</div>',
-        unsafe_allow_html=True)
+        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;color:#52525b;font-size:13px;">'
+        f'<div>{dots}</div>'
+        f'<div>Rotating every 20s · Updated {now_local().strftime("%I:%M %p").lstrip("0")}</div>'
+        f'</div>', unsafe_allow_html=True)
 
 
 def render_tv_display(exitable=False):
