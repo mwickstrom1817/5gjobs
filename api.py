@@ -671,7 +671,8 @@ def list_job_photos(job_id: str, user: dict = Depends(verify_google_token)):
     for r in job.get("reports", []) or []:
         for k in (r.get("photos") or []):
             if k and k not in seen: seen.add(k); keys.append(k)
-    return {"photos": keys}
+    # Resolve view URLs server-side so the client makes one round-trip, not N.
+    return {"photos": [{"key": k, "url": get_view_url(k)} for k in keys]}
 
 @app.post("/jobs/{job_id}/photos", status_code=201)
 def add_job_photos(job_id: str, body: JobPhotosIn, user: dict = Depends(verify_google_token)):
