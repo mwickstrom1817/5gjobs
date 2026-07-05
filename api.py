@@ -143,6 +143,7 @@ class JobIn(BaseModel):
     title: str; description: str; type: str; priority: str
     locationId: Optional[str] = None; techId: Optional[str] = None; date: str
     company: Optional[str] = "security"
+    photos: Optional[List[str]] = []
 
 class JobUpdate(BaseModel):
     title: Optional[str] = None; description: Optional[str] = None
@@ -182,6 +183,31 @@ class ChatIn(BaseModel):
 
 class AdminEmailIn(BaseModel):
     email: str
+
+class PartIn(BaseModel):
+    name: str
+    qty: Optional[int] = 1
+    status: Optional[str] = "Needed"
+    vendor: Optional[str] = ""
+    cost: Optional[str] = ""
+    notes: Optional[str] = ""
+
+class PartUpdate(BaseModel):
+    name: Optional[str] = None
+    qty: Optional[int] = None
+    status: Optional[str] = None
+    vendor: Optional[str] = None
+    cost: Optional[str] = None
+    notes: Optional[str] = None
+
+class MoveReportIn(BaseModel):
+    target_job_id: str
+
+class JobPhotosIn(BaseModel):
+    keys: List[str]
+
+class JobPhotoDeleteIn(BaseModel):
+    key: str
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -346,6 +372,28 @@ def build_completion_html(job, tech, loc, report):
              + '<p style="color:#71717a;font-size:13px;margin:0;">&#128206; The full completion report is attached as a PDF.</p>')
     return _email_shell("Job Completed", inner)
 
+def build_reminder_html(tech, jobs_with_locs, today):
+    first = (tech.get("name") or "there").split()[0] if tech else "there"
+    cards = ""
+    for job, loc in jobs_with_locs:
+        p_color = EMAIL_PRIORITY_COLORS.get(job.get("priority"), "#52525b")
+        loc_name = loc.get("name", "Unknown Location") if loc else "Unknown Location"
+        loc_addr = loc.get("address", "") if loc else ""
+        cards += (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+                  f'style="border:1px solid #e4e4e7;border-left:4px solid {p_color};border-radius:6px;border-collapse:separate;margin:0 0 12px 0;">'
+                  f'<tr><td style="padding:14px 16px;">'
+                  f'<span style="color:#18181b;font-size:15px;font-weight:bold;">{_email_esc(job.get("title",""))}</span>'
+                  f'<span style="display:inline-block;background:{p_color};color:#fff;padding:2px 10px;border-radius:10px;font-size:11px;font-weight:bold;margin-left:8px;">{_email_esc(job.get("priority",""))}</span><br>'
+                  f'<span style="color:#71717a;font-size:12px;">Status: {_email_esc(job.get("status",""))}</span><br>'
+                  f'<span style="color:#27272a;font-size:13px;font-weight:bold;">&#128205; {_email_esc(loc_name)}</span><br>'
+                  f'<span style="font-size:12px;color:#71717a;">{_email_esc(loc_addr)}</span>'
+                  f'</td></tr></table>')
+    plural = "s" if len(jobs_with_locs) != 1 else ""
+    inner = (f'<p style="color:#27272a;font-size:14px;margin:0 0 18px 0;">Good morning {_email_esc(first)} &mdash; '
+             f'you have <b>{len(jobs_with_locs)} active assignment{plural}</b> today:</p>{cards}'
+             f'<p style="color:#71717a;font-size:12px;margin:12px 0 0 0;">Check the job board for full details and to log your work.</p>')
+    return _email_shell(f"Daily Assignment Reminder &mdash; {_email_esc(today)}", inner)
+
 def send_email(subject, body, recipients, pdf_bytes=None, pdf_name="report.pdf", html=None):
     srv, port, sender, pwd = smtp_cfg()
     if not all([srv, sender, pwd]): return False, "SMTP not configured"
@@ -457,7 +505,8 @@ def create_job(job: JobIn, user: dict = Depends(verify_google_token)):
     nj = {"id": f"j{len(state['jobs'])+100}_{now_local().timestamp()}",
           "title": job.title, "description": job.description, "type": job.type,
           "priority": job.priority, "status": "Pending", "locationId": job.locationId,
-          "techId": job.techId, "date": job.date, "reports": [], "company": company}
+          "techId": job.techId, "date": job.date, "reports": [], "company": company,
+          "photos": job.photos or []}
     state["jobs"].insert(0, nj); save_state()
     if job.techId and job.locationId:
         t = _tech(job.techId); l = _loc(job.locationId)
@@ -517,6 +566,133 @@ def add_report(job_id: str, report: ReportIn, user: dict = Depends(verify_google
                               f"Job completed. See attached PDF.", admins, pdf, f"Report_{job_id}.pdf",
                               html=build_completion_html(state["jobs"][idx], t, l, rd))
     return rd
+
+# ── Report management (delete / move) ────────────────────────────────────────
+def _job_idx_checked(state, job_id, user):
+    idx = next((i for i, j in enumerate(state["jobs"]) if j["id"] == job_id), -1)
+    if idx == -1: raise HTTPException(404, "Job not found")
+    if job_company(state["jobs"][idx]) not in user_companies(user, state):
+        raise HTTPException(403, "Not allowed to modify this job.")
+    return idx
+
+@app.delete("/jobs/{job_id}/reports/{report_id}", status_code=204)
+def delete_report(job_id: str, report_id: str, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    reports = state["jobs"][idx].get("reports", [])
+    new_reports = [r for r in reports if r.get("id") != report_id]
+    if len(new_reports) == len(reports): raise HTTPException(404, "Report not found")
+    state["jobs"][idx]["reports"] = new_reports
+    save_state(invalidate_briefing=False)
+
+@app.post("/jobs/{job_id}/reports/{report_id}/move")
+def move_report(job_id: str, report_id: str, body: MoveReportIn, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    src = _job_idx_checked(state, job_id, user)
+    dst = _job_idx_checked(state, body.target_job_id, user)  # also verifies access to target
+    report = next((r for r in state["jobs"][src].get("reports", []) if r.get("id") == report_id), None)
+    if not report: raise HTTPException(404, "Report not found")
+    state["jobs"][dst].setdefault("reports", []).append(report)
+    state["jobs"][src]["reports"] = [r for r in state["jobs"][src]["reports"] if r.get("id") != report_id]
+    save_state(invalidate_briefing=False)
+    return {"status": "moved", "to": body.target_job_id}
+
+# ── Time clock ───────────────────────────────────────────────────────────────
+@app.post("/jobs/{job_id}/clock-in")
+def clock_in(job_id: str, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    email = (user.get("email") or "").lower()
+    entries = state["jobs"][idx].setdefault("time_entries", [])
+    if any(e for e in entries if (e.get("userEmail") or "").lower() == email and not e.get("clock_out")):
+        raise HTTPException(409, "Already clocked in on this job.")
+    entry = {"id": f"tc{now_local().timestamp()}", "userEmail": user.get("email"),
+             "tech_name": user.get("name") or user.get("email"),
+             "clock_in": now_local().isoformat(), "clock_out": None}
+    entries.append(entry)
+    save_state(invalidate_briefing=False)
+    return entry
+
+@app.post("/jobs/{job_id}/clock-out")
+def clock_out(job_id: str, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    email = (user.get("email") or "").lower()
+    entry = next((e for e in state["jobs"][idx].get("time_entries", [])
+                  if (e.get("userEmail") or "").lower() == email and not e.get("clock_out")), None)
+    if not entry: raise HTTPException(404, "Not currently clocked in.")
+    entry["clock_out"] = now_local().isoformat()
+    save_state(invalidate_briefing=False)
+    return entry
+
+# ── Parts ────────────────────────────────────────────────────────────────────
+@app.post("/jobs/{job_id}/parts", status_code=201)
+def add_part(job_id: str, part: PartIn, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    p = {"id": f"p{now_local().timestamp()}", "name": part.name, "qty": part.qty or 1,
+         "status": part.status or "Needed", "vendor": part.vendor or "", "cost": part.cost or "",
+         "notes": part.notes or "", "added_by": user.get("email"), "updated_at": now_local().isoformat()}
+    state["jobs"][idx].setdefault("parts", []).append(p)
+    save_state(invalidate_briefing=False)
+    return p
+
+@app.patch("/jobs/{job_id}/parts/{part_id}")
+def update_part(job_id: str, part_id: str, updates: PartUpdate, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    p = next((x for x in state["jobs"][idx].get("parts", []) if x.get("id") == part_id), None)
+    if not p: raise HTTPException(404, "Part not found")
+    for f, v in updates.dict(exclude_none=True).items(): p[f] = v
+    p["updated_at"] = now_local().isoformat(); p["added_by"] = user.get("email")
+    save_state(invalidate_briefing=False)
+    return p
+
+@app.delete("/jobs/{job_id}/parts/{part_id}", status_code=204)
+def delete_part(job_id: str, part_id: str, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    parts = state["jobs"][idx].get("parts", [])
+    new_parts = [x for x in parts if x.get("id") != part_id]
+    if len(new_parts) == len(parts): raise HTTPException(404, "Part not found")
+    state["jobs"][idx]["parts"] = new_parts
+    save_state(invalidate_briefing=False)
+
+@app.get("/jobs/{job_id}/photos")
+def list_job_photos(job_id: str, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    job = state["jobs"][idx]
+    # Merge job-level photos with every photo across the job's reports, deduped,
+    # so existing jobs surface photos posted through field reports too.
+    keys, seen = [], set()
+    for k in job.get("photos", []) or []:
+        if k and k not in seen: seen.add(k); keys.append(k)
+    for r in job.get("reports", []) or []:
+        for k in (r.get("photos") or []):
+            if k and k not in seen: seen.add(k); keys.append(k)
+    return {"photos": keys}
+
+@app.post("/jobs/{job_id}/photos", status_code=201)
+def add_job_photos(job_id: str, body: JobPhotosIn, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    photos = state["jobs"][idx].setdefault("photos", [])
+    for k in body.keys:
+        if k and k not in photos: photos.append(k)
+    save_state(invalidate_briefing=False)
+    return {"photos": photos}
+
+@app.delete("/jobs/{job_id}/photos")
+def delete_job_photo(job_id: str, body: JobPhotoDeleteIn, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    idx = _job_idx_checked(state, job_id, user)
+    photos = state["jobs"][idx].get("photos", []) or []
+    if body.key not in photos:
+        raise HTTPException(404, "Photo not on this job (report photos are managed on the report).")
+    state["jobs"][idx]["photos"] = [k for k in photos if k != body.key]
+    save_state(invalidate_briefing=False)
+    return {"photos": state["jobs"][idx]["photos"]}
 
 @app.get("/jobs/{job_id}/pdf")
 def download_pdf(job_id: str, user: dict = Depends(verify_google_token)):
@@ -689,9 +865,11 @@ def send_reminders(user: dict = Depends(require_admin)):
             jobs = [j for j in state["jobs"] if j.get("techId")==t["id"] and j.get("status")!="Completed"]
             if not jobs: continue
             lines = "\n".join([f"- {j['title']} ({j['priority']})" for j in jobs])
-            msg = MIMEMultipart(); msg["From"]=sender; msg["To"]=t["email"]
-            msg["Subject"]=f"📅 Daily Reminder - {today}"
+            jobs_with_locs = [(j, _loc(j.get("locationId"))) for j in jobs]
+            msg = MIMEMultipart("alternative")
+            msg["From"]=sender; msg["To"]=t["email"]; msg["Subject"]=f"📅 Daily Reminder - {today}"
             msg.attach(MIMEText(f"Hello {t['name']},\n\nYour assignments for {today}:\n{lines}\n\nCheck the job board for details.", "plain"))
+            msg.attach(MIMEText(build_reminder_html(t, jobs_with_locs, today), "html"))
             s.send_message(msg); count += 1
         s.quit(); state["last_reminder_date"] = today; save_state(invalidate_briefing=False)
         return {"sent": count}
