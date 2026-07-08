@@ -2673,6 +2673,34 @@ def generate_morning_briefing():
             
         return f"Error generating briefing: {err_msg}{help_tip}"
 
+# --- Time picker helper ---
+# Mobile-friendly replacement for st.time_input, whose dropdown popover gets
+# clipped/unclickable inside st.dialog on phones. A searchable selectbox of time
+# slots is fully tappable and persists via its key.
+def _time_slot_options(step_minutes=15):
+    return [datetime.time(h, m) for h in range(24) for m in range(0, 60, step_minutes)]
+
+def _fmt_time_ampm(t):
+    return t.strftime('%I:%M %p').lstrip('0')
+
+def _round_time_to_step(t, step_minutes=15):
+    total = t.hour * 60 + t.minute
+    rounded = int(round(total / step_minutes)) * step_minutes
+    rounded = min(rounded, 24 * 60 - step_minutes)
+    return datetime.time(rounded // 60, rounded % 60)
+
+def time_select(label, default, key, step_minutes=15):
+    """Selectbox of times of day; returns a datetime.time. `default` seeds the
+    first render (rounded to the step); `key` persists the user's choice."""
+    opts = _time_slot_options(step_minutes)
+    rounded = _round_time_to_step(default if isinstance(default, datetime.time) else datetime.time(8, 0), step_minutes)
+    try:
+        idx = opts.index(rounded)
+    except ValueError:
+        idx = opts.index(datetime.time(8, 0))
+    return st.selectbox(label, options=opts, index=idx, format_func=_fmt_time_ampm, key=key)
+
+
 # --- DIALOGS (MODALS) ---
 
 @st.dialog("Create New Job")
@@ -3185,7 +3213,7 @@ def render_edit_report_view(job_id, report_id):
                 t_arr = datetime.datetime.strptime(t_arr_str, '%H:%M:%S').time()
             except:
                 t_arr = datetime.time(8, 0)
-            time_arrived = st.time_input("Time Arrived", value=t_arr, key=f"edit_arr_{report_id}")
+            time_arrived = time_select("Time Arrived", t_arr, key=f"edit_arr_sel_{report_id}")
             
             parts_used = st.text_area("Parts/Materials Used", value=report.get('partsUsed', ''))
             
@@ -3202,7 +3230,7 @@ def render_edit_report_view(job_id, report_id):
                 t_dep = datetime.datetime.strptime(t_dep_str, '%H:%M:%S').time()
             except:
                 t_dep = datetime.time(17, 0)
-            time_departed = st.time_input("Time Finished", value=t_dep, key=f"edit_dep_{report_id}")
+            time_departed = time_select("Time Finished", t_dep, key=f"edit_dep_sel_{report_id}")
             
             billable_items = st.text_area("Billable Items / Extras", value=report.get('billableItems', ''))
 
@@ -4123,11 +4151,11 @@ Desc: {job['description']}"""
                 default_techs = [tech['name']] if tech and tech['name'] in available_techs else []
                 
                 techs_on_site_list = st.multiselect("Techs On Site", options=available_techs, default=default_techs)
-                time_arrived = st.time_input("Time Arrived", value=default_arrived, key=f"daily_arr_{job_id}")
+                time_arrived = time_select("Time Arrived", default_arrived, key=f"daily_arr_sel_{job_id}")
                 parts_used = st.text_area("Parts/Materials Used")
             with r_col2:
                 hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, value=default_hours, help="Prefilled from your time clock; leave at 0 to calc from arrival/finish times.")
-                time_departed = st.time_input("Time Finished", value=default_departed, key=f"daily_dep_{job_id}")
+                time_departed = time_select("Time Finished", default_departed, key=f"daily_dep_sel_{job_id}")
                 billable_items = st.text_area("Billable Items / Extras")
 
             # Use transcribed text if available
