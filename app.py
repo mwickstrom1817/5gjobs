@@ -3418,14 +3418,35 @@ Desc: {job['description']}"""
     # Construction jobs don't get the IPs & Passwords tab — locations can be shared
     # with Security, and that tab would expose Security site credentials.
     is_construction_job = job_company(job) == 'construction'
-    _tab_labels = ["📋 Details & History", "🖼️ Photos", "📄 Documents", parts_tab_label, "📸 In-Progress", "📝 Daily Report"]
+    # Section nav: a single-select control + conditional rendering (only the
+    # chosen section is built). st.tabs kept ALL panels in the DOM and on mobile
+    # the inactive ones would "unhide" after an in-dialog interaction (e.g. picking
+    # a time); rendering just one section makes that impossible. Stable IDs are
+    # used so the selection survives reruns even when a label changes (e.g. Parts count).
+    _sections = ["history", "photos", "docs", "parts", "progress", "daily"]
     if not is_construction_job:
-        _tab_labels.append(creds_tab_label)
-    _tabs = st.tabs(_tab_labels)
-    tab_history, tab_photos, tab_docs, tab_parts, tab_progress, tab_daily = _tabs[:6]
-    tab_creds = _tabs[6] if not is_construction_job else None
+        _sections.append("creds")
+    _section_labels = {
+        "history": "📋 Details & History", "photos": "🖼️ Photos",
+        "docs": "📄 Documents", "parts": parts_tab_label,
+        "progress": "📸 In-Progress", "daily": "📝 Daily Report",
+        "creds": creds_tab_label,
+    }
+    _fmt_section = lambda s: _section_labels.get(s, s)
+    if hasattr(st, "segmented_control"):
+        section = st.segmented_control(
+            "Section", _sections, format_func=_fmt_section,
+            default="history", key=f"jobsection_{job_id}", label_visibility="collapsed",
+        )
+    else:
+        section = st.radio(
+            "Section", _sections, format_func=_fmt_section, horizontal=True,
+            key=f"jobsection_{job_id}", label_visibility="collapsed",
+        )
+    if section is None:
+        section = "history"
 
-    with tab_docs:
+    if section == "docs":
         st.write("#### 📄 Documents")
         st.caption("Floorplans, maps, and reference documents. Site documents follow the location across every job.")
 
@@ -3495,7 +3516,7 @@ Desc: {job['description']}"""
         for i, d in enumerate(docs):
             render_doc_row(d, f"job_{i}", allow_move_to_site=True)
 
-    with tab_photos:
+    if section == "photos":
         st.write("#### 🖼️ All Job Photos")
         # Gather every photo/PDF across all history entries, newest first
         photo_entries = []
@@ -3530,7 +3551,7 @@ Desc: {job['description']}"""
                     else:
                         st.image(url, caption=cap, use_container_width=True)
 
-    with tab_parts:
+    if section == "parts":
         st.write("#### 🔩 Parts & Materials")
         st.caption("Track what this job needs, from request through staging. Anyone can add or update items.")
 
@@ -3627,8 +3648,7 @@ Desc: {job['description']}"""
                     pc1.caption(f"Updated {p['updated_at'][:16]} by {p.get('added_by', 'unknown')}")
 
 
-    if tab_creds is not None:
-      with tab_creds:
+    if section == "creds":
         st.write("#### 🔐 Site Systems & Network Info")
         st.caption("Logins, IPs, and notes for the systems at this location. Saved to the location, shared across all its jobs.")
 
@@ -3759,7 +3779,7 @@ Desc: {job['description']}"""
                                 st.toast(f"'{s.get('name')}' deleted", icon="🗑️")
                                 st.rerun(scope="fragment")
 
-    with tab_history:
+    if section == "history":
         st.markdown(f"**Description:** {job['description']}")
 
         # Site History: what else have we done at this location? (same company only,
@@ -3895,7 +3915,7 @@ Desc: {job['description']}"""
                             else:
                                 st.image(url, use_container_width=True)
 
-    with tab_progress:
+    if section == "progress":
         # --- TIME CLOCK ---
         st.write("#### ⏱️ Time Clock")
         viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
@@ -4048,7 +4068,7 @@ Desc: {job['description']}"""
                 else:
                     st.warning("Please add a note or photo.")
 
-    with tab_daily:
+    if section == "daily":
         # Check for confirmation state for emailing report
         confirm_key = f"confirm_daily_send_{job['id']}"
         if confirm_key in st.session_state:
