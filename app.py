@@ -234,7 +234,15 @@ st.markdown("""
    .stTabs [data-baseweb="tab-border"] {
        background-color: #27272a !important;
    }
-   
+   /* Mobile fix: only the ACTIVE tab's panel should show. Streamlit keeps every
+      tab panel in the DOM and hides inactive ones with the `hidden` attribute;
+      on mobile that hiding can fail to stick after a rerun (e.g. opening a job),
+      leaving every tab's content stacked on one page. Force it. */
+   .stTabs [data-baseweb="tab-panel"][hidden],
+   .stTabs [role="tabpanel"][hidden] {
+       display: none !important;
+   }
+
    /* Login Screen Container */
    .login-container {
        display: flex;
@@ -3177,7 +3185,7 @@ def render_edit_report_view(job_id, report_id):
                 t_arr = datetime.datetime.strptime(t_arr_str, '%H:%M:%S').time()
             except:
                 t_arr = datetime.time(8, 0)
-            time_arrived = st.time_input("Time Arrived", value=t_arr)
+            time_arrived = st.time_input("Time Arrived", value=t_arr, key=f"edit_arr_{report_id}")
             
             parts_used = st.text_area("Parts/Materials Used", value=report.get('partsUsed', ''))
             
@@ -3194,7 +3202,7 @@ def render_edit_report_view(job_id, report_id):
                 t_dep = datetime.datetime.strptime(t_dep_str, '%H:%M:%S').time()
             except:
                 t_dep = datetime.time(17, 0)
-            time_departed = st.time_input("Time Finished", value=t_dep)
+            time_departed = st.time_input("Time Finished", value=t_dep, key=f"edit_dep_{report_id}")
             
             billable_items = st.text_area("Billable Items / Extras", value=report.get('billableItems', ''))
 
@@ -3771,7 +3779,7 @@ Desc: {job['description']}"""
         viewer_tech = next((t for t in st.session_state.techs if user_email and t['email'].lower() == user_email.lower()), None)
 
         for r in reports_to_show:
-            r_tech = get_tech(r['techId'])
+            r_tech = get_tech(r.get('techId'))
 
             # Check if it's a "Daily Report" (has hours/techs) or "In-Progress" (just content/photos)
             is_daily_report = r.get('hoursWorked') or r.get('techsOnSite')
@@ -4115,11 +4123,11 @@ Desc: {job['description']}"""
                 default_techs = [tech['name']] if tech and tech['name'] in available_techs else []
                 
                 techs_on_site_list = st.multiselect("Techs On Site", options=available_techs, default=default_techs)
-                time_arrived = st.time_input("Time Arrived", value=default_arrived)
+                time_arrived = st.time_input("Time Arrived", value=default_arrived, key=f"daily_arr_{job_id}")
                 parts_used = st.text_area("Parts/Materials Used")
             with r_col2:
                 hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, value=default_hours, help="Prefilled from your time clock; leave at 0 to calc from arrival/finish times.")
-                time_departed = st.time_input("Time Finished", value=default_departed)
+                time_departed = st.time_input("Time Finished", value=default_departed, key=f"daily_dep_{job_id}")
                 billable_items = st.text_area("Billable Items / Extras")
 
             # Use transcribed text if available
