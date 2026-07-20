@@ -483,6 +483,83 @@ def parts_summary(job):
     staged = sum(1 for p in parts if p.get('status') == 'Staged')
     return staged, len(parts)
 
+# Invoicing pipeline (admin/office-manager facing). Only applies once a job is
+# Completed — invoicing isn't meaningful while work is still running.
+INVOICE_STATUSES = ["Ready to Invoice", "Invoiced", "Paid", "No Charge"]
+INVOICE_STATUS_COLORS = {
+    "Ready to Invoice": "#d97706",
+    "Invoiced": "#2563eb",
+    "Paid": "#10b981",
+    "No Charge": "#52525b",
+}
+INVOICE_STATUS_ICONS = {
+    "Ready to Invoice": "🧾",
+    "Invoiced": "📤",
+    "Paid": "✅",
+    "No Charge": "🛡️",
+}
+
+def job_is_warranty(job):
+    """True if the job or any of its reports was flagged as warranty work."""
+    if job.get('isWarranty'):
+        return True
+    return any(r.get('isWarranty') for r in (job.get('reports') or []))
+
+def invoice_status(job):
+    """Current invoice status, or None if the job isn't Completed yet.
+
+    Derived rather than stamped on completion: a Completed job with no explicit
+    invoice record defaults to 'No Charge' when it's warranty work, otherwise
+    'Ready to Invoice'. That means the queue self-populates (including for jobs
+    completed before this feature existed) with no migration."""
+    if job.get('status') != 'Completed':
+        return None
+    stored = (job.get('invoice') or {}).get('status')
+    if stored in INVOICE_STATUSES:
+        return stored
+    return "No Charge" if job_is_warranty(job) else "Ready to Invoice"
+
+def job_invoice(job):
+    """The job's invoice record with every field defaulted."""
+    inv = job.get('invoice') or {}
+    return {
+        'status': invoice_status(job),
+        'number': inv.get('number', ''),
+        'amount': inv.get('amount', ''),
+        'date': inv.get('date', ''),
+        'notes': inv.get('notes', ''),
+        'updated_by': inv.get('updated_by', ''),
+        'updated_at': inv.get('updated_at', ''),
+    }
+
+def set_job_invoice(job_id, **fields):
+    """Update a job's invoice record in session state and persist."""
+    j = next((x for x in st.session_state.jobs if x['id'] == job_id), None)
+    if not j:
+        return False
+    inv = dict(j.get('invoice') or {})
+    for k, v in fields.items():
+        if v is not None:
+            inv[k] = v
+    user_email = st.session_state.user_info.get('email', 'Unknown') if "user_info" in st.session_state else 'Unknown'
+    inv['updated_by'] = user_email
+    inv['updated_at'] = now_local().isoformat()
+    j['invoice'] = inv
+    save_state(invalidate_briefing=False)
+    return True
+
+def invoice_chip_html(job, margin_top=6):
+    """Small colored invoice chip for job cards. Empty string when not applicable."""
+    status = invoice_status(job)
+    if not status:
+        return ""
+    color = INVOICE_STATUS_COLORS.get(status, "#52525b")
+    icon = INVOICE_STATUS_ICONS.get(status, "")
+    num = (job.get('invoice') or {}).get('number', '')
+    label = f"{icon} {status}" + (f" · #{num}" if num and status != "Ready to Invoice" else "")
+    return (f'<div style="margin-top:{margin_top}px;"><span style="background:{color};color:white;'
+            f'font-size:0.72em;padding:2px 9px;border-radius:10px;">{label}</span></div>')
+
 # --- TIME CLOCK ---
 def _fmt_duration(hours):
     """0h 0m formatting from a float hours value."""
@@ -3426,11 +3503,16 @@ Desc: {job['description']}"""
     _sections = ["history", "photos", "docs", "parts", "progress", "daily"]
     if not is_construction_job:
         _sections.append("creds")
+    # Invoicing is admin/office-manager only, and only once the work is done.
+    _viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
+    _viewer_is_admin = _viewer_email in st.session_state.adminEmails if _viewer_email else False
+    if _viewer_is_admin and job.get('status') == 'Completed':
+        _sections.append("invoice")
     _section_labels = {
         "history": "📋 Details & History", "photos": "🖼️ Photos",
         "docs": "📄 Documents", "parts": parts_tab_label,
         "progress": "📸 In-Progress", "daily": "📝 Daily Report",
-        "creds": creds_tab_label,
+        "creds": creds_tab_label, "invoice": "💵 Invoicing",
     }
     _fmt_section = lambda s: _section_labels.get(s, s)
     if hasattr(st, "segmented_control"):
@@ -3778,6 +3860,55 @@ Desc: {job['description']}"""
                                 save_state(invalidate_briefing=False)
                                 st.toast(f"'{s.get('name')}' deleted", icon="🗑️")
                                 st.rerun(scope="fragment")
+
+    if section == "invoice":
+        st.write("#### 💵 Invoicing")
+        inv = job_invoice(job)
+        _cur = inv['status']
+        st.markdown(
+            f'<span style="background:{INVOICE_STATUS_COLORS.get(_cur, "#52525b")};color:white;'
+            f'padding:3px 12px;border-radius:10px;font-size:0.85em;">'
+            f'{INVOICE_STATUS_ICONS.get(_cur, "")} {_cur}</span>',
+            unsafe_allow_html=True)
+        if inv['updated_by']:
+            st.caption(f"Last updated by {inv['updated_by']} on {inv['updated_at'][:16].replace('T', ' ')}")
+
+        # What to bill: hours + billable items pulled straight off the daily reports
+        _tot_hours = 0.0
+        _billables = []
+        for r in (job.get('reports') or []):
+            try:
+                _tot_hours += float(r.get('hoursWorked') or 0)
+            except (TypeError, ValueError):
+                pass
+            if r.get('billableItems'):
+                _billables.append(f"{(r.get('timestamp') or '')[:10]} — {r['billableItems']}")
+        m1, m2 = st.columns(2)
+        m1.metric("Hours logged", f"{_tot_hours:g}")
+        m2.metric("Warranty work", "Yes" if job_is_warranty(job) else "No")
+        if _billables:
+            with st.expander(f"🧾 Billable items ({len(_billables)})", expanded=False):
+                for b in _billables:
+                    st.write(f"- {b}")
+
+        with st.form(key=f"invoice_form_{job_id}"):
+            i_status = st.selectbox("Invoice Status", INVOICE_STATUSES,
+                                    index=INVOICE_STATUSES.index(_cur) if _cur in INVOICE_STATUSES else 0)
+            ic1, ic2 = st.columns(2)
+            i_number = ic1.text_input("Invoice #", value=inv['number'])
+            i_amount = ic2.text_input("Amount", value=inv['amount'], placeholder="e.g. 1450.00")
+            # Plain text, not st.date_input — date pickers hit the same unclickable
+            # popover problem inside dialogs on mobile. Auto-stamped on save.
+            i_date = st.text_input("Invoice Date", value=inv['date'], placeholder="YYYY-MM-DD")
+            i_notes = st.text_area("Invoice Notes", value=inv['notes'])
+            if st.form_submit_button("💾 Save Invoicing"):
+                if i_status in ("Invoiced", "Paid") and not i_date.strip():
+                    i_date = now_local().strftime('%Y-%m-%d')
+                set_job_invoice(job_id, status=i_status, number=i_number,
+                                amount=i_amount, date=i_date, notes=i_notes)
+                get_logger().log(f"{_viewer_email} set invoice status '{i_status}' on job {job_id}")
+                st.success("Invoicing updated.")
+                st.rerun(scope="fragment")
 
     if section == "history":
         st.markdown(f"**Description:** {job['description']}")
@@ -4324,6 +4455,10 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         parts_color = "#10b981" if staged_parts == total_parts else "#a1a1aa"
         parts_html = f'<div style="color:{parts_color}; font-size:0.8em; margin-top:6px;">🔩 Parts: {staged_parts}/{total_parts} staged</div>'
 
+    # Invoicing chip (Completed jobs only) — lets the office manager scan the
+    # board for what still needs billing without opening anything.
+    invoice_html = invoice_chip_html(job)
+
     with st.container():
         st.markdown(f"""
         <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
@@ -4338,7 +4473,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
                  <span>📅 {job['date'][:10]}</span>
-            </div>{stale_html}{parts_html}
+            </div>{stale_html}{parts_html}{invoice_html}
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
@@ -4517,6 +4652,96 @@ def render_map_view(jobs):
 
     if skipped:
         st.caption(f"⚠️ {skipped} job(s) not shown — address missing or could not be geocoded.")
+
+
+def render_invoicing_view(user_email):
+    """Office-manager worklist: every Completed job grouped by invoice status, so
+    'what still needs billing' is answerable at a glance. Admins only."""
+    st.subheader("💵 Invoicing")
+    st.caption("Every completed job and where it sits in billing. Jobs land in "
+               "'Ready to Invoice' automatically when they're marked Completed "
+               "(warranty work goes straight to 'No Charge').")
+
+    completed = [j for j in st.session_state.jobs if j.get('status') == 'Completed']
+    if not completed:
+        st.info("No completed jobs yet.")
+        return
+
+    buckets = {s: [] for s in INVOICE_STATUSES}
+    for j in completed:
+        buckets.setdefault(invoice_status(j), []).append(j)
+
+    # Status summary chips
+    chips = " ".join(
+        f'<span style="background:{INVOICE_STATUS_COLORS[s]};color:white;padding:3px 12px;'
+        f'border-radius:12px;font-size:0.78em;margin-right:6px;">'
+        f'{INVOICE_STATUS_ICONS[s]} {len(buckets.get(s, []))} {s}</span>'
+        for s in INVOICE_STATUSES
+    )
+    st.markdown(chips, unsafe_allow_html=True)
+    st.write("")
+
+    view = st.radio("Show", INVOICE_STATUSES + ["All"], horizontal=True,
+                    key="invoicing_filter", label_visibility="collapsed")
+
+    rows = completed if view == "All" else buckets.get(view, [])
+    # Most recently worked first
+    rows = sorted(rows, key=lambda j: (j.get('date') or ''), reverse=True)
+
+    if not rows:
+        st.success(f"Nothing sitting in '{view}'. 🎉")
+        return
+
+    st.caption(f"{len(rows)} job(s)")
+    for j in rows:
+        loc = get_location(j['locationId'])
+        tech = get_tech(j['techId'])
+        cur = invoice_status(j)
+        inv = job_invoice(j)
+
+        hrs = 0.0
+        for r in (j.get('reports') or []):
+            try:
+                hrs += float(r.get('hoursWorked') or 0)
+            except (TypeError, ValueError):
+                pass
+
+        c1, c2, c3 = st.columns([5, 2, 2])
+        with c1:
+            meta = " · ".join(x for x in [
+                loc['name'] if loc else "No site",
+                tech['name'] if tech else "Unassigned",
+                str(j.get('date', ''))[:10],
+                f"{hrs:g} hrs" if hrs else "",
+                f"#{inv['number']}" if inv['number'] else "",
+                f"${inv['amount']}" if inv['amount'] else "",
+            ] if x)
+            st.markdown(
+                f"**{j['title']}**<br><span style='color:#71717a;font-size:0.82em;'>{meta}</span>",
+                unsafe_allow_html=True)
+        with c2:
+            st.markdown(
+                f'<span style="background:{INVOICE_STATUS_COLORS.get(cur, "#52525b")};color:white;'
+                f'padding:2px 10px;border-radius:10px;font-size:0.75em;">'
+                f'{INVOICE_STATUS_ICONS.get(cur, "")} {cur}</span>',
+                unsafe_allow_html=True)
+        with c3:
+            # One-tap advance through the pipeline; full editing lives in the job dialog
+            nxt = {"Ready to Invoice": "Invoiced", "Invoiced": "Paid"}.get(cur)
+            if nxt:
+                if st.button(f"Mark {nxt}", key=f"inv_adv_{j['id']}", use_container_width=True):
+                    # Stamp the invoice date the first time it's marked Invoiced;
+                    # leave it alone (None = unchanged) when advancing to Paid.
+                    new_date = None
+                    if nxt == "Invoiced" and not inv['date']:
+                        new_date = now_local().strftime('%Y-%m-%d')
+                    set_job_invoice(j['id'], status=nxt, date=new_date)
+                    get_logger().log(f"{user_email} marked job {j['id']} '{nxt}'")
+                    st.toast(f"Marked {nxt}", icon="💵")
+                    st.rerun()
+            if st.button("Open", key=f"inv_open_{j['id']}", use_container_width=True):
+                job_details_dialog(j['id'])
+        st.divider()
 
 
 def render_construction_board(user_email, can_manage):
@@ -5871,6 +6096,7 @@ def main():
     # Admins oversee both companies — give them a Construction section
     if is_admin:
         tabs_list.append("🏗️ Construction")
+        tabs_list.append("💵 Invoicing")
         tabs_list.append("🛡️ Admin")
 
     tabs = st.tabs(tabs_list)
@@ -5885,7 +6111,12 @@ def main():
             st.subheader("🕒 Construction Hours Report")
             with st.expander("View Construction Hours (Payroll / Invoicing)", expanded=False):
                 render_hours_report(company="construction")
-    
+
+    # Invoicing worklist (admins / office manager)
+    if is_admin:
+        with tab_map["💵 Invoicing"]:
+            render_invoicing_view(user_email)
+
     # 0. My Assignments (Conditional)
     if current_tech:
         with tab_map["🙋‍♂️ My Assignments"]:
