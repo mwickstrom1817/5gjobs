@@ -349,8 +349,8 @@ def update_job_status_callback(job_id, widget_key):
         
     job_idx = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
     if job_idx != -1:
-        if st.session_state.jobs[job_idx]['status'] != new_status:
-            st.session_state.jobs[job_idx]['status'] = new_status
+        actor = st.session_state.user_info.get('email') if "user_info" in st.session_state else None
+        if apply_job_status(st.session_state.jobs[job_idx], new_status, actor):
             save_state()
 
 def update_part_status_callback(job_id, part_id, widget_key):
@@ -1124,6 +1124,76 @@ def get_job_stale_days(job):
     if base_dt > now_local():
         return None
     return (now_local() - base_dt).days
+
+# --- FOLLOW-UPS (jobs parked waiting on someone else) -------------------------
+# Statuses that mean "we're blocked on an outside party". Each maps to how many
+# days it may sit before it needs chasing, and who to chase.
+FOLLOWUP_RULES = {
+    "Customer on Hold":  (7, "Chase the customer"),
+    "Waiting on Parts":  (5, "Chase the vendor"),
+    "Parts not ordered": (3, "Order the parts"),
+}
+
+def apply_job_status(job, new_status, actor=None):
+    """Set a job's status and stamp when it changed. Returns True if it changed.
+
+    Use this everywhere instead of assigning job['status'] directly — the stamp is
+    what lets us say 'on hold for 12 days' rather than just 'quiet for 12 days'."""
+    if not job or not new_status or job.get('status') == new_status:
+        return False
+    job['status'] = new_status
+    job['status_changed_at'] = now_local().isoformat()
+    if actor:
+        job['status_changed_by'] = actor
+    return True
+
+def job_status_since(job):
+    """Date the job entered its current status. Falls back to last activity for
+    jobs that predate status stamping, so this works on existing data too."""
+    stamped = job.get('status_changed_at')
+    if stamped:
+        try:
+            return datetime.datetime.fromisoformat(str(stamped)[:19]).date()
+        except (ValueError, TypeError):
+            pass
+    last_ts = None
+    for r in (job.get('reports') or []):
+        ts = r.get('timestamp', '')
+        if ts and (last_ts is None or ts > last_ts):
+            last_ts = ts
+    try:
+        return datetime.datetime.fromisoformat(str(last_ts or job.get('date', ''))[:19]).date()
+    except (ValueError, TypeError):
+        return None
+
+def days_in_status(job):
+    """Whole days the job has sat in its current status (None if undeterminable)."""
+    d = job_status_since(job)
+    if not d:
+        return None
+    return max((now_local().date() - d).days, 0)
+
+def job_followup(job):
+    """(days, threshold, action) when a job is overdue for a nudge, else None."""
+    if job.get('status') == 'Completed':
+        return None
+    rule = FOLLOWUP_RULES.get(job.get('status'))
+    if not rule:
+        return None
+    threshold, action = rule
+    days = days_in_status(job)
+    if days is None or days < threshold:
+        return None
+    return days, threshold, action
+
+def followup_jobs(jobs):
+    """Overdue jobs, most-overdue first, as (job, days, threshold, action)."""
+    out = []
+    for j in jobs:
+        fu = job_followup(j)
+        if fu:
+            out.append((j, fu[0], fu[1], fu[2]))
+    return sorted(out, key=lambda x: -x[1])
 
 def compute_hours_rows(jobs, techs, locations, start_date, end_date):
     """Flattens logged hours from job reports into rows for the Hours Report / weekly digest.
@@ -3170,7 +3240,8 @@ def render_completion_confirmation(job_index, report_payload):
                     report_payload["ai_summary"] = summary
 
         st.session_state.jobs[job_index]["reports"].append(report_payload)
-        st.session_state.jobs[job_index]["status"] = "Completed"
+        _actor = st.session_state.user_info.get('email') if "user_info" in st.session_state else None
+        apply_job_status(st.session_state.jobs[job_index], "Completed", _actor)
         st.session_state.briefing = "Data required to generate briefing."
 
         tech = get_tech(job["techId"])
@@ -3583,14 +3654,14 @@ Desc: {job['description']}"""
             # Offer to sync the job's overall status to match the parts pipeline
             if total and staged == total and job['status'] != 'Parts Staged':
                 if st.button("✅ All parts staged — mark job 'Parts Staged'", key=f"sync_staged_{job_id}", use_container_width=True):
-                    st.session_state.jobs[job_index]['status'] = 'Parts Staged'
+                    apply_job_status(st.session_state.jobs[job_index], 'Parts Staged', _viewer_email)
                     save_state()
                     st.rerun(scope="fragment")
             elif any(p.get('status') in ('Needed', 'Ordered') for p in parts) and job['status'] not in ('Waiting on Parts', 'Parts not ordered'):
                 only_needed = all(p.get('status') == 'Needed' for p in parts)
                 suggested = 'Parts not ordered' if only_needed else 'Waiting on Parts'
                 if st.button(f"📦 Mark job '{suggested}'", key=f"sync_waiting_{job_id}", use_container_width=True):
-                    st.session_state.jobs[job_index]['status'] = suggested
+                    apply_job_status(st.session_state.jobs[job_index], suggested, _viewer_email)
                     save_state()
                     st.rerun(scope="fragment")
 
@@ -4064,7 +4135,7 @@ Desc: {job['description']}"""
                 
                 # Auto-update status for Arrived
                 if label == "📍 Arrived" and job['status'] in ['Pending', 'Not Started']:
-                    st.session_state.jobs[job_index]['status'] = 'In Progress'
+                    apply_job_status(st.session_state.jobs[job_index], 'In Progress', _viewer_email)
                 
                 save_state()
                 st.toast(f"Status updated: {label}", icon="✅")
@@ -4117,7 +4188,7 @@ Desc: {job['description']}"""
                     
                     # Auto-set status to In Progress if Pending
                     if job['status'] in ['Pending', 'Not Started']:
-                        st.session_state.jobs[job_index]['status'] = 'In Progress'
+                        apply_job_status(st.session_state.jobs[job_index], 'In Progress', _viewer_email)
                         st.session_state.briefing = "Data required to generate briefing."
                     
                     save_state()
@@ -4322,7 +4393,7 @@ Desc: {job['description']}"""
                         
                         # Update Status
                         if new_status != job['status']:
-                            st.session_state.jobs[job_index]['status'] = new_status
+                            apply_job_status(st.session_state.jobs[job_index], new_status, _viewer_email)
                             st.session_state.briefing = "Data required to generate briefing."
                         
                         save_state()
@@ -4386,6 +4457,15 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     # board for what still needs billing without opening anything.
     invoice_html = invoice_chip_html(job)
 
+    # Follow-up nudge: parked too long waiting on a customer/vendor
+    followup_html = ""
+    _fu = job_followup(job)
+    if _fu:
+        _days, _thr, _action = _fu
+        _fu_color = "#ef4444" if _days >= _thr * 2 else "#d97706"
+        followup_html = (f'<div style="color:{_fu_color}; font-size:0.8em; margin-top:6px; font-weight:bold;">'
+                         f'⏳ {job["status"]} {_days} days — {_action}</div>')
+
     with st.container():
         st.markdown(f"""
         <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
@@ -4400,7 +4480,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
                  <span>📅 {job['date'][:10]}</span>
-            </div>{stale_html}{parts_html}{invoice_html}
+            </div>{stale_html}{followup_html}{parts_html}{invoice_html}
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
@@ -6321,6 +6401,27 @@ def main():
                     f'<div style="color:#f87171;font-size:13px;font-weight:bold;margin-bottom:6px;">🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days</div>'
                     f'{_rows}</div>',
                     unsafe_allow_html=True)
+
+            # Follow-ups: jobs parked waiting on a customer or vendor. Grouped by who
+            # needs chasing, since that's how the work actually gets divided up.
+            _followups = followup_jobs([j for j in filtered_jobs if j['status'] != 'Completed'])
+            if _followups:
+                st.markdown(f"##### ⏳ Needs Follow-Up — {len(_followups)} job(s)")
+                with st.container(border=True):
+                    _by_action = {}
+                    for j, d, thr, action in _followups:
+                        _by_action.setdefault(action, []).append((j, d, thr))
+                    for action, items in _by_action.items():
+                        st.markdown(f"**{action}**")
+                        for j, d, thr in items:
+                            _l = get_location(j.get('locationId'))
+                            _t = get_tech(j.get('techId'))
+                            _color = "#ef4444" if d >= thr * 2 else "#d97706"
+                            st.markdown(
+                                f"- <span style='color:{_color};font-weight:bold;'>{d}d</span> "
+                                f"**{j.get('title', '')}** — {j.get('status')} · "
+                                f"📍 {_l['name'] if _l else 'No site'} · 👤 {_t['name'] if _t else 'Unassigned'}",
+                                unsafe_allow_html=True)
 
             # Upcoming contract renewals — admins only (contract values are sensitive)
             if is_admin:
