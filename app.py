@@ -4581,6 +4581,288 @@ def render_map_view(jobs):
         st.caption(f"⚠️ {skipped} job(s) not shown — address missing or could not be geocoded.")
 
 
+BROWSER_TABLES = ["Jobs", "Reports", "Parts", "Time", "Photos", "Invoices", "Sites", "Techs"]
+
+def _bnum(v):
+    """Best-effort float (blank/garbage -> 0.0)."""
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+def _bdate(s):
+    """Best-effort date from an ISO-ish string, else None."""
+    try:
+        return datetime.datetime.fromisoformat(str(s)[:19]).date()
+    except Exception:
+        return None
+
+def browser_rows(table):
+    """Flatten the in-memory state into display rows for the data browser.
+
+    Every row carries hidden _date/_tech/_site/_job_id keys used for filtering and
+    row-click, which are stripped before display. Site systems/credentials are
+    deliberately NOT exposed here — they hold customer passwords and IPs."""
+    rows = []
+    jobs = st.session_state.jobs
+
+    if table == "Jobs":
+        for j in jobs:
+            loc, tech = get_location(j.get('locationId')), get_tech(j.get('techId'))
+            staged, total = parts_summary(j)
+            hrs = sum(_bnum(r.get('hoursWorked')) for r in (j.get('reports') or []))
+            rows.append({
+                "Date": str(j.get('date', ''))[:10],
+                "Title": j.get('title', ''),
+                "Site": loc['name'] if loc else '',
+                "Tech": tech['name'] if tech else 'Unassigned',
+                "Type": j.get('type', ''),
+                "Priority": j.get('priority', ''),
+                "Status": j.get('status', ''),
+                "Reports": len(j.get('reports') or []),
+                "Hours": round(hrs, 2),
+                "Parts": f"{staged}/{total}" if total else "",
+                "Invoice": invoice_status(j) or "",
+                "_date": _bdate(j.get('date')), "_tech": tech['name'] if tech else '',
+                "_site": loc['name'] if loc else '', "_job_id": j['id'],
+            })
+
+    elif table == "Reports":
+        for j in jobs:
+            loc = get_location(j.get('locationId'))
+            for r in (j.get('reports') or []):
+                rt = get_tech(r.get('techId'))
+                who = r.get('techsOnSite') or (rt['name'] if rt else '')
+                rows.append({
+                    "Date": str(r.get('timestamp', ''))[:10],
+                    "Job": j.get('title', ''),
+                    "Site": loc['name'] if loc else '',
+                    "Techs On Site": who,
+                    "Arrived": r.get('timeArrived', '') or '',
+                    "Departed": r.get('timeDeparted', '') or '',
+                    "Hours": _bnum(r.get('hoursWorked')),
+                    "Parts Used": r.get('partsUsed', '') or '',
+                    "Billable": r.get('billableItems', '') or '',
+                    "Warranty": "Yes" if r.get('isWarranty') else "",
+                    "Photos": len(r.get('photos') or []),
+                    "Author": r.get('authorEmail', '') or (rt['email'] if rt else ''),
+                    "Notes": (r.get('content') or '').replace("\n", " "),
+                    "_date": _bdate(r.get('timestamp')), "_tech": who,
+                    "_site": loc['name'] if loc else '', "_job_id": j['id'],
+                })
+
+    elif table == "Parts":
+        for j in jobs:
+            loc = get_location(j.get('locationId'))
+            for p in (j.get('parts') or []):
+                rows.append({
+                    "Job": j.get('title', ''), "Site": loc['name'] if loc else '',
+                    "Part": p.get('name', ''), "Qty": p.get('qty', 1),
+                    "Status": p.get('status', ''), "Vendor": p.get('vendor', '') or '',
+                    "Cost": p.get('cost', '') or '', "Notes": p.get('notes', '') or '',
+                    "Added By": p.get('added_by', '') or '',
+                    "Updated": str(p.get('updated_at', ''))[:10],
+                    "_date": _bdate(p.get('updated_at')), "_tech": '',
+                    "_site": loc['name'] if loc else '', "_job_id": j['id'],
+                })
+
+    elif table == "Time":
+        for j in jobs:
+            loc = get_location(j.get('locationId'))
+            for e in (j.get('time_entries') or []):
+                ci, co = e.get('clock_in'), e.get('clock_out')
+                dur = ''
+                try:
+                    if ci and co:
+                        secs = (datetime.datetime.fromisoformat(co)
+                                - datetime.datetime.fromisoformat(ci)).total_seconds()
+                        dur = f"{round(secs / 3600, 2)} hrs"
+                except Exception:
+                    dur = ''
+                who = e.get('tech_name') or e.get('userEmail', '') or ''
+                rows.append({
+                    "Tech": who, "Job": j.get('title', ''),
+                    "Site": loc['name'] if loc else '',
+                    "Clock In": str(ci or '')[:16].replace('T', ' '),
+                    "Clock Out": str(co or '')[:16].replace('T', ' '),
+                    "Duration": dur, "Running": "Yes" if (ci and not co) else "",
+                    "_date": _bdate(ci), "_tech": who,
+                    "_site": loc['name'] if loc else '', "_job_id": j['id'],
+                })
+
+    elif table == "Photos":
+        for j in jobs:
+            loc = get_location(j.get('locationId'))
+            jt = get_tech(j.get('techId'))
+            for k in (j.get('photos') or []):
+                rows.append({
+                    "Date": str(j.get('date', ''))[:10], "Job": j.get('title', ''),
+                    "Site": loc['name'] if loc else '', "Tech": jt['name'] if jt else '',
+                    "Source": "Job", "Key": k,
+                    "_date": _bdate(j.get('date')), "_tech": jt['name'] if jt else '',
+                    "_site": loc['name'] if loc else '', "_job_id": j['id'],
+                })
+            for r in (j.get('reports') or []):
+                rt = get_tech(r.get('techId'))
+                for k in (r.get('photos') or []):
+                    rows.append({
+                        "Date": str(r.get('timestamp', ''))[:10], "Job": j.get('title', ''),
+                        "Site": loc['name'] if loc else '', "Tech": rt['name'] if rt else '',
+                        "Source": "Report", "Key": k,
+                        "_date": _bdate(r.get('timestamp')), "_tech": rt['name'] if rt else '',
+                        "_site": loc['name'] if loc else '', "_job_id": j['id'],
+                    })
+
+    elif table == "Invoices":
+        for j in jobs:
+            if j.get('status') != 'Completed':
+                continue
+            loc = get_location(j.get('locationId'))
+            inv = job_invoice(j)
+            hrs = sum(_bnum(r.get('hoursWorked')) for r in (j.get('reports') or []))
+            rows.append({
+                "Job": j.get('title', ''), "Site": loc['name'] if loc else '',
+                "Completed": str(j.get('date', ''))[:10], "Hours": round(hrs, 2),
+                "Status": inv['status'], "Invoice #": inv['number'],
+                "Amount": inv['amount'], "Invoice Date": inv['date'],
+                "Updated By": inv['updated_by'],
+                "_date": _bdate(j.get('date')), "_tech": '',
+                "_site": loc['name'] if loc else '', "_job_id": j['id'],
+            })
+
+    elif table == "Sites":
+        for l in st.session_state.locations:
+            l_jobs = [j for j in jobs if j.get('locationId') == l['id']]
+            last = max((str(j.get('date', ''))[:10] for j in l_jobs), default='')
+            rows.append({
+                "Name": l.get('name', ''), "Address": l.get('address', ''),
+                "Contact": l.get('contact_name', '') or '',
+                "Phone": l.get('contact_phone', '') or '',
+                "Jobs": len(l_jobs), "Systems": len(l.get('systems') or []),
+                "Documents": len(l.get('documents') or []), "Last Visit": last,
+                "_date": None, "_tech": '', "_site": l.get('name', ''), "_job_id": None,
+            })
+
+    elif table == "Techs":
+        for t in st.session_state.techs:
+            act = [j for j in jobs
+                   if j.get('techId') == t['id'] and j.get('status') != 'Completed']
+            rows.append({
+                "Name": t.get('name', ''), "Email": t.get('email', ''),
+                "Initials": t.get('initials', ''),
+                "Skills": ", ".join(t.get('skills') or []),
+                "Active Jobs": len(act),
+                "_date": None, "_tech": t.get('name', ''), "_site": '', "_job_id": None,
+            })
+
+    return rows
+
+def browser_count(table):
+    """Row count without building the rows — the picker reruns on every keystroke."""
+    jobs = st.session_state.jobs
+    if table == "Jobs":     return len(jobs)
+    if table == "Reports":  return sum(len(j.get('reports') or []) for j in jobs)
+    if table == "Parts":    return sum(len(j.get('parts') or []) for j in jobs)
+    if table == "Time":     return sum(len(j.get('time_entries') or []) for j in jobs)
+    if table == "Photos":
+        return sum(len(j.get('photos') or [])
+                   + sum(len(r.get('photos') or []) for r in (j.get('reports') or []))
+                   for j in jobs)
+    if table == "Invoices": return sum(1 for j in jobs if j.get('status') == 'Completed')
+    if table == "Sites":    return len(st.session_state.locations)
+    if table == "Techs":    return len(st.session_state.techs)
+    return 0
+
+def render_data_browser():
+    st.subheader("🗂️ Data Browser")
+    st.caption("Read-only, flattened views of everything in the database. Site systems "
+               "(IPs & passwords) are deliberately excluded.")
+
+    counts = {t: browser_count(t) for t in BROWSER_TABLES}
+    _fmt_tbl = lambda t: f"{t} {counts[t]:,}"
+    if hasattr(st, "segmented_control"):
+        table = st.segmented_control("Table", BROWSER_TABLES, format_func=_fmt_tbl,
+                                     default="Jobs", key="browser_table",
+                                     label_visibility="collapsed")
+    else:
+        table = st.radio("Table", BROWSER_TABLES, format_func=_fmt_tbl, horizontal=True,
+                         key="browser_table", label_visibility="collapsed")
+    if not table:
+        table = "Jobs"
+
+    f1, f2, f3, f4 = st.columns([3, 2, 2, 2])
+    q = f1.text_input("Search", key="browser_q", label_visibility="collapsed",
+                      placeholder="🔍 Search anything (including report notes)...")
+    range_label = f2.selectbox("Range", ["All time", "Last 30 days", "Last 90 days",
+                                         "Last 12 months"], key="browser_range",
+                               label_visibility="collapsed")
+    tech_names = ["All techs"] + sorted({t.get('name', '') for t in st.session_state.techs if t.get('name')})
+    site_names = ["All sites"] + sorted({l.get('name', '') for l in st.session_state.locations if l.get('name')})
+    tech_pick = f3.selectbox("Tech", tech_names, key="browser_tech", label_visibility="collapsed")
+    site_pick = f4.selectbox("Site", site_names, key="browser_site", label_visibility="collapsed")
+
+    days = {"Last 30 days": 30, "Last 90 days": 90, "Last 12 months": 365}.get(range_label)
+    cutoff = (now_local().date() - datetime.timedelta(days=days)) if days else None
+
+    rows = browser_rows(table)
+    filtered = []
+    for r in rows:
+        if cutoff and r.get('_date') and r['_date'] < cutoff:
+            continue
+        if tech_pick != "All techs":
+            if tech_pick.lower() not in (r.get('_tech') or '').lower():
+                continue
+        if site_pick != "All sites" and (r.get('_site') or '') != site_pick:
+            continue
+        if q:
+            hay = " ".join(str(v) for k, v in r.items() if not k.startswith('_')).lower()
+            if q.lower() not in hay:
+                continue
+        filtered.append(r)
+
+    if not filtered:
+        st.info("Nothing matches those filters.")
+        return
+
+    disp = [{k: v for k, v in r.items() if not k.startswith('_')} for r in filtered]
+
+    # Thumbnails only for small result sets — signing thousands of URLs is wasteful
+    col_cfg = None
+    if table == "Photos":
+        if len(disp) <= 50:
+            for d in disp:
+                d["Preview"] = resolve_image_source(d.get("Key"))
+            col_cfg = {"Preview": st.column_config.ImageColumn("Preview", width="small")}
+        else:
+            st.caption(f"{len(disp):,} photos — narrow the filters below 50 to see thumbnails.")
+
+    df = pd.DataFrame(disp)
+    st.caption(f"{len(filtered):,} of {counts[table]:,} {table.lower()} row(s)"
+               + (" · click a row to open the job" if filtered[0].get('_job_id') else ""))
+
+    selected_row = None
+    try:
+        event = st.dataframe(df, use_container_width=True, hide_index=True,
+                             column_config=col_cfg, on_select="rerun",
+                             selection_mode="single-row")
+        picked = list(getattr(getattr(event, "selection", None), "rows", []) or [])
+        if picked:
+            selected_row = filtered[picked[0]]
+    except TypeError:
+        # Older Streamlit without dataframe selection support
+        st.dataframe(df, use_container_width=True, hide_index=True, column_config=col_cfg)
+
+    st.download_button(
+        f"⬇️ Download {table} CSV ({len(filtered):,} rows, current filters)",
+        df.to_csv(index=False).encode("utf-8"),
+        file_name=f"{table.lower()}_{now_local().strftime('%Y%m%d')}.csv",
+        mime="text/csv", key=f"browser_csv_{table}",
+    )
+
+    if selected_row and selected_row.get('_job_id'):
+        job_details_dialog(selected_row['_job_id'])
+
+
 def render_invoicing_view(user_email):
     """Office-manager worklist: every Completed job grouped by invoice status, so
     'what still needs billing' is answerable at a glance. Admins only."""
@@ -5455,6 +5737,7 @@ def render_admin_panel():
         ("locations", "📍", "Locations", _admin_locations),
         ("agreements", "📄", "Service Agreements", render_service_agreements),
         ("hours", "🕒", "Hours Report", render_hours_report),
+        ("browser", "🗂️", "Data Browser", render_data_browser),
         ("analytics", "📊", "Analytics", render_analytics_dashboard),
         ("access", "🔑", "Access & Admins", _admin_access),
         ("email", "📧", "Email & SMTP", _admin_email),
