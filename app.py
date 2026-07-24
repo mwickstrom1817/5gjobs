@@ -414,17 +414,20 @@ if "chat_history" not in st.session_state:
     ]
 # Tech Colors for UI
 def get_status_color(status):
+    # Reads as a left-to-right gradient on the board:
+    # grey (not started) -> red (we're the blocker) -> amber (someone else is)
+    # -> blue (moving) -> green (done). The column label says which flavour.
     colors = {
-        "Not Started": "#71717a",
-        "Pending": "#71717a",
-        "In Progress": "#3b82f6",
-        "Customer on Hold": "#f97316",
-        "Waiting on Parts": "#ef4444",
-        "Parts not ordered": "#991b1b",
-        "Parts Staged": "#10b981",
-        "Completed": "#059669"
+        "Not Started":       SEMANTIC["neutral"],
+        "Pending":           SEMANTIC["neutral"],
+        "Parts not ordered": SEMANTIC["act"],      # WE haven't ordered yet
+        "Waiting on Parts":  SEMANTIC["waiting"],  # ordered; vendor has it
+        "Customer on Hold":  SEMANTIC["waiting"],
+        "In Progress":       SEMANTIC["moving"],
+        "Parts Staged":      SEMANTIC["done"],
+        "Completed":         SEMANTIC["done"],
     }
-    return colors.get(status, "#71717a")
+    return colors.get(status, SEMANTIC["neutral"])
 
 TECH_COLORS = ['#7f1d1d', '#3f3f46', '#b91c1c', '#52525b', '#991b1b', '#7c2d12', '#292524']
 
@@ -461,21 +464,35 @@ def location_has_system_info(loc):
         return True
     return any(v for v in (loc.get('credentials') or {}).values())
 
-# Priority colors (hot -> cold), shared by the calendar and other UI
+# ── ONE COLOR LANGUAGE ────────────────────────────────────────────────────────
+# Every colored chip in the app resolves to one of these five meanings, so a
+# colour means the SAME thing wherever you see it. Before this, green meant
+# "Parts Staged" and "Staged" and "Paid"; blue meant "In Progress" and
+# "Received" and "Invoiced" — nothing could be read at a glance.
+SEMANTIC = {
+    "act":     "#ef4444",   # we have to do something, now
+    "waiting": "#d97706",   # blocked on an outside party
+    "moving":  "#3b82f6",   # actively in motion
+    "done":    "#10b981",   # finished / good
+    "neutral": "#52525b",   # not started / not applicable
+}
+
+# Priority is a separate channel — a single red intensity ramp meaning "urgency",
+# so it never competes with the status colours above.
 PRIORITY_COLORS = {
     "Critical": "#ef4444",
     "High": "#dc2626",
-    "Medium": "#b45309",
-    "Low": "#52525b",
+    "Medium": "#7f1d1d",
+    "Low": SEMANTIC["neutral"],
 }
 
 # Parts pipeline: items flow left to right toward being staged for the job
 PART_STATUSES = ["Needed", "Ordered", "Received", "Staged"]
 PART_STATUS_COLORS = {
-    "Needed": "#991b1b",
-    "Ordered": "#b45309",
-    "Received": "#3b82f6",
-    "Staged": "#10b981",
+    "Needed":   SEMANTIC["act"],      # nobody has ordered it yet
+    "Ordered":  SEMANTIC["waiting"],  # waiting on the vendor
+    "Received": SEMANTIC["moving"],
+    "Staged":   SEMANTIC["done"],
 }
 
 def parts_summary(job):
@@ -488,10 +505,10 @@ def parts_summary(job):
 # Completed — invoicing isn't meaningful while work is still running.
 INVOICE_STATUSES = ["Ready to Invoice", "Invoiced", "Paid", "No Charge"]
 INVOICE_STATUS_COLORS = {
-    "Ready to Invoice": "#d97706",
-    "Invoiced": "#2563eb",
-    "Paid": "#10b981",
-    "No Charge": "#52525b",
+    "Ready to Invoice": SEMANTIC["act"],      # the office manager has to send it
+    "Invoiced":         SEMANTIC["waiting"],  # sent; waiting on the customer
+    "Paid":             SEMANTIC["done"],
+    "No Charge":        SEMANTIC["neutral"],
 }
 INVOICE_STATUS_ICONS = {
     "Ready to Invoice": "🧾",
@@ -4306,30 +4323,41 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
     loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {loc_name}</a>' if map_url else f"📍 {loc_name}"
 
-    stale_days = get_job_stale_days(job)
-    stale_html = ""
-    if stale_days is not None and stale_days >= STALE_JOB_DAYS:
-        stale_html = f'<div style="color:#f87171; font-size:0.8em; margin-top:6px; font-weight:bold;">🚨 No updates in {stale_days} days</div>'
+    # One signal row instead of a stack of alert lines. Each feature used to add
+    # its own full-width coloured line (stale / follow-up / parts / invoice), so a
+    # busy job grew a four-line wall. These are compact chips on a single row —
+    # same information, muted background, colour carrying the meaning.
+    signals = []
 
-    # Parts progress badge (makes the Tech Board parts columns actionable)
-    staged_parts, total_parts = parts_summary(job)
-    parts_html = ""
-    if total_parts:
-        parts_color = "#10b981" if staged_parts == total_parts else "#a1a1aa"
-        parts_html = f'<div style="color:{parts_color}; font-size:0.8em; margin-top:6px;">🔩 Parts: {staged_parts}/{total_parts} staged</div>'
-
-    # Invoicing chip (Completed jobs only) — lets the office manager scan the
-    # board for what still needs billing without opening anything.
-    invoice_html = invoice_chip_html(job)
-
-    # Follow-up nudge: parked too long waiting on a customer/vendor
-    followup_html = ""
     _fu = job_followup(job)
     if _fu:
         _days, _thr, _action = _fu
-        _fu_color = "#ef4444" if _days >= _thr * 2 else "#d97706"
-        followup_html = (f'<div style="color:{_fu_color}; font-size:0.8em; margin-top:6px; font-weight:bold;">'
-                         f'⏳ {job["status"]} {_days} days — {_action}</div>')
+        signals.append((f'⏳ {_days}d waiting',
+                        SEMANTIC["act"] if _days >= _thr * 2 else SEMANTIC["waiting"]))
+
+    stale_days = get_job_stale_days(job)
+    if stale_days is not None and stale_days >= STALE_JOB_DAYS:
+        signals.append((f'🚨 {stale_days}d quiet', SEMANTIC["act"]))
+
+    staged_parts, total_parts = parts_summary(job)
+    if total_parts:
+        signals.append((f'🔩 {staged_parts}/{total_parts}',
+                        SEMANTIC["done"] if staged_parts == total_parts else "#a1a1aa"))
+
+    _inv = invoice_status(job)   # None unless the job is Completed
+    if _inv:
+        signals.append((f'{INVOICE_STATUS_ICONS.get(_inv, "")} {_inv}',
+                        INVOICE_STATUS_COLORS.get(_inv, SEMANTIC["neutral"])))
+
+    signal_html = ""
+    if signals:
+        chips = "".join(
+            f'<span style="background:#27272a;color:{c};font-size:0.72em;'
+            f'padding:2px 7px;border-radius:4px;margin:3px 4px 0 0;'
+            f'display:inline-block;white-space:nowrap;">{t}</span>'
+            for t, c in signals)
+        signal_html = (f'<div style="border-top:1px solid #27272a;margin-top:9px;'
+                       f'padding-top:7px;">{chips}</div>')
 
     with st.container():
         st.markdown(f"""
@@ -4345,7 +4373,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
                  <span>📅 {job['date'][:10]}</span>
-            </div>{stale_html}{followup_html}{parts_html}{invoice_html}
+            </div>{signal_html}
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
@@ -5814,6 +5842,7 @@ def render_admin_panel():
 
     # Tile-based navigation: a grid of cards instead of one long scroll
     tiles = [
+        ("invoicing", "💵", "Invoicing", _admin_invoicing),
         ("techs", "👷", "Technicians", _admin_techs),
         ("locations", "📍", "Locations", _admin_locations),
         ("agreements", "📄", "Service Agreements", render_service_agreements),
@@ -6123,6 +6152,25 @@ def render_chatbot():
             except Exception as debug_e:
                 st.sidebar.error(f"Could not list models: {str(debug_e)}")
 
+def _admin_invoicing():
+    """Admin tile wrapper — the tile registry calls its functions with no args."""
+    _email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
+    render_invoicing_view(_email)
+
+
+def sub_nav(options, key, default=None):
+    """Selector for views grouped under one tab. Falls back to a radio on older
+    Streamlit, and never returns None so callers can compare directly."""
+    default = default or options[0]
+    if hasattr(st, "segmented_control"):
+        picked = st.segmented_control(key, options, default=default, key=key,
+                                      label_visibility="collapsed")
+    else:
+        picked = st.radio(key, options, horizontal=True, key=key,
+                          label_visibility="collapsed")
+    return picked or default
+
+
 # --- LIVE UPDATE WATCHER ---
 
 @st.fragment(run_every="15s")
@@ -6298,14 +6346,11 @@ def main():
     # Determine if current user is a tech
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
 
-    # Navigation Tabs
-    tabs_list = ["🌅 Briefing", "👷 Tech Board", "📅 Calendar", "🗺️ Map", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive", "📚 SOPs"]
-    
-    if current_tech:
-        tabs_list.insert(0, "🙋‍♂️ My Assignments")
-
+    # Navigation: six tabs. Related views are grouped behind a sub-selector rather
+    # than each claiming a top-level tab — twelve competing labels made the app
+    # tiring to scan. Nothing was removed, only regrouped.
+    tabs_list = ["🌅 Today", "👷 Board", "🧰 Jobs", "📅 Schedule", "📚 SOPs"]
     if is_admin:
-        tabs_list.append("💵 Invoicing")
         tabs_list.append("🛡️ Admin")
 
     tabs = st.tabs(tabs_list)
@@ -6315,14 +6360,9 @@ def main():
     with tab_map["📚 SOPs"]:
         render_sops_view(is_admin)
 
-    # Invoicing worklist (admins / office manager)
-    if is_admin:
-        with tab_map["💵 Invoicing"]:
-            render_invoicing_view(user_email)
-
-    # 0. My Assignments (Conditional)
-    if current_tech:
-        with tab_map["🙋‍♂️ My Assignments"]:
+    # 0. Today — your assignments first (if you're a tech), then the briefing
+    with tab_map["🌅 Today"]:
+        if current_tech:
             _first = current_tech['name'].split()[0]
 
             my_jobs = [j for j in filtered_jobs if j['techId'] == current_tech['id'] and j['status'] != 'Completed']
@@ -6342,9 +6382,8 @@ def main():
                 unsafe_allow_html=True)
 
             render_job_grid(my_jobs, key_suffix="my_assign")
-    
-    # 1. Morning Briefing
-    with tab_map["🌅 Briefing"]:
+            st.divider()
+
         col_main, col_feed = st.columns([2, 1])
         with col_main:
             st.subheader("Daily Operational Briefing")
@@ -6465,8 +6504,8 @@ def main():
             for job in std_jobs:
                 render_job_card(job, compact=True, key_suffix="feed_std")
 
-    # 2. Tech Board
-    with tab_map["👷 Tech Board"]:
+    # 2. Board
+    with tab_map["👷 Board"]:
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
@@ -6490,8 +6529,10 @@ def main():
                     for job in status_jobs:
                         render_job_card(job, compact=True, key_suffix="board", allow_delete=is_admin)
 
-    # 3. Calendar View
-    with tab_map["📅 Calendar"]:
+    # 3. Schedule — calendar and map are two views of the same "where/when" question
+    with tab_map["📅 Schedule"]:
+      _sched_view = sub_nav(["📅 Calendar", "🗺️ Map"], "sched_view")
+      if _sched_view == "📅 Calendar":
         st.subheader("📅 Job Schedule")
         
         # Month navigation (persisted in session so prev/next survive reruns)
@@ -6601,8 +6642,7 @@ def main():
 
         st.markdown(cal_html, unsafe_allow_html=True)
 
-    # 3.5 Map View
-    with tab_map["🗺️ Map"]:
+      if _sched_view == "🗺️ Map":
         st.subheader("🗺️ Job Map")
         map_only_mine = False
         if current_tech:
@@ -6612,29 +6652,26 @@ def main():
             map_jobs = [j for j in map_jobs if j['techId'] == current_tech['id']]
         render_map_view(map_jobs)
 
-    # 4. Service Calls
-    with tab_map["🧰 Service Calls"]:
-        service_jobs = [j for j in filtered_jobs if j['type'] == 'Service' and j['status'] != 'Completed']
-        if not service_jobs: st.info("No active service calls.")
-        render_job_grid(service_jobs, key_suffix="service", allow_delete=is_admin)
-
-    # 5. Projects
-    with tab_map["🏗️ Projects"]:
-        proj_jobs = [j for j in filtered_jobs if j['type'] == 'Project' and j['status'] != 'Completed']
-        if not proj_jobs: st.info("No active projects.")
-        render_job_grid(proj_jobs, key_suffix="project", allow_delete=is_admin)
-
-    # 🤝 Leads
-    with tab_map["🤝 Leads"]:
-        lead_jobs = [j for j in filtered_jobs if j['type'] == 'Leads' and j['status'] != 'Completed']
-        if not lead_jobs: st.info("No active leads.")
-        render_job_grid(lead_jobs, key_suffix="leads", allow_delete=is_admin)
-
-    # 6. Archive
-    with tab_map["📦 Archive"]:
-        archived = [j for j in filtered_jobs if j['status'] == 'Completed']
-        if not archived: st.info("No archived jobs.")
-        render_job_grid(archived, key_suffix="archive", allow_delete=is_admin)
+    # 4. Jobs — the four job lists were near-identical tabs; they're one view with
+    # a filter now. Counts sit in the labels so you can see where the work is.
+    with tab_map["🧰 Jobs"]:
+        _active = [j for j in filtered_jobs if j['status'] != 'Completed']
+        _buckets = [
+            ("service", "🧰 Service",  "service calls",
+             [j for j in _active if j['type'] == 'Service']),
+            ("project", "🏗️ Projects", "projects",
+             [j for j in _active if j['type'] == 'Project']),
+            ("leads",   "🤝 Leads",    "leads",
+             [j for j in _active if j['type'] == 'Leads']),
+            ("archive", "📦 Archive",  "archived jobs",
+             [j for j in filtered_jobs if j['status'] == 'Completed']),
+        ]
+        _labels = [f"{label} ({len(rows)})" for _, label, _, rows in _buckets]
+        _by_label = {lbl: b for lbl, b in zip(_labels, _buckets)}
+        _slug, _, _empty_word, _rows = _by_label.get(sub_nav(_labels, "jobs_view"), _buckets[0])
+        if not _rows:
+            st.info(f"No {_empty_word} to show.")
+        render_job_grid(_rows, key_suffix=f"jobs_{_slug}", allow_delete=is_admin)
 
     # 7. Admin (Only if Admin)
     if is_admin:
