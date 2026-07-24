@@ -5592,54 +5592,6 @@ def _admin_data():
             st.toast("Cache cleared!", icon="🧹")
             st.rerun()
 
-    # ── ONE-TIME CLEANUP (delete this block once it has been run) ─────────────
-    # Purges leftover records from the retired second-company feature. Those
-    # records are no longer filtered anywhere, so until this runs they show up
-    # as ordinary jobs/techs.
-    with st.expander("🧯 One-time cleanup: purge retired second-company data", expanded=False):
-        legacy_jobs = [j for j in st.session_state.jobs if j.get('company') == 'construction']
-        legacy_techs = [t for t in st.session_state.techs if t.get('company') == 'construction']
-        legacy_emails = (st.session_state.get('db') or {}).get('construction_emails', []) or []
-
-        st.write(f"**{len(legacy_jobs)}** job(s), **{len(legacy_techs)}** tech(s), "
-                 f"**{len(legacy_emails)}** lead email(s) still tagged.")
-        # Plain checkbox, not an expander — this block already sits inside one and
-        # Streamlit forbids nesting expanders.
-        if legacy_jobs and st.checkbox(f"Show the {len(legacy_jobs)} job(s) to be deleted",
-                                       key="purge_legacy_show"):
-            for j in legacy_jobs:
-                _l = get_location(j.get('locationId'))
-                st.write(f"- {j.get('title')} — {_l['name'] if _l else 'no site'} "
-                         f"({str(j.get('date', ''))[:10]}, {j.get('status')})")
-        if legacy_techs:
-            st.write("Techs: " + ", ".join(t.get('name', '?') for t in legacy_techs))
-
-        if not (legacy_jobs or legacy_techs or legacy_emails):
-            st.success("Nothing left to clean up — this block can be deleted from app.py.")
-        else:
-            st.error("This permanently deletes those records. Take a database snapshot first.")
-            confirm = st.checkbox("I have a backup and want to delete these permanently",
-                                  key="purge_legacy_confirm")
-            if st.button("🗑️ Delete permanently", disabled=not confirm, key="purge_legacy_btn"):
-                st.session_state.jobs = [j for j in st.session_state.jobs
-                                         if j.get('company') != 'construction']
-                st.session_state.techs = [t for t in st.session_state.techs
-                                          if t.get('company') != 'construction']
-                for j in st.session_state.jobs:
-                    j.pop('company', None)
-                for t in st.session_state.techs:
-                    t.pop('company', None)
-                if isinstance(st.session_state.get('db'), dict):
-                    st.session_state.db.pop('construction_emails', None)
-                st.session_state.pop('construction_emails', None)
-                save_state()
-                get_logger().log(
-                    f"Purged retired-company data: {len(legacy_jobs)} jobs, "
-                    f"{len(legacy_techs)} techs, {len(legacy_emails)} emails")
-                st.success(f"Deleted {len(legacy_jobs)} job(s) and {len(legacy_techs)} tech(s).")
-                st.rerun()
-    # ── END ONE-TIME CLEANUP ─────────────────────────────────────────────────
-
     st.divider()
     st.subheader("Database Management")
     c_db1, c_db2 = st.columns(2)
