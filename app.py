@@ -297,6 +297,7 @@ def load_data():
             "briefing": "Data required to generate briefing.",
             "adminEmails": [],
             "agreements": [],
+            "sops": [],
             "smtp_settings": {},
             "last_reminder_date": None
         }
@@ -309,6 +310,7 @@ def _sync_session_to_db():
     st.session_state.db["briefing"] = st.session_state.briefing
     st.session_state.db["adminEmails"] = st.session_state.adminEmails
     st.session_state.db["agreements"] = st.session_state.get("agreements", [])
+    st.session_state.db["sops"] = st.session_state.get("sops", [])
     st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
@@ -323,6 +325,7 @@ def refresh_session_from_db():
     st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
     st.session_state.adminEmails = data.get("adminEmails", [])
     st.session_state.agreements = data.get("agreements", [])
+    st.session_state.sops = data.get("sops", [])
     st.session_state.smtp_settings = data.get("smtp_settings", {})
     st.session_state.last_reminder_date = data.get("last_reminder_date")
 
@@ -387,6 +390,7 @@ if "jobs" not in st.session_state:
     st.session_state.briefing = db_data.get("briefing", "Data required to generate briefing.")
     st.session_state.adminEmails = db_data.get("adminEmails", [])
     st.session_state.agreements = db_data.get("agreements", [])
+    st.session_state.sops = db_data.get("sops", [])
     st.session_state.smtp_settings = db_data.get("smtp_settings", {})
     st.session_state.last_reminder_date = db_data.get("last_reminder_date")
 
@@ -397,6 +401,12 @@ if "agreements" not in st.session_state:
         st.session_state.agreements = load_data().get("agreements", [])
     except Exception:
         st.session_state.agreements = []
+
+if "sops" not in st.session_state:
+    try:
+        st.session_state.sops = load_data().get("sops", [])
+    except Exception:
+        st.session_state.sops = []
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
@@ -1600,6 +1610,7 @@ def download_data_as_json():
         "briefing": st.session_state.briefing,
         "adminEmails": st.session_state.adminEmails,
         "agreements": st.session_state.get("agreements", []),
+        "sops": st.session_state.get("sops", []),
         "last_reminder_date": st.session_state.get("last_reminder_date")
     }
     return json.dumps(data, indent=2)
@@ -4661,7 +4672,172 @@ def render_map_view(jobs):
         st.caption(f"⚠️ {skipped} job(s) not shown — address missing or could not be geocoded.")
 
 
-BROWSER_TABLES = ["Jobs", "Reports", "Parts", "Time", "Photos", "Invoices", "Sites", "Techs"]
+# --- SOPs (reference library: written procedures techs read in the field) -----
+# Seed categories only — the picker also offers whatever categories already exist
+# plus a free-text box, so this list never has to be edited to add one.
+SOP_SEED_CATEGORIES = ["Cameras / NVR", "Access Control", "Alarms", "Cabling",
+                       "Safety", "Company"]
+
+def sop_categories():
+    """Seed categories plus any in use, alphabetical."""
+    used = {(s.get('category') or '').strip() for s in st.session_state.get('sops', [])}
+    return sorted({c for c in (set(SOP_SEED_CATEGORIES) | used) if c})
+
+def sop_matches(sop, q):
+    """Case-insensitive match across title, category, steps, notes, attachment names."""
+    if not q:
+        return True
+    hay = " ".join([
+        sop.get('title', ''), sop.get('category', ''), sop.get('notes', ''),
+        " ".join(sop.get('steps') or []),
+        " ".join(a.get('name', '') for a in (sop.get('attachments') or [])),
+    ]).lower()
+    return q.lower() in hay
+
+def _sop_form(sop, key_prefix, on_save, submit_label):
+    """Shared add/edit form. `sop` seeds the fields; on_save(dict) persists."""
+    cats = sop_categories()
+    cur_cat = sop.get('category', '')
+    with st.form(key=f"{key_prefix}_form"):
+        title = st.text_input("Title", value=sop.get('title', ''),
+                              placeholder="e.g. Commissioning a Hikvision NVR")
+        c1, c2 = st.columns(2)
+        cat_options = cats + ["➕ New category..."]
+        cat_idx = cat_options.index(cur_cat) if cur_cat in cat_options else 0
+        picked = c1.selectbox("Category", cat_options, index=cat_idx)
+        new_cat = c2.text_input("New category name", value="" if picked != "➕ New category..." else cur_cat,
+                                placeholder="Only if adding a new one")
+        steps_txt = st.text_area(
+            "Steps (one per line)", value="\n".join(sop.get('steps') or []), height=220,
+            placeholder="Confirm the model matches the quote\nSet a static IP outside the DHCP pool\n...")
+        notes = st.text_area("Notes / cautions (optional)", value=sop.get('notes', ''), height=90)
+        files = st.file_uploader("Attachments (datasheets, diagrams)", accept_multiple_files=True,
+                                 type=['pdf', 'jpg', 'jpeg', 'png'], key=f"{key_prefix}_files")
+        if st.form_submit_button(submit_label):
+            final_cat = (new_cat.strip() or (picked if picked != "➕ New category..." else "")).strip()
+            if not title.strip():
+                st.error("Title is required.")
+                return
+            atts = list(sop.get('attachments') or [])
+            for f in (files or []):
+                k = save_document_locally(f)
+                if k:
+                    atts.append({"name": f.name, "key": k})
+            on_save({
+                "title": title.strip(),
+                "category": final_cat,
+                "steps": [ln.strip() for ln in steps_txt.splitlines() if ln.strip()],
+                "notes": notes.strip(),
+                "attachments": atts,
+            })
+
+def render_sops_view(is_admin):
+    st.subheader("📚 Standard Operating Procedures")
+    st.caption("Reference procedures for the field. "
+               + ("You can add and edit these." if is_admin
+                  else "Read-only — ask an admin to add or change a procedure."))
+
+    sops = st.session_state.get('sops', [])
+
+    if is_admin:
+        with st.expander("➕ New Procedure", expanded=not sops):
+            def _create(vals):
+                vals.update({
+                    "id": f"sop{now_local().timestamp()}",
+                    "updated_by": st.session_state.user_info.get('email', '') if "user_info" in st.session_state else '',
+                    "updated_at": now_local().isoformat(),
+                })
+                st.session_state.sops.append(vals)
+                save_state(invalidate_briefing=False)
+                st.success(f"Added '{vals['title']}'")
+                st.rerun()
+            _sop_form({}, "new_sop", _create, "Add Procedure")
+
+    if not sops:
+        st.info("No procedures yet." + (" Add the first one above." if is_admin else ""))
+        return
+
+    f1, f2 = st.columns([3, 2])
+    q = f1.text_input("Search", key="sop_q", label_visibility="collapsed",
+                      placeholder="🔍 Search procedures, steps, attachments...")
+    cat_pick = f2.selectbox("Category", ["All categories"] + sop_categories(),
+                            key="sop_cat", label_visibility="collapsed")
+
+    shown = [s for s in sops
+             if sop_matches(s, q)
+             and (cat_pick == "All categories" or s.get('category') == cat_pick)]
+    shown.sort(key=lambda s: ((s.get('category') or '~'), s.get('title', '')))
+
+    st.caption(f"{len(shown)} of {len(sops)} procedure(s)"
+               + (f' matching "{q}"' if q else ""))
+    if not shown:
+        st.info("Nothing matches those filters.")
+        return
+
+    for s in shown:
+        steps = s.get('steps') or []
+        atts = s.get('attachments') or []
+        meta = f"{len(steps)} step(s) · {len(atts)} attachment(s)"
+        if s.get('updated_at'):
+            meta += f" · updated {str(s['updated_at'])[:10]}"
+            if s.get('updated_by'):
+                meta += f" by {s['updated_by']}"
+
+        label = f"{s.get('title', 'Untitled')}"
+        if s.get('category'):
+            label += f"  ·  {s['category']}"
+        with st.expander(label, expanded=bool(q) and len(shown) <= 3):
+            st.caption(meta)
+            if steps:
+                for i, stp in enumerate(steps, 1):
+                    st.markdown(f"**{i}.** {stp}")
+            else:
+                st.caption("No steps recorded.")
+
+            if s.get('notes'):
+                st.info(s['notes'])
+
+            if atts:
+                st.write("**Attachments**")
+                for i, a in enumerate(atts):
+                    url = resolve_image_source(a.get('key'))
+                    ac1, ac2 = st.columns([3, 1])
+                    ac1.write(f"📎 {a.get('name', 'file')}")
+                    if url:
+                        ac2.link_button("👁️ View", url, use_container_width=True)
+                    ext = str(a.get('name', '')).lower().split('.')[-1]
+                    if url and ext in ('jpg', 'jpeg', 'png'):
+                        st.image(url, width=320)
+
+            if is_admin:
+                st.divider()
+                ec1, ec2 = st.columns([1, 1])
+                edit_key = f"sop_editing_{s['id']}"
+                if ec1.button("✏️ Edit", key=f"sop_edit_btn_{s['id']}", use_container_width=True):
+                    st.session_state[edit_key] = not st.session_state.get(edit_key, False)
+                    st.rerun()
+                if ec2.button("🗑️ Delete", key=f"sop_del_{s['id']}", use_container_width=True):
+                    st.session_state.sops = [x for x in st.session_state.sops if x['id'] != s['id']]
+                    save_state(invalidate_briefing=False)
+                    st.toast(f"Deleted '{s.get('title', '')}'", icon="🗑️")
+                    st.rerun()
+
+                if st.session_state.get(edit_key):
+                    def _update(vals, _sid=s['id'], _ek=edit_key):
+                        for x in st.session_state.sops:
+                            if x['id'] == _sid:
+                                x.update(vals)
+                                x['updated_by'] = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
+                                x['updated_at'] = now_local().isoformat()
+                                break
+                        save_state(invalidate_briefing=False)
+                        st.session_state[_ek] = False
+                        st.success("Procedure updated.")
+                        st.rerun()
+                    _sop_form(s, f"edit_sop_{s['id']}", _update, "Save Changes")
+
+
+BROWSER_TABLES = ["Jobs", "Reports", "Parts", "Time", "Photos", "Invoices", "Sites", "Techs", "SOPs"]
 
 def _bnum(v):
     """Best-effort float (blank/garbage -> 0.0)."""
@@ -4823,6 +4999,20 @@ def browser_rows(table):
                 "_date": None, "_tech": '', "_site": l.get('name', ''), "_job_id": None,
             })
 
+    elif table == "SOPs":
+        for s in st.session_state.get('sops', []):
+            rows.append({
+                "Title": s.get('title', ''), "Category": s.get('category', ''),
+                "Steps": len(s.get('steps') or []),
+                "Attachments": len(s.get('attachments') or []),
+                "Notes": (s.get('notes') or '').replace("\n", " "),
+                "Procedure": " | ".join(s.get('steps') or []),
+                "Updated": str(s.get('updated_at', ''))[:10],
+                "Updated By": s.get('updated_by', '') or '',
+                "_date": _bdate(s.get('updated_at')), "_tech": '',
+                "_site": '', "_job_id": None,
+            })
+
     elif table == "Techs":
         for t in st.session_state.techs:
             act = [j for j in jobs
@@ -4851,6 +5041,7 @@ def browser_count(table):
     if table == "Invoices": return sum(1 for j in jobs if j.get('status') == 'Completed')
     if table == "Sites":    return len(st.session_state.locations)
     if table == "Techs":    return len(st.session_state.techs)
+    if table == "SOPs":     return len(st.session_state.get('sops', []))
     return 0
 
 def render_data_browser():
@@ -5607,6 +5798,7 @@ def _admin_data():
             st.session_state.briefing = state["briefing"]
             st.session_state.adminEmails = state["adminEmails"]
             st.session_state.agreements = state.get("agreements", [])
+            st.session_state.sops = state.get("sops", [])
             st.session_state.last_reminder_date = state.get("last_reminder_date")
             st.toast("Reloaded from DB.", icon="🔄")
             st.rerun()
@@ -5654,6 +5846,7 @@ def _admin_data():
                         st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
                         st.session_state.adminEmails = data.get("adminEmails", [])
                         st.session_state.agreements = data.get("agreements", [])
+                        st.session_state.sops = data.get("sops", [])
                         st.session_state.last_reminder_date = data.get("last_reminder_date")
                         ensure_loaded_into_session()
                         _sync_session_to_db()
@@ -6295,7 +6488,7 @@ def main():
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
 
     # Navigation Tabs
-    tabs_list = ["🌅 Briefing", "👷 Tech Board", "📅 Calendar", "🗺️ Map", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive"]
+    tabs_list = ["🌅 Briefing", "👷 Tech Board", "📅 Calendar", "🗺️ Map", "🧰 Service Calls", "🏗️ Projects", "🤝 Leads", "📦 Archive", "📚 SOPs"]
     
     if current_tech:
         tabs_list.insert(0, "🙋‍♂️ My Assignments")
@@ -6306,6 +6499,10 @@ def main():
 
     tabs = st.tabs(tabs_list)
     tab_map = {name: tab for name, tab in zip(tabs_list, tabs)}
+
+    # SOP reference library — everyone reads, admins write
+    with tab_map["📚 SOPs"]:
+        render_sops_view(is_admin)
 
     # Invoicing worklist (admins / office manager)
     if is_admin:
