@@ -5749,12 +5749,14 @@ def _admin_data():
 
         st.write(f"**{len(legacy_jobs)}** job(s), **{len(legacy_techs)}** tech(s), "
                  f"**{len(legacy_emails)}** lead email(s) still tagged.")
-        if legacy_jobs:
-            with st.expander(f"Jobs to be deleted ({len(legacy_jobs)})", expanded=False):
-                for j in legacy_jobs:
-                    _l = get_location(j.get('locationId'))
-                    st.write(f"- {j.get('title')} — {_l['name'] if _l else 'no site'} "
-                             f"({str(j.get('date', ''))[:10]}, {j.get('status')})")
+        # Plain checkbox, not an expander — this block already sits inside one and
+        # Streamlit forbids nesting expanders.
+        if legacy_jobs and st.checkbox(f"Show the {len(legacy_jobs)} job(s) to be deleted",
+                                       key="purge_legacy_show"):
+            for j in legacy_jobs:
+                _l = get_location(j.get('locationId'))
+                st.write(f"- {j.get('title')} — {_l['name'] if _l else 'no site'} "
+                         f"({str(j.get('date', ''))[:10]}, {j.get('status')})")
         if legacy_techs:
             st.write("Techs: " + ", ".join(t.get('name', '?') for t in legacy_techs))
 
@@ -6127,7 +6129,10 @@ def _tv_board():
 
     # --- Rotating content ---
     if view_key == "board":
-        board_statuses = ["Not Started", "In Progress", "Waiting on Parts", "Parts Staged", "Customer on Hold"]
+        # Every active status needs a column — anything missing here is invisible
+        # on the wall display rather than merely out of place.
+        board_statuses = ["Not Started", "In Progress", "Parts not ordered",
+                          "Waiting on Parts", "Parts Staged", "Customer on Hold"]
         cols = []
         for status in board_statuses:
             if status == "Not Started":
