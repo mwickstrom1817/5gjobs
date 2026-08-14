@@ -2643,32 +2643,69 @@ def generate_morning_briefing():
             
         return f"Error generating briefing: {err_msg}{help_tip}"
 
-# --- Time picker helper ---
-# Mobile-friendly replacement for st.time_input, whose dropdown popover gets
-# clipped/unclickable inside st.dialog on phones. A searchable selectbox of time
-# slots is fully tappable and persists via its key.
-def _time_slot_options(step_minutes=15):
-    return [datetime.time(h, m) for h in range(24) for m in range(0, 60, step_minutes)]
-
-def _fmt_time_ampm(t):
-    return t.strftime('%I:%M %p').lstrip('0')
-
-def _round_time_to_step(t, step_minutes=15):
-    total = t.hour * 60 + t.minute
-    rounded = int(round(total / step_minutes)) * step_minutes
-    rounded = min(rounded, 24 * 60 - step_minutes)
-    return datetime.time(rounded // 60, rounded % 60)
-
 def time_select(label, default, key, step_minutes=15):
-    """Selectbox of times of day; returns a datetime.time. `default` seeds the
-    first render (rounded to the step); `key` persists the user's choice."""
-    opts = _time_slot_options(step_minutes)
-    rounded = _round_time_to_step(default if isinstance(default, datetime.time) else datetime.time(8, 0), step_minutes)
-    try:
-        idx = opts.index(rounded)
-    except ValueError:
-        idx = opts.index(datetime.time(8, 0))
-    return st.selectbox(label, options=opts, index=idx, format_func=_fmt_time_ampm, key=key)
+    """Mobile-native time picker: number pad for hour, tap chips for minute/am-pm.
+    No dropdowns, no popover, no keyboard-dismiss bugs inside dialogs."""
+    st.caption(label)
+
+    if isinstance(default, str):
+        try:
+            default = datetime.datetime.strptime(default, "%H:%M:%S").time()
+        except (ValueError, TypeError):
+            default = datetime.time(8, 0)
+    elif not isinstance(default, datetime.time):
+        default = datetime.time(8, 0)
+
+    hour24 = default.hour
+    minute = default.minute
+    ampm = "AM" if hour24 < 12 else "PM"
+    hour12 = hour24 % 12
+    if hour12 == 0:
+        hour12 = 12
+
+    minute_opts = list(range(0, 60, step_minutes))
+    rounded_min = min(minute_opts, key=lambda x: abs(x - minute))
+
+    c1, c2, c3 = st.columns([1.2, 1.8, 1.2])
+    with c1:
+        h = st.number_input(
+            "Hr", min_value=1, max_value=12, value=hour12,
+            key=f"{key}_h", label_visibility="collapsed"
+        )
+    with c2:
+        if hasattr(st, "segmented_control"):
+            m = st.segmented_control(
+                "Min", minute_opts, format_func=lambda x: f"{x:02d}",
+                default=rounded_min, key=f"{key}_m", label_visibility="collapsed"
+            )
+        else:
+            m = st.radio(
+                "Min", minute_opts, format_func=lambda x: f"{x:02d}",
+                index=minute_opts.index(rounded_min), horizontal=True,
+                key=f"{key}_m", label_visibility="collapsed"
+            )
+    with c3:
+        if hasattr(st, "segmented_control"):
+            ap = st.segmented_control(
+                "AM/PM", ["AM", "PM"], default=ampm,
+                key=f"{key}_ap", label_visibility="collapsed"
+            )
+        else:
+            ap = st.radio(
+                "AM/PM", ["AM", "PM"], index=0 if ampm == "AM" else 1,
+                horizontal=True, key=f"{key}_ap", label_visibility="collapsed"
+            )
+
+    h = int(h)
+    m = int(m) if m is not None else rounded_min
+    ap = ap or ampm
+
+    if ap == "PM" and h != 12:
+        h += 12
+    elif ap == "AM" and h == 12:
+        h = 0
+
+    return datetime.time(h, m)
 
 
 # --- DIALOGS (MODALS) ---
