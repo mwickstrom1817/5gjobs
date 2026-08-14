@@ -2660,68 +2660,15 @@ def _round_time_to_step(t, step_minutes=15):
     return datetime.time(rounded // 60, rounded % 60)
 
 def time_select(label, default, key, step_minutes=15):
-    """Mobile-native time picker: number pad for hour, tap chips for minute/am-pm.
-    No dropdowns, no popover, no keyboard-dismiss bugs inside dialogs."""
-    st.caption(label)
-
-    if isinstance(default, str):
-        try:
-            default = datetime.datetime.strptime(default, "%H:%M:%S").time()
-        except (ValueError, TypeError):
-            default = datetime.time(8, 0)
-    elif not isinstance(default, datetime.time):
-        default = datetime.time(8, 0)
-
-    hour24 = default.hour
-    minute = default.minute
-    ampm = "AM" if hour24 < 12 else "PM"
-    hour12 = hour24 % 12
-    if hour12 == 0:
-        hour12 = 12
-
-    minute_opts = list(range(0, 60, step_minutes))
-    rounded_min = min(minute_opts, key=lambda x: abs(x - minute))
-
-    c1, c2, c3 = st.columns([1.2, 1.8, 1.2])
-    with c1:
-        h = st.number_input(
-            "Hr", min_value=1, max_value=12, value=hour12,
-            key=f"{key}_h", label_visibility="collapsed"
-        )
-    with c2:
-        if hasattr(st, "segmented_control"):
-            m = st.segmented_control(
-                "Min", minute_opts, format_func=lambda x: f"{x:02d}",
-                default=rounded_min, key=f"{key}_m", label_visibility="collapsed"
-            )
-        else:
-            m = st.radio(
-                "Min", minute_opts, format_func=lambda x: f"{x:02d}",
-                index=minute_opts.index(rounded_min), horizontal=True,
-                key=f"{key}_m", label_visibility="collapsed"
-            )
-    with c3:
-        if hasattr(st, "segmented_control"):
-            ap = st.segmented_control(
-                "AM/PM", ["AM", "PM"], default=ampm,
-                key=f"{key}_ap", label_visibility="collapsed"
-            )
-        else:
-            ap = st.radio(
-                "AM/PM", ["AM", "PM"], index=0 if ampm == "AM" else 1,
-                horizontal=True, key=f"{key}_ap", label_visibility="collapsed"
-            )
-
-    h = int(h)
-    m = int(m) if m is not None else rounded_min
-    ap = ap or ampm
-
-    if ap == "PM" and h != 12:
-        h += 12
-    elif ap == "AM" and h == 12:
-        h = 0
-
-    return datetime.time(h, m)
+    """Selectbox of times of day; returns a datetime.time. `default` seeds the
+    first render (rounded to the step); `key` persists the user's choice."""
+    opts = _time_slot_options(step_minutes)
+    rounded = _round_time_to_step(default if isinstance(default, datetime.time) else datetime.time(8, 0), step_minutes)
+    try:
+        idx = opts.index(rounded)
+    except ValueError:
+        idx = opts.index(datetime.time(8, 0))
+    return st.selectbox(label, options=opts, index=idx, format_func=_fmt_time_ampm, key=key)
 
 
 # --- DIALOGS (MODALS) ---
@@ -4066,24 +4013,8 @@ Desc: {job['description']}"""
                 st.session_state.jobs[job_index]['reports'].append(report_payload)
                 
                 # Auto-update status for Arrived
-                                # Auto-update status for Arrived
                 if label == "📍 Arrived" and job['status'] in ['Pending', 'Not Started']:
                     apply_job_status(st.session_state.jobs[job_index], 'In Progress', _viewer_email)
-                
-                # Auto clock-in when arriving on site
-                if label == "📍 Arrived":
-                    viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
-                    viewer_name = st.session_state.user_info.get('name', '') if "user_info" in st.session_state else ''
-                    entries = st.session_state.jobs[job_index].setdefault('time_entries', [])
-                    if not open_time_entry(entries, viewer_email):
-                        entries.append({
-                            'id': f"tc{now_local().timestamp()}",
-                            'userEmail': viewer_email,
-                            'tech_name': viewer_name or viewer_email,
-                            'clock_in': now_local().isoformat(),
-                            'clock_out': None,
-                        })
-                        st.toast("⏱️ Clocked in automatically", icon="🟢")
                 
                 save_state()
                 st.toast(f"Status updated: {label}", icon="✅")
@@ -4238,16 +4169,7 @@ Desc: {job['description']}"""
             except ValueError:
                 status_idx = 0
             
-                        if hasattr(st, "segmented_control"):
-                new_status = st.segmented_control(
-                    "Job Status", status_options, default=status_options[status_idx],
-                    key=f"status_{job_id}"
-                )
-            else:
-                new_status = st.radio(
-                    "Job Status", status_options, index=status_idx,
-                    horizontal=True, key=f"status_{job_id}", label_visibility="collapsed"
-                )
+            new_status = st.selectbox("Job Status", status_options, index=status_idx)
             # Default from what's actually been recorded on this job. job['isWarranty']
             # is never written anywhere — warranty lives on the reports — so reading it
             # directly made this box forget every time. job_is_warranty() checks both.
@@ -4479,58 +4401,20 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 "Change Status", status_options, index=status_idx, key=widget_key,
                 on_change=update_job_status_callback, args=(job['id'], widget_key),
                 label_visibility="collapsed")
-                        # Time clock: one-tap in/out from the card itself
-            viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
-            entries = job.get('time_entries', [])
-            open_entry = open_time_entry(entries, viewer_email)
-            clock_label = "⏹ Clock Out" if open_entry else "⏱️ Clock In"
-            
             if allow_delete:
-                b1, b2, b3, b4 = st.columns([2.5, 1, 0.9, 0.9])
+                b1, b2, b3 = st.columns([3, 1, 1])
                 with b1:
                     if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
                         job_details_dialog(job['id'])
                 with b2:
-                    if st.button(clock_label, key=f"clk_{job['id']}_{key_suffix}", use_container_width=True):
-                        if open_entry:
-                            open_entry['clock_out'] = now_local().isoformat()
-                        else:
-                            viewer_name = st.session_state.user_info.get('name', '') if "user_info" in st.session_state else ''
-                            entries.append({
-                                'id': f"tc{now_local().timestamp()}",
-                                'userEmail': viewer_email,
-                                'tech_name': viewer_name or viewer_email,
-                                'clock_in': now_local().isoformat(),
-                                'clock_out': None,
-                            })
-                        save_state(invalidate_briefing=False)
-                        st.rerun()
-                with b3:
                     if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
                         edit_job_dialog(job['id'])
-                with b4:
+                with b3:
                     if st.button(":material/delete:", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
                         _delete_job()
             else:
-                b1, b2 = st.columns([3, 2])
-                with b1:
-                    if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-                        job_details_dialog(job['id'])
-                with b2:
-                    if st.button(clock_label, key=f"clk_{job['id']}_{key_suffix}", use_container_width=True):
-                        if open_entry:
-                            open_entry['clock_out'] = now_local().isoformat()
-                        else:
-                            viewer_name = st.session_state.user_info.get('name', '') if "user_info" in st.session_state else ''
-                            entries.append({
-                                'id': f"tc{now_local().timestamp()}",
-                                'userEmail': viewer_email,
-                                'tech_name': viewer_name or viewer_email,
-                                'clock_in': now_local().isoformat(),
-                                'clock_out': None,
-                            })
-                        save_state(invalidate_briefing=False)
-                        st.rerun()
+                if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
+                    job_details_dialog(job['id'])
         else:
             # Wide cards (3-col grid pages): everything in one inline row
             if allow_delete:
