@@ -48,6 +48,15 @@ try:
 except ImportError:
     HAS_REPORTLAB = False
 
+# QR generation ships inside reportlab, so asset labels need no extra dependency.
+try:
+    from reportlab.graphics.barcode import qr as _rl_qr
+    from reportlab.graphics.shapes import Drawing as _RLDrawing
+    from reportlab.graphics import renderPDF as _rl_renderPDF
+    HAS_QR = True
+except ImportError:
+    HAS_QR = False
+
 # Try importing Streamlit Drawable Canvas for signatures
 try:
     from streamlit_drawable_canvas import st_canvas
@@ -536,6 +545,152 @@ def invoice_status(job):
     if stored in INVOICE_STATUSES:
         return stored
     return "No Charge" if job_is_warranty(job) else "Ready to Invoice"
+
+# --- ASSET REGISTRY (tagged equipment installed at a site) --------------------
+# Assets live on the LOCATION, not the job: an NVR stays at the site across every
+# future job. We record which job installed it so the history survives. Locations
+# already persist, so this needs no new top-level state key.
+ASSET_TYPES = ["NVR", "DVR", "Camera", "Switch", "Access Panel", "Reader",
+               "Alarm Panel", "Keypad", "Router", "UPS", "Gate Operator", "Other"]
+ASSET_TAG_PREFIX = "5GS"
+
+def all_assets():
+    """Every registered asset across all sites, each with its location attached."""
+    out = []
+    for l in st.session_state.locations:
+        for a in (l.get('assets') or []):
+            out.append((l, a))
+    return out
+
+def next_asset_tag():
+    """Next sequential tag. Derived from the highest existing tag rather than a
+    stored counter, so it can't drift out of sync with the actual data."""
+    top = 0
+    for _, a in all_assets():
+        tag = str(a.get('tag', ''))
+        if tag.startswith(ASSET_TAG_PREFIX + "-"):
+            try:
+                top = max(top, int(tag.split("-", 1)[1]))
+            except (ValueError, IndexError):
+                pass
+    return f"{ASSET_TAG_PREFIX}-{top + 1:06d}"
+
+def find_asset(tag):
+    """(location, asset) for a tag, or (None, None). Case/space tolerant so a
+    typed-in code works as well as a scanned one."""
+    q = str(tag or "").strip().upper()
+    if not q:
+        return None, None
+    for l, a in all_assets():
+        if str(a.get('tag', '')).upper() == q:
+            return l, a
+    return None, None
+
+def asset_warranty_left(asset):
+    """(months_remaining, expiry_date) or (None, None) when it can't be worked out.
+    Negative months mean it has already expired."""
+    months = asset.get('warranty_months')
+    installed = asset.get('installed_date')
+    if not months or not installed:
+        return None, None
+    try:
+        d0 = datetime.datetime.fromisoformat(str(installed)[:19]).date()
+        m = int(months)
+    except (ValueError, TypeError):
+        return None, None
+    total = d0.month - 1 + m
+    expiry = d0.replace(year=d0.year + total // 12, month=total % 12 + 1,
+                        day=min(d0.day, 28))
+    today = now_local().date()
+    return (expiry.year - today.year) * 12 + (expiry.month - today.month), expiry
+
+def asset_label_lines(location, asset):
+    """The four text lines printed on a label."""
+    kind = asset.get('type', 'Asset')
+    model = asset.get('make_model', '')
+    line2 = f"{kind} — {model}" if model else kind
+    place = " · ".join(x for x in [(location or {}).get('name', ''), asset.get('position', '')] if x)
+    return "5G SECURITY", line2, place, asset.get('tag', '')
+
+
+def asset_scan_url(tag):
+    """URL encoded into the QR. Any phone camera opens this and the app deep-links
+    to the asset — which is why no in-app QR scanner (and no fragile system
+    library) is needed. Falls back to the bare tag if APP_URL isn't configured."""
+    base = (os.getenv("APP_URL", "") or "").rstrip("/")
+    return f"{base}/?asset={tag}" if base else str(tag)
+
+def build_asset_labels_pdf(pairs):
+    """Avery 5160/8160 sheet (letter, 3 x 10 = 30 labels). `pairs` is a list of
+    (location, asset). Returns PDF bytes, or None if reportlab is unavailable."""
+    if not (HAS_REPORTLAB and pairs):
+        return None
+
+    INCH = 72.0
+    PAGE_W, PAGE_H = letter
+    COLS, ROWS = 3, 10
+    LBL_W, LBL_H = 2.625 * INCH, 1.0 * INCH
+    MARGIN_L, MARGIN_T = 0.21875 * INCH, 0.5 * INCH
+    PITCH_X, PITCH_Y = 2.75 * INCH, 1.0 * INCH
+    PAD = 0.09 * INCH
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=letter)
+
+    for i, (loc, asset) in enumerate(pairs):
+        slot = i % (COLS * ROWS)
+        if i and slot == 0:
+            c.showPage()
+        col, row = slot % COLS, slot // COLS
+        x = MARGIN_L + col * PITCH_X
+        y = PAGE_H - MARGIN_T - (row + 1) * PITCH_Y   # reportlab origin is bottom-left
+
+        brand, line2, place, tag = asset_label_lines(loc, asset)
+
+        # QR square on the left, sized to the label height
+        qr_side = LBL_H - 2 * PAD
+        if HAS_QR:
+            try:
+                widget = _rl_qr.QrCodeWidget(asset_scan_url(tag))
+                bx0, by0, bx1, by1 = widget.getBounds()
+                bw, bh = (bx1 - bx0) or 1, (by1 - by0) or 1
+                d = _RLDrawing(qr_side, qr_side,
+                               transform=[qr_side / bw, 0, 0, qr_side / bh, 0, 0])
+                d.add(widget)
+                _rl_renderPDF.draw(d, c, x + PAD, y + PAD)
+            except Exception:
+                pass   # a label without a QR still carries the printed tag
+
+        tx = x + PAD + qr_side + 0.07 * INCH
+        avail = (x + LBL_W - PAD) - tx
+
+        def _fit(text, font, size):
+            """Trim to the label width so long model names can't bleed into the
+            neighbouring label."""
+            t = str(text or "")
+            while t and c.stringWidth(t, font, size) > avail:
+                t = t[:-1]
+            return t
+
+        c.setFillColor(colors.HexColor("#b91c1c"))
+        c.setFont("Helvetica-Bold", 5.5)
+        c.drawString(tx, y + LBL_H - PAD - 5, _fit(brand, "Helvetica-Bold", 5.5))
+
+        c.setFillColor(colors.HexColor("#18181b"))
+        c.setFont("Helvetica-Bold", 8)
+        c.drawString(tx, y + LBL_H - PAD - 15, _fit(line2, "Helvetica-Bold", 8))
+
+        c.setFillColor(colors.HexColor("#52525b"))
+        c.setFont("Helvetica", 6)
+        c.drawString(tx, y + LBL_H - PAD - 24, _fit(place, "Helvetica", 6))
+
+        c.setFillColor(colors.HexColor("#18181b"))
+        c.setFont("Courier-Bold", 10)
+        c.drawString(tx, y + PAD + 3, _fit(tag, "Courier-Bold", 10))
+
+    c.save()
+    return buf.getvalue()
+
 
 def format_money(v):
     """Display helper for the free-text money fields. A plain number gets a $ and
@@ -3282,6 +3437,49 @@ def render_edit_report_view(job_id, report_id):
             del st.session_state[f"editing_report_{job_id}"]
         st.rerun(scope="fragment")
 
+@st.dialog("🏷️ Asset")
+def asset_dialog(tag):
+    loc, asset = find_asset(tag)
+    if not asset:
+        st.error(f"No equipment found with tag **{tag}**.")
+        st.caption("Check the code on the label, or search for it in Admin → Data Browser → Assets.")
+        return
+
+    st.subheader(f"{asset.get('type', 'Asset')}"
+                 + (f" — {asset['make_model']}" if asset.get('make_model') else ""))
+    st.code(asset.get('tag', ''), language=None)
+
+    rows = [
+        ("Site", (loc or {}).get('name', '—')),
+        ("Where", asset.get('position') or "—"),
+        ("Serial", asset.get('serial') or "—"),
+        ("Installed", str(asset.get('installed_date', ''))[:10] or "—"),
+    ]
+    months, expiry = asset_warranty_left(asset)
+    if months is not None:
+        rows.append(("Warranty",
+                     f"{months} months left (to {expiry})" if months >= 0
+                     else f"expired {abs(months)} months ago ({expiry})"))
+    for k, v in rows:
+        c1, c2 = st.columns([1, 2])
+        c1.caption(k)
+        c2.write(v)
+
+    if asset.get('notes'):
+        st.info(asset['notes'])
+
+    src_job = next((j for j in st.session_state.jobs if j['id'] == asset.get('job_id')), None)
+    if src_job:
+        st.caption(f"Installed on job: **{src_job.get('title', '')}**")
+        if st.button("Open that job", use_container_width=True):
+            st.session_state["_open_job_after_rerun"] = src_job['id']
+            st.rerun()
+
+    if loc:
+        site_jobs = [j for j in st.session_state.jobs if j.get('locationId') == loc['id']]
+        st.caption(f"{len(site_jobs)} job(s) recorded at this site.")
+
+
 @st.dialog("Job Details & Report", width="large")
 def job_details_dialog(job_id):
     # Find job directly from session state
@@ -3432,7 +3630,7 @@ Desc: {job['description']}"""
     # the inactive ones would "unhide" after an in-dialog interaction (e.g. picking
     # a time); rendering just one section makes that impossible. Stable IDs are
     # used so the selection survives reruns even when a label changes (e.g. Parts count).
-    _sections = ["history", "photos", "docs", "parts", "progress", "daily", "creds"]
+    _sections = ["history", "photos", "docs", "parts", "progress", "daily", "assets", "creds"]
     # Invoicing is admin/office-manager only, and only once the work is done.
     _viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
     _viewer_is_admin = _viewer_email in st.session_state.adminEmails if _viewer_email else False
@@ -3443,6 +3641,7 @@ Desc: {job['description']}"""
         "docs": "📄 Documents", "parts": parts_tab_label,
         "progress": "📸 In-Progress", "daily": "📝 Daily Report",
         "creds": creds_tab_label, "invoice": "💵 Invoicing",
+        "assets": "🏷️ Equipment",
     }
     _fmt_section = lambda s: _section_labels.get(s, s)
     if hasattr(st, "segmented_control"):
@@ -3789,6 +3988,113 @@ Desc: {job['description']}"""
                                 get_logger().log(f"{current_user_email} deleted system '{s.get('name')}' from location {loc['id']}")
                                 save_state(invalidate_briefing=False)
                                 st.toast(f"'{s.get('name')}' deleted", icon="🗑️")
+                                st.rerun(scope="fragment")
+
+    if section == "assets":
+        st.write("#### 🏷️ Equipment")
+        if not loc:
+            st.warning("This job has no site assigned, so equipment can't be registered "
+                       "against one. Assign a location first.")
+        else:
+            st.caption(f"Gear installed at **{loc['name']}**. Tags stay with the site, so "
+                       "scanning one later shows its full history no matter which job it came from.")
+
+            with st.expander("➕ Register equipment", expanded=not (loc.get('assets') or [])):
+                with st.form(key=f"asset_form_{job_id}"):
+                    ac1, ac2 = st.columns([1, 1])
+                    a_type = ac1.selectbox("Type", ASSET_TYPES)
+                    a_qty = ac2.number_input("How many", min_value=1, max_value=20, value=1,
+                                             help="Registers this many, each with its own tag.")
+                    a_model = st.text_input("Make / model", placeholder="e.g. Hikvision DS-7616NI-K2")
+                    ac3, ac4 = st.columns([1, 1])
+                    a_serial = ac3.text_input("Serial", placeholder="one unit only")
+                    a_pos = ac4.text_input("Where on site", placeholder="e.g. IDF 2")
+                    ac5, ac6 = st.columns([1, 1])
+                    a_warr = ac5.number_input("Warranty (months)", min_value=0, max_value=120, value=36)
+                    a_date = ac6.text_input("Installed", value=now_local().strftime('%Y-%m-%d'),
+                                            placeholder="YYYY-MM-DD")
+                    a_notes = st.text_area("Notes", height=70)
+
+                    if st.form_submit_button("Register + create tag(s)"):
+                        made = []
+                        for n in range(int(a_qty)):
+                            tag = next_asset_tag()
+                            rec = {
+                                "id": f"as{now_local().timestamp()}_{n}",
+                                "tag": tag,
+                                "type": a_type,
+                                "make_model": a_model.strip(),
+                                # A serial only makes sense for a single unit
+                                "serial": a_serial.strip() if int(a_qty) == 1 else "",
+                                "position": a_pos.strip(),
+                                "installed_date": a_date.strip() or now_local().strftime('%Y-%m-%d'),
+                                "warranty_months": int(a_warr) or None,
+                                "notes": a_notes.strip(),
+                                "job_id": job_id,
+                                "created_by": _viewer_email,
+                                "created_at": now_local().isoformat(),
+                            }
+                            loc.setdefault('assets', []).append(rec)
+                            made.append(tag)
+                        save_state(invalidate_briefing=False)
+                        get_logger().log(f"{_viewer_email} registered {len(made)} asset(s) at {loc['id']}: {', '.join(made)}")
+                        st.success(f"Registered {', '.join(made)}. Print labels below.")
+                        st.rerun(scope="fragment")
+
+            site_assets = loc.get('assets') or []
+            if not site_assets:
+                st.info("No equipment registered at this site yet.")
+            else:
+                _here = [a for a in site_assets if a.get('job_id') == job_id]
+                st.caption(f"{len(site_assets)} on site"
+                           + (f" · {len(_here)} from this job" if _here else ""))
+
+                if HAS_REPORTLAB:
+                    pc1, pc2 = st.columns([1, 1])
+                    if _here:
+                        pdf_here = build_asset_labels_pdf([(loc, a) for a in _here])
+                        if pdf_here:
+                            pc1.download_button(f"🏷️ Print labels — this job ({len(_here)})",
+                                                pdf_here, file_name=f"labels_{job_id}.pdf",
+                                                mime="application/pdf", use_container_width=True,
+                                                key=f"lbl_job_{job_id}")
+                    pdf_all = build_asset_labels_pdf([(loc, a) for a in site_assets])
+                    if pdf_all:
+                        pc2.download_button(f"🏷️ Print labels — whole site ({len(site_assets)})",
+                                            pdf_all, file_name=f"labels_site_{loc['id']}.pdf",
+                                            mime="application/pdf", use_container_width=True,
+                                            key=f"lbl_site_{job_id}")
+                    st.caption("Avery 5160 / 8160 sheets — 30 labels per page.")
+                else:
+                    st.caption("Label printing needs reportlab, which isn't available here.")
+
+                for a in site_assets:
+                    months, expiry = asset_warranty_left(a)
+                    with st.container(border=True):
+                        r1, r2 = st.columns([3, 1])
+                        _model = f" — {a['make_model']}" if a.get('make_model') else ""
+                        r1.markdown(f"**`{a.get('tag', '')}`** · {a.get('type', '')}{_model}")
+                        _bits = [x for x in [a.get('position'), a.get('serial'),
+                                             f"installed {str(a.get('installed_date', ''))[:10]}"] if x]
+                        r1.caption(" · ".join(_bits))
+                        if months is not None:
+                            if months >= 0:
+                                r2.markdown(
+                                    f"<span style='background:#27272a;color:{SEMANTIC['done']};"
+                                    f"font-size:0.72em;padding:2px 7px;border-radius:4px;'>"
+                                    f"warranty {months} mo</span>", unsafe_allow_html=True)
+                            else:
+                                r2.markdown(
+                                    f"<span style='background:#27272a;color:{SEMANTIC['neutral']};"
+                                    f"font-size:0.72em;padding:2px 7px;border-radius:4px;'>"
+                                    f"out of warranty</span>", unsafe_allow_html=True)
+                        if a.get('notes'):
+                            st.caption(a['notes'])
+                        if _viewer_is_admin:
+                            if st.button("🗑️ Remove", key=f"del_asset_{a['id']}"):
+                                loc['assets'] = [x for x in loc['assets'] if x['id'] != a['id']]
+                                save_state(invalidate_briefing=False)
+                                st.toast(f"Removed {a.get('tag', '')}", icon="🗑️")
                                 st.rerun(scope="fragment")
 
     if section == "invoice":
@@ -4788,7 +5094,7 @@ def render_sops_view(is_admin):
                     _sop_form(s, f"edit_sop_{s['id']}", _update, "Save Changes")
 
 
-BROWSER_TABLES = ["Jobs", "Reports", "Parts", "Time", "Photos", "Invoices", "Sites", "Techs", "SOPs"]
+BROWSER_TABLES = ["Jobs", "Reports", "Parts", "Time", "Photos", "Invoices", "Assets", "Sites", "Techs", "SOPs"]
 
 def _bnum(v):
     """Best-effort float (blank/garbage -> 0.0)."""
@@ -4951,6 +5257,24 @@ def browser_rows(table):
                 "_date": None, "_tech": '', "_site": l.get('name', ''), "_job_id": None,
             })
 
+    elif table == "Assets":
+        for l, a in all_assets():
+            months, expiry = asset_warranty_left(a)
+            src = next((j for j in jobs if j['id'] == a.get('job_id')), None)
+            rows.append({
+                "Tag": a.get('tag', ''), "Type": a.get('type', ''),
+                "Make / Model": a.get('make_model', '') or '',
+                "Serial": a.get('serial', '') or '',
+                "Site": l.get('name', ''), "Where": a.get('position', '') or '',
+                "Installed": str(a.get('installed_date', ''))[:10],
+                "Warranty Left (mo)": "" if months is None else months,
+                "Expires": "" if expiry is None else str(expiry),
+                "Installed On Job": src.get('title', '') if src else '',
+                "Notes": (a.get('notes') or '').replace('\n', " "),
+                "_date": _bdate(a.get('installed_date')), "_tech": '',
+                "_site": l.get('name', ''), "_job_id": a.get('job_id'),
+            })
+
     elif table == "SOPs":
         for s in st.session_state.get('sops', []):
             rows.append({
@@ -4994,6 +5318,7 @@ def browser_count(table):
     if table == "Sites":    return len(st.session_state.locations)
     if table == "Techs":    return len(st.session_state.techs)
     if table == "SOPs":     return len(st.session_state.get('sops', []))
+    if table == "Assets":   return len(all_assets())
     return 0
 
 def render_data_browser():
@@ -6307,6 +6632,22 @@ def main():
     if open_target:
         job_details_dialog(open_target)
 
+    # Scanned asset label: the QR points at ?asset=TAG. Consume the param so the
+    # dialog doesn't reopen on every later rerun.
+    _scanned = st.session_state.pop("_open_asset_after_rerun", None)
+    if not _scanned:
+        try:
+            _scanned = st.query_params.get("asset")
+        except Exception:
+            _scanned = None
+        if _scanned:
+            try:
+                del st.query_params["asset"]
+            except Exception:
+                pass
+    if _scanned:
+        asset_dialog(_scanned)
+
     user_email = user.get("email")
     user_name = user.get("name")
     
@@ -6576,6 +6917,19 @@ def main():
 
     # 2. Board
     with tab_map["👷 Board"]:
+        # Manual tag lookup — the fallback for a scuffed label, or for desktop
+        with st.expander("🏷️ Look up an equipment tag", expanded=False):
+            _lc1, _lc2 = st.columns([3, 1])
+            _tag_q = _lc1.text_input("Tag", key="asset_lookup", label_visibility="collapsed",
+                                     placeholder="e.g. 5GS-000042")
+            if _lc2.button("Find", use_container_width=True, key="asset_lookup_btn") and _tag_q.strip():
+                _l, _a = find_asset(_tag_q)
+                if _a:
+                    st.session_state["_open_asset_after_rerun"] = _a['tag']
+                    st.rerun()
+                else:
+                    st.warning(f"No equipment tagged '{_tag_q.strip()}'.")
+
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
