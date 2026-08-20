@@ -537,6 +537,20 @@ def invoice_status(job):
         return stored
     return "No Charge" if job_is_warranty(job) else "Ready to Invoice"
 
+def format_money(v):
+    """Display helper for the free-text money fields. A plain number gets a $ and
+    thousands separators; anything else (e.g. "TBD", "2 visits @ 500") is shown
+    exactly as typed rather than mangled."""
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    try:
+        n = float(s.replace("$", "").replace(",", "").strip())
+    except ValueError:
+        return s
+    return f"${n:,.0f}" if n == int(n) else f"${n:,.2f}"
+
+
 def job_invoice(job):
     """The job's invoice record with every field defaulted."""
     inv = job.get('invoice') or {}
@@ -3829,6 +3843,19 @@ Desc: {job['description']}"""
     if section == "history":
         st.markdown(f"**Description:** {job['description']}")
 
+        # Quote value — what we quoted the customer for this job. Free text on
+        # purpose so "TBD" or a note survives; format_money() prettifies numbers.
+        _qv_c1, _qv_c2 = st.columns([1, 1])
+        with _qv_c1:
+            with st.form(key=f"quote_form_{job_id}"):
+                _qv_new = st.text_input("💲 Quote Value", value=job.get('quoteValue', ''),
+                                        placeholder="e.g. 1450.00")
+                if st.form_submit_button("Save Quote Value"):
+                    st.session_state.jobs[job_index]['quoteValue'] = _qv_new.strip()
+                    save_state(invalidate_briefing=False)
+                    st.toast("Quote value saved", icon="💲")
+                    st.rerun(scope="fragment")
+
         # Site History: what else have we done at this location?
         if loc:
             site_jobs = [sj for sj in st.session_state.jobs
@@ -4360,6 +4387,11 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
     loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {loc_name}</a>' if map_url else f"📍 {loc_name}"
 
+    # Quote value, if one has been entered (small, right of the site name)
+    _qv = format_money(job.get('quoteValue'))
+    quote_html = (f'<span style="color:#a1a1aa; font-size:0.8em; white-space:nowrap;">{_qv}</span>'
+                  if _qv else "")
+
     # One signal row instead of a stack of alert lines. Each feature used to add
     # its own full-width coloured line (stale / follow-up / parts / invoice), so a
     # busy job grew a four-line wall. These are compact chips on a single row —
@@ -4406,7 +4438,10 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 <span style="font-weight:bold; font-size:1.1em; max-width:70%;">{job['title']}</span>
                 <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{job['priority']}</span>
             </div>
-            <div style="color:#a1a1aa; font-size:0.9em; margin-top:5px;">{loc_html}</div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;">
+                <span style="color:#a1a1aa; font-size:0.9em; min-width:0;">{loc_html}</span>
+                {quote_html}
+            </div>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
                  <span>📅 {job['date'][:10]}</span>
@@ -4797,6 +4832,7 @@ def browser_rows(table):
                 "Reports": len(j.get('reports') or []),
                 "Hours": round(hrs, 2),
                 "Parts": f"{staged}/{total}" if total else "",
+                "Quote": format_money(j.get('quoteValue')),
                 "Invoice": invoice_status(j) or "",
                 "_date": _bdate(j.get('date')), "_tech": tech['name'] if tech else '',
                 "_site": loc['name'] if loc else '', "_job_id": j['id'],
