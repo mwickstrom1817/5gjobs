@@ -4438,10 +4438,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 <span style="font-weight:bold; font-size:1.1em; max-width:70%;">{job['title']}</span>
                 <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{job['priority']}</span>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;">
-                <span style="color:#a1a1aa; font-size:0.9em; min-width:0;">{loc_html}</span>
-                {quote_html}
-            </div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em;">{loc_html}</span>{quote_html}</div>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span>👤 {tech_name}</span>
                  <span>📅 {job['date'][:10]}</span>
