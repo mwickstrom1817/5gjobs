@@ -710,8 +710,6 @@ def set_setting(key, value):
     st.session_state.setdefault('settings', {})[key] = value
     save_state(invalidate_briefing=False)
 
-DEFAULT_LABOR_RATE = 95.0
-
 def money_to_float(v):
     """'$1,450.00' / '1450' -> 1450.0. None for blanks or free text like 'TBD',
     so callers can tell 'no number' apart from 'zero'."""
@@ -723,18 +721,27 @@ def money_to_float(v):
     except ValueError:
         return None
 
-def job_hours(job):
-    """Total hours logged across a job's reports."""
+def job_man_hours(job):
+    """Total MAN-hours on a job.
+
+    A report's hours are counted once per tech listed on site — three techs for
+    eight hours is 24 man-hours of effort, not 8. This matches how the Hours
+    Report already credits time, so the two screens agree."""
     total = 0.0
     for r in (job.get('reports') or []):
         try:
-            total += float(r.get('hoursWorked') or 0)
+            hrs = float(r.get('hoursWorked') or 0)
         except (TypeError, ValueError):
-            pass
+            continue
+        if hrs <= 0:
+            continue
+        crew = [t.strip() for t in (r.get('techsOnSite') or '').split(',') if t.strip()]
+        total += hrs * (len(crew) if crew else 1)
     return total
 
 def job_parts_cost(job):
-    """Summed cost of the parts recorded on a job (blank/free-text costs ignored)."""
+    """Summed cost of parts on a job — what was paid to a supplier. Blank or
+    free-text costs are ignored."""
     total = 0.0
     for p in (job.get('parts') or []):
         c = money_to_float(p.get('cost'))
@@ -742,30 +749,24 @@ def job_parts_cost(job):
             total += c * (p.get('qty') or 1)
     return total
 
-def job_financials(job, rate=None):
-    """Quote vs actual for one job.
+def job_value_summary(job):
+    """What a job was worth against the effort it consumed.
 
-    Revenue is what was BILLED when we know it, otherwise what was QUOTED — an
-    unbilled job is still worth showing, just less certain. Cost is hours x labor
-    rate plus parts. Returns None when there's no revenue figure at all, since a
-    margin without a price is meaningless."""
-    if rate is None:
-        rate = float(get_setting('labor_rate', DEFAULT_LABOR_RATE) or DEFAULT_LABOR_RATE)
+    Deliberately contains NO labour cost and no hourly rates — pay is not recorded
+    anywhere in this app. Effort is expressed in man-hours, and 'revenue per
+    man-hour' is the comparable figure: it ranks jobs against each other without
+    anyone's wage being involved. Returns None when the job has no price at all."""
     quoted = money_to_float(job.get('quoteValue'))
     billed = money_to_float((job.get('invoice') or {}).get('amount'))
     revenue = billed if billed is not None else quoted
     if revenue is None:
         return None
-    hours = job_hours(job)
-    labor = hours * rate
+    hours = job_man_hours(job)
     parts = job_parts_cost(job)
-    cost = labor + parts
-    margin = revenue - cost
     return {
         'quoted': quoted, 'billed': billed, 'revenue': revenue,
-        'hours': hours, 'labor': labor, 'parts': parts, 'cost': cost,
-        'margin': margin,
-        'margin_pct': (margin / revenue * 100) if revenue else None,
+        'man_hours': hours, 'parts': parts,
+        'rev_per_hour': (revenue / hours) if hours else None,
         'variance': (billed - quoted) if (billed is not None and quoted is not None) else None,
     }
 
@@ -5336,7 +5337,7 @@ def browser_rows(table):
                 "Hours": round(hrs, 2),
                 "Parts": f"{staged}/{total}" if total else "",
                 "Quote": format_money(j.get('quoteValue')),
-                "Invoice": invoice_status(j) or "",
+                "Invoice Status": invoice_status(j) or "",
                 "_date": _bdate(j.get('date')), "_tech": tech['name'] if tech else '',
                 "_site": loc['name'] if loc else '', "_job_id": j['id'],
             })
@@ -5705,104 +5706,110 @@ def render_invoicing_view(user_email):
 
 def render_profitability():
     st.subheader("💰 Quote vs Actual")
-    st.caption("What a job earned against what it cost to deliver. Revenue is the "
-               "invoiced amount where one exists, otherwise the quote. Cost is hours "
-               "logged × your labor rate, plus recorded part costs.")
+    st.caption("What each job was worth against the effort it took. Effort is in "
+               "MAN-hours — a report's hours counted once per tech on site — so a "
+               "three-man day counts as three. No pay information is used or stored "
+               "anywhere in this app.")
 
-    rate_now = float(get_setting('labor_rate', DEFAULT_LABOR_RATE) or DEFAULT_LABOR_RATE)
-    rc1, rc2 = st.columns([1, 2])
-    with rc1:
-        with st.form("labor_rate_form"):
-            new_rate = st.number_input("Labor rate ($/hr)", min_value=0.0, step=5.0,
-                                       value=rate_now,
-                                       help="Your loaded cost per tech hour — wage plus "
-                                            "overhead, not what you bill.")
-            if st.form_submit_button("Save rate"):
-                set_setting('labor_rate', float(new_rate))
-                st.success(f"Labor rate set to ${new_rate:,.2f}/hr.")
-                st.rerun()
-    rc2.caption("Jobs with no quote and no invoice amount are skipped — a margin "
-                "without a price doesn't mean anything. Add quote values on the job "
-                "to bring more jobs into this view.")
-
-    scope = sub_nav(["Completed only", "All jobs"], "profit_scope")
+    scope = sub_nav(["Completed only", "Include in-progress"], "profit_scope")
+    include_open = scope == "Include in-progress"
     pool = [j for j in st.session_state.jobs
-            if scope == "All jobs" or j.get('status') == 'Completed']
+            if include_open or j.get('status') == 'Completed']
 
     rows, skipped = [], 0
     for j in pool:
-        fin = job_financials(j, rate=rate_now)
-        if not fin:
+        v = job_value_summary(j)
+        if not v:
             skipped += 1
             continue
         loc = get_location(j.get('locationId'))
+        done = j.get('status') == 'Completed'
         rows.append({
+            "Done": "✓" if done else "⚠ in progress",
             "Job": j.get('title', ''),
             "Site": loc['name'] if loc else '',
             "Type": j.get('type', ''),
-            "Quoted": fin['quoted'], "Billed": fin['billed'],
-            "Revenue": fin['revenue'], "Hours": round(fin['hours'], 2),
-            "Labor": round(fin['labor'], 2), "Parts": round(fin['parts'], 2),
-            "Margin": round(fin['margin'], 2),
-            "Margin %": round(fin['margin_pct'], 1) if fin['margin_pct'] is not None else None,
-            "Variance": fin['variance'],
+            "Source": "billed" if v['billed'] is not None else "quoted",
+            "Quoted": v['quoted'], "Billed": v['billed'], "Revenue": v['revenue'],
+            "Man-hours": round(v['man_hours'], 2),
+            "Parts $": round(v['parts'], 2),
+            "$ / man-hour": round(v['rev_per_hour'], 2) if v['rev_per_hour'] is not None else None,
+            "Variance": v['variance'],
+            "_done": done,
         })
 
     if not rows:
-        st.info("Nothing to report yet. Add a quote value (or an invoice amount) to a job "
-                + ("and complete it." if scope == "Completed only" else "."))
+        st.info("Nothing to report yet — no job has a quote value or an invoice amount"
+                + (" and is completed." if not include_open else ".")
+                + " Add a Quote Value on a job to bring it into this view.")
         return
 
     df = pd.DataFrame(rows)
-    rev, cost = df["Revenue"].sum(), (df["Labor"].sum() + df["Parts"].sum())
-    margin = rev - cost
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Revenue", f"${rev:,.0f}")
-    m2.metric("Cost", f"${cost:,.0f}")
-    m3.metric("Margin", f"${margin:,.0f}",
-              delta=f"{(margin / rev * 100):.0f}%" if rev else None)  # rev==0 -> no delta
-    m4.metric("Jobs", len(df), help=f"{skipped} skipped for having no price")
+    done_df = df[df["_done"]]
 
-    losers = df[df["Margin"] < 0]
-    if not losers.empty:
-        st.warning(f"⚠️ {len(losers)} job(s) came in under water — worst first below.")
+    # Headline figures use COMPLETED jobs only — an unfinished job hasn't logged
+    # all its hours, so its $/man-hour looks far better than it will finish.
+    if done_df.empty:
+        st.warning("No **completed** job has a price on it yet, so there's nothing "
+                   "reliable to summarise. The rows below are still in progress — "
+                   "their hours haven't all been logged.")
+    else:
+        rev = done_df["Revenue"].sum()
+        mh = done_df["Man-hours"].sum()
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Revenue", f"${rev:,.0f}")
+        m2.metric("Man-hours", f"{mh:,.1f}")
+        m3.metric("$ / man-hour", f"${rev / mh:,.0f}" if mh else "—",
+                  help="Revenue divided by effort. Compare jobs against each other — "
+                       "a low figure means the job ate more work than it returned.")
+        m4.metric("Completed jobs", len(done_df),
+                  help=f"{skipped} job(s) skipped for having no price")
+        st.caption("Totals cover completed jobs only.")
 
-    st.write("##### Per job — worst margin first")
-    st.dataframe(df.sort_values("Margin"), use_container_width=True, hide_index=True)
+    if include_open and (~df["_done"]).any():
+        st.warning(f"⚠️ {int((~df['_done']).sum())} row(s) below are still in progress — "
+                   "their hours aren't all logged, so their $/man-hour is flattering.")
 
-    def _margin_pct(frame):
-        """Margin % per group, blank rather than inf when a group billed nothing."""
-        return [round(m / r * 100, 1) if r else None
-                for m, r in zip(frame["Margin"], frame["Revenue"])]
+    st.write("##### Per job — lowest return per man-hour first")
+    st.dataframe(df.drop(columns=["_done"]).sort_values("$ / man-hour", na_position="last"),
+                 use_container_width=True, hide_index=True)
 
-    g1, g2 = st.columns(2)
-    with g1:
-        st.write("##### By job type")
-        by_type = df.groupby("Type", as_index=False).agg(
-            Jobs=("Job", "count"), Revenue=("Revenue", "sum"), Margin=("Margin", "sum"))
-        by_type["Margin %"] = _margin_pct(by_type)
-        st.dataframe(by_type.sort_values("Margin %"), use_container_width=True, hide_index=True)
-    with g2:
-        st.write("##### Worst sites by margin")
-        by_site = df.groupby("Site", as_index=False).agg(
-            Jobs=("Job", "count"), Revenue=("Revenue", "sum"), Margin=("Margin", "sum"))
-        by_site["Margin %"] = _margin_pct(by_site)
-        st.dataframe(by_site.sort_values("Margin").head(10),
-                     use_container_width=True, hide_index=True)
+    def _per_hour(frame):
+        """Revenue per man-hour, blank rather than dividing by zero."""
+        return [round(r / h, 2) if h else None
+                for r, h in zip(frame["Revenue"], frame["Man-hours"])]
 
-    _var = df[df["Variance"].notna()]
-    if not _var.empty:
-        st.write("##### Quote accuracy")
-        over = _var[_var["Variance"] > 0]
-        under = _var[_var["Variance"] < 0]
-        v1, v2, v3 = st.columns(3)
-        v1.metric("Billed over quote", len(over))
-        v2.metric("Billed under quote", len(under))
-        v3.metric("Average variance", f"${_var['Variance'].mean():,.0f}",
-                  help="Positive means you tend to bill more than you quote.")
+    if not done_df.empty:
+        g1, g2 = st.columns(2)
+        with g1:
+            st.write("##### By job type")
+            by_type = done_df.groupby("Type", as_index=False).agg(
+                Jobs=("Job", "count"), Revenue=("Revenue", "sum"),
+                **{"Man-hours": ("Man-hours", "sum")})
+            by_type["$ / man-hour"] = _per_hour(by_type)
+            st.dataframe(by_type.sort_values("$ / man-hour", na_position="last"),
+                         use_container_width=True, hide_index=True)
+        with g2:
+            st.write("##### Sites returning least per man-hour")
+            by_site = done_df.groupby("Site", as_index=False).agg(
+                Jobs=("Job", "count"), Revenue=("Revenue", "sum"),
+                **{"Man-hours": ("Man-hours", "sum")})
+            by_site["$ / man-hour"] = _per_hour(by_site)
+            st.dataframe(by_site.sort_values("$ / man-hour", na_position="last").head(10),
+                         use_container_width=True, hide_index=True)
 
-    st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode("utf-8"),
-                       file_name=f"profitability_{now_local().strftime('%Y%m%d')}.csv",
+        _var = done_df[done_df["Variance"].notna()]
+        if not _var.empty:
+            st.write("##### Quote accuracy")
+            v1, v2, v3 = st.columns(3)
+            v1.metric("Billed over quote", int((_var["Variance"] > 0).sum()))
+            v2.metric("Billed under quote", int((_var["Variance"] < 0).sum()))
+            v3.metric("Average variance", f"${_var['Variance'].mean():,.0f}",
+                      help="Positive means you tend to bill more than you quote.")
+
+    st.download_button("⬇️ Download CSV",
+                       df.drop(columns=["_done"]).to_csv(index=False).encode("utf-8"),
+                       file_name=f"job_value_{now_local().strftime('%Y%m%d')}.csv",
                        mime="text/csv", key="profit_csv")
 
 
