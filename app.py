@@ -13,7 +13,6 @@ import urllib.parse
 import requests
 import pandas as pd
 import calendar
-import numpy as np
 import threading
 import time
 from email.mime.text import MIMEText
@@ -154,12 +153,6 @@ st.markdown("""
        background-color: #000000;
        color: white;
        border-color: #27272a;
-   }
-
-   /* Time Input */
-   input[type="time"] {
-       background-color: #000000;
-       color: white;
    }
 
    /* Sidebar */
@@ -743,18 +736,6 @@ def set_job_invoice(job_id, **fields):
     save_state(invalidate_briefing=False)
     return True
 
-def invoice_chip_html(job, margin_top=6):
-    """Small colored invoice chip for job cards. Empty string when not applicable."""
-    status = invoice_status(job)
-    if not status:
-        return ""
-    color = INVOICE_STATUS_COLORS.get(status, "#52525b")
-    icon = INVOICE_STATUS_ICONS.get(status, "")
-    num = (job.get('invoice') or {}).get('number', '')
-    label = f"{icon} {status}" + (f" · #{num}" if num and status != "Ready to Invoice" else "")
-    return (f'<div style="margin-top:{margin_top}px;"><span style="background:{color};color:white;'
-            f'font-size:0.72em;padding:2px 9px;border-radius:10px;">{label}</span></div>')
-
 # --- TIME CLOCK ---
 def _fmt_duration(hours):
     """0h 0m formatting from a float hours value."""
@@ -1146,6 +1127,19 @@ class StepTimer:
         return line
 
 
+def get_config_val(key, default=None):
+    """SMTP/config lookup, in priority order: saved settings > secrets > env.
+    Was duplicated verbatim inside four different email functions."""
+    if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
+        return st.session_state.smtp_settings[key]
+    try:
+        if key in st.secrets:
+            return st.secrets[key]
+    except Exception:
+        pass
+    return os.getenv(key) or default
+
+
 def get_logger():
     return SystemLogger()
 
@@ -1531,7 +1525,11 @@ def save_image_locally(uploaded_file):
         timestamp = now_local().strftime("%Y%m%d_%H%M%S")
         base_name = file_name.rsplit('.', 1)[0] or 'photo'
         key = f"photos/{timestamp}_{base_name}.jpg"
-        return upload_bytes(buf.getvalue(), key, content_type="image/jpeg")
+        data = buf.getvalue()
+        stored = upload_bytes(data, key, content_type="image/jpeg")
+        # We already hold the exact bytes — hand them to the PDF builder for free
+        remember_photo_bytes(stored, data)
+        return stored
     except Exception:
         # Compression failed (corrupt/unsupported image) - upload the original instead
         try:
@@ -1853,6 +1851,33 @@ def download_data_as_json():
     return json.dumps(data, indent=2)
 
 # --- PDF GENERATION ---
+def remember_photo_bytes(key, data):
+    """Keep just-uploaded photo bytes in the session so the PDF builder doesn't
+    have to download them straight back out of R2. Photos used to go UP on upload
+    and immediately back DOWN to build the email attachment — paid for twice."""
+    if not key or not data:
+        return
+    cache = st.session_state.setdefault('_photo_bytes', {})
+    cache[key] = data
+    if len(cache) > 40:                      # bound a long session
+        for k in list(cache)[:-40]:
+            cache.pop(k, None)
+
+def photo_bytes_for_key(photo_key):
+    """Bytes for an R2 photo key: the in-session copy if we just uploaded it,
+    otherwise fetched. Keyed on the STABLE R2 key — get_image_bytes is cached on
+    the URL, and presigned URLs change every call, so that cache rarely hits."""
+    if not photo_key:
+        return None
+    cached = (st.session_state.get('_photo_bytes') or {}).get(photo_key)
+    if cached:
+        return cached
+    url = get_view_url(photo_key, expires_seconds=3600)
+    data = get_image_bytes(url) if url else None
+    if data:
+        remember_photo_bytes(photo_key, data)
+    return data
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_image_bytes(url):
     """Fetches image bytes from a URL and caches them."""
@@ -2048,8 +2073,7 @@ def generate_job_pdf(job, tech, location, report):
                 continue
             seen_keys.add(photo_key)
             try:
-                photo_url = get_view_url(photo_key, expires_seconds=3600)
-                img_bytes = get_image_bytes(photo_url)
+                img_bytes = photo_bytes_for_key(photo_key)
                 if not img_bytes:
                     continue
                 img = Image.open(BytesIO(img_bytes))
@@ -2397,12 +2421,6 @@ def build_ops_summary_email(jobs, techs, locations, today_str):
 def send_assignment_email(job, tech, location):
     """Sends an email notification via SMTP, returning True if successful."""
     # Helper to resolve config priority: Session > Secrets > Env
-    def get_config_val(key, default=None):
-        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
-            return st.session_state.smtp_settings[key]
-        if key in st.secrets:
-            return st.secrets[key]
-        return os.getenv(key) or default
 
     smtp_server = get_config_val("SMTP_SERVER")
     smtp_port = get_config_val("SMTP_PORT", 587)
@@ -2479,12 +2497,6 @@ def send_assignment_email(job, tech, location):
 def send_completion_email(job, tech, location, report_data, timer=None):
     """Sends an email notification to Admins when a job is completed, with PDF attachment."""
     # Helper to resolve config priority: Session > Secrets > Env
-    def get_config_val(key, default=None):
-        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
-            return st.session_state.smtp_settings[key]
-        if key in st.secrets:
-            return st.secrets[key]
-        return os.getenv(key) or default
 
     smtp_server = get_config_val("SMTP_SERVER")
     smtp_port = get_config_val("SMTP_PORT", 587)
@@ -2584,12 +2596,6 @@ def send_completion_email(job, tech, location, report_data, timer=None):
 def send_daily_report_email(job, tech, location, report_data):
     """Sends a Daily Report email to Admins with PDF attachment."""
     # Helper to resolve config priority: Session > Secrets > Env
-    def get_config_val(key, default=None):
-        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
-            return st.session_state.smtp_settings[key]
-        if key in st.secrets:
-            return st.secrets[key]
-        return os.getenv(key) or default
 
     smtp_server = get_config_val("SMTP_SERVER")
     smtp_port = get_config_val("SMTP_PORT", 587)
@@ -2691,12 +2697,6 @@ def send_ops_summary_email(recipients, subject_prefix=""):
     """Sends the company-wide ops summary to the given recipients immediately.
     Used by the admin 'send test' button - bypasses the Mon-Fri / once-a-day guards.
     Returns (sent_count, error_message_or_None)."""
-    def get_config_val(key, default=None):
-        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
-            return st.session_state.smtp_settings[key]
-        if key in st.secrets:
-            return st.secrets[key]
-        return os.getenv(key) or default
 
     smtp_server = get_config_val("SMTP_SERVER")
     smtp_port = get_config_val("SMTP_PORT", 587)
@@ -3386,12 +3386,14 @@ def render_completion_confirmation(job_index, report_payload):
         apply_job_status(st.session_state.jobs[job_index], "Completed", _actor)
         st.session_state.briefing = "Data required to generate briefing."
 
+        # Persist before emailing — a slow or failing SMTP server must never be
+        # the reason a completed job wasn't recorded.
+        save_state()
+        _t.mark("save")
+
         tech = get_tech(job["techId"])
         loc = get_location(job["locationId"])
         send_completion_email(job, tech, loc, report_payload, timer=_t)
-
-        save_state()
-        _t.mark("save")
         _t.finish(job=job.get('id'), photos=len(report_payload.get('photos') or []))
 
         if f"completion_pending_{job['id']}" in st.session_state:
@@ -4699,19 +4701,20 @@ Desc: {job['description']}"""
                         st.session_state[f"completion_pending_{job['id']}"] = report_payload
                         st.rerun(scope="fragment")
                     else:
-                        # Automatically send email to admins for in-progress daily reports
-                        with st.spinner("Sending Daily Report to Admins..."):
-                            send_daily_report_email(job, tech, loc, report_payload, timer=_t)
-
+                        # Persist FIRST, then email. The tech's work is safe the moment
+                        # they hit submit instead of riding on whether SMTP answers.
                         st.session_state.jobs[job_index]['reports'].append(report_payload)
-                        
+
                         # Update Status
                         if new_status != job['status']:
                             apply_job_status(st.session_state.jobs[job_index], new_status, _viewer_email)
                             st.session_state.briefing = "Data required to generate briefing."
-                        
+
                         save_state()
                         _t.mark("save")
+
+                        with st.spinner("Sending Daily Report to Admins..."):
+                            send_daily_report_email(job, tech, loc, report_payload, timer=_t)
                         _t.finish(job=job_id, photos=len(todays_photos),
                                   total_reports=len(st.session_state.jobs[job_index]['reports']))
                         st.success("Daily Report Submitted & Emailed to Admins!")
@@ -5624,9 +5627,9 @@ def render_analytics_dashboard():
     
     if st.button("🤖 Analyze Parts Usage"):
         with st.spinner("Analyzing all job reports..."):
-            # 1. Gather all "Parts Used" text (security jobs only)
+            # 1. Gather all "Parts Used" text
             all_parts_text = []
-            for j in _sec_jobs:
+            for j in st.session_state.jobs:
                 for r in j.get('reports', []):
                     if r.get('partsUsed'):
                         all_parts_text.append(f"- {r['partsUsed']}")
