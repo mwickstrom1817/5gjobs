@@ -300,6 +300,7 @@ def load_data():
             "adminEmails": [],
             "agreements": [],
             "sops": [],
+            "settings": {},
             "smtp_settings": {},
             "last_reminder_date": None
         }
@@ -313,6 +314,7 @@ def _sync_session_to_db():
     st.session_state.db["adminEmails"] = st.session_state.adminEmails
     st.session_state.db["agreements"] = st.session_state.get("agreements", [])
     st.session_state.db["sops"] = st.session_state.get("sops", [])
+    st.session_state.db["settings"] = st.session_state.get("settings", {})
     st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
@@ -328,6 +330,7 @@ def refresh_session_from_db():
     st.session_state.adminEmails = data.get("adminEmails", [])
     st.session_state.agreements = data.get("agreements", [])
     st.session_state.sops = data.get("sops", [])
+    st.session_state.settings = data.get("settings", {})
     st.session_state.smtp_settings = data.get("smtp_settings", {})
     st.session_state.last_reminder_date = data.get("last_reminder_date")
 
@@ -393,6 +396,7 @@ if "jobs" not in st.session_state:
     st.session_state.adminEmails = db_data.get("adminEmails", [])
     st.session_state.agreements = db_data.get("agreements", [])
     st.session_state.sops = db_data.get("sops", [])
+    st.session_state.settings = db_data.get("settings", {})
     st.session_state.smtp_settings = db_data.get("smtp_settings", {})
     st.session_state.last_reminder_date = db_data.get("last_reminder_date")
 
@@ -409,6 +413,12 @@ if "sops" not in st.session_state:
         st.session_state.sops = load_data().get("sops", [])
     except Exception:
         st.session_state.sops = []
+
+if "settings" not in st.session_state:
+    try:
+        st.session_state.settings = load_data().get("settings", {})
+    except Exception:
+        st.session_state.settings = {}
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
@@ -691,6 +701,73 @@ def build_asset_labels_pdf(pairs):
 
     c.save()
     return buf.getvalue()
+
+
+def get_setting(key, default=None):
+    return (st.session_state.get('settings') or {}).get(key, default)
+
+def set_setting(key, value):
+    st.session_state.setdefault('settings', {})[key] = value
+    save_state(invalidate_briefing=False)
+
+DEFAULT_LABOR_RATE = 95.0
+
+def money_to_float(v):
+    """'$1,450.00' / '1450' -> 1450.0. None for blanks or free text like 'TBD',
+    so callers can tell 'no number' apart from 'zero'."""
+    txt = str(v or "").replace("$", "").replace(",", "").strip()
+    if not txt:
+        return None
+    try:
+        return float(txt)
+    except ValueError:
+        return None
+
+def job_hours(job):
+    """Total hours logged across a job's reports."""
+    total = 0.0
+    for r in (job.get('reports') or []):
+        try:
+            total += float(r.get('hoursWorked') or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+def job_parts_cost(job):
+    """Summed cost of the parts recorded on a job (blank/free-text costs ignored)."""
+    total = 0.0
+    for p in (job.get('parts') or []):
+        c = money_to_float(p.get('cost'))
+        if c:
+            total += c * (p.get('qty') or 1)
+    return total
+
+def job_financials(job, rate=None):
+    """Quote vs actual for one job.
+
+    Revenue is what was BILLED when we know it, otherwise what was QUOTED — an
+    unbilled job is still worth showing, just less certain. Cost is hours x labor
+    rate plus parts. Returns None when there's no revenue figure at all, since a
+    margin without a price is meaningless."""
+    if rate is None:
+        rate = float(get_setting('labor_rate', DEFAULT_LABOR_RATE) or DEFAULT_LABOR_RATE)
+    quoted = money_to_float(job.get('quoteValue'))
+    billed = money_to_float((job.get('invoice') or {}).get('amount'))
+    revenue = billed if billed is not None else quoted
+    if revenue is None:
+        return None
+    hours = job_hours(job)
+    labor = hours * rate
+    parts = job_parts_cost(job)
+    cost = labor + parts
+    margin = revenue - cost
+    return {
+        'quoted': quoted, 'billed': billed, 'revenue': revenue,
+        'hours': hours, 'labor': labor, 'parts': parts, 'cost': cost,
+        'margin': margin,
+        'margin_pct': (margin / revenue * 100) if revenue else None,
+        'variance': (billed - quoted) if (billed is not None and quoted is not None) else None,
+    }
 
 
 def format_money(v):
@@ -1436,6 +1513,33 @@ def followup_jobs(jobs):
             out.append((j, fu[0], fu[1], fu[2]))
     return sorted(out, key=lambda x: -x[1])
 
+def last_daily_report(job):
+    """The most recent FULL daily report on a job, or None.
+
+    Quick-status pings ("📍 Arrived", photo-only updates) are skipped — a report
+    only counts if it carries structured data, which is the same test the photo
+    roll-up uses. Used to prefill the next day's report: on a multi-day install
+    the same crew arrives at the same time every day and shouldn't have to retype
+    it on a phone."""
+    fulls = [r for r in (job.get('reports') or [])
+             if r.get('hoursWorked') or r.get('techsOnSite')]
+    if not fulls:
+        return None
+    fulls.sort(key=lambda r: str(r.get('timestamp', '')), reverse=True)
+    return fulls[0]
+
+def _parse_report_time(value, fallback):
+    """'08:30:00' / '08:30' -> datetime.time, else the fallback."""
+    txt = str(value or "").strip()
+    if not txt:
+        return fallback
+    if len(txt) == 5:
+        txt += ":00"
+    try:
+        return datetime.datetime.strptime(txt, '%H:%M:%S').time()
+    except (ValueError, TypeError):
+        return fallback
+
 def compute_hours_rows(jobs, techs, locations, start_date, end_date):
     """Flattens logged hours from job reports into rows for the Hours Report / weekly digest.
     Pure function (no Streamlit) so the background scheduler thread can use it too.
@@ -1846,6 +1950,7 @@ def download_data_as_json():
         "adminEmails": st.session_state.adminEmails,
         "agreements": st.session_state.get("agreements", []),
         "sops": st.session_state.get("sops", []),
+        "settings": st.session_state.get("settings", {}),
         "last_reminder_date": st.session_state.get("last_reminder_date")
     }
     return json.dumps(data, indent=2)
@@ -4188,12 +4293,21 @@ Desc: {job['description']}"""
                 for b in _billables:
                     st.write(f"- {b}")
 
+        # Seed the amount from the quote when nothing has been billed yet — saves
+        # retyping a number the system already has, and the times she CHANGES it
+        # are exactly the quote-vs-actual variance worth knowing about.
+        _quote_raw = str(job.get('quoteValue', '') or '').strip()
+        _amount_seed = inv['amount'] or _quote_raw
+        _from_quote = bool(_quote_raw) and not inv['amount']
+
         with st.form(key=f"invoice_form_{job_id}"):
             i_status = st.selectbox("Invoice Status", INVOICE_STATUSES,
                                     index=INVOICE_STATUSES.index(_cur) if _cur in INVOICE_STATUSES else 0)
             ic1, ic2 = st.columns(2)
             i_number = ic1.text_input("Invoice #", value=inv['number'])
-            i_amount = ic2.text_input("Amount", value=inv['amount'], placeholder="e.g. 1450.00")
+            i_amount = ic2.text_input("Amount", value=_amount_seed, placeholder="e.g. 1450.00")
+            if _from_quote:
+                ic2.caption(f"Prefilled from the quote ({format_money(_quote_raw)}) — edit if you billed something else.")
             # Plain text, not st.date_input — date pickers hit the same unclickable
             # popover problem inside dialogs on mobile. Auto-stamped on save.
             i_date = st.text_input("Invoice Date", value=inv['date'], placeholder="YYYY-MM-DD")
@@ -4559,11 +4673,19 @@ Desc: {job['description']}"""
                 if daily_transcribed:
                     st.success("Audio Transcribed!")
 
-        # Prefill arrival/finish times from today's quick-status taps ("📍 Arrived" / "✅ Done for Day")
+        # Prefill, in increasing order of authority:
+        #   1. plain defaults  2. the job's last daily report  3. today's quick-status taps
         today_prefix = now_local().strftime('%Y-%m-%d')
         default_arrived = datetime.time(8, 0)
         default_departed = datetime.time(17, 0)
         times_prefilled = False
+
+        _prev = last_daily_report(job)
+        _prev_used = False
+        if _prev:
+            default_arrived = _parse_report_time(_prev.get('timeArrived'), default_arrived)
+            default_departed = _parse_report_time(_prev.get('timeDeparted'), default_departed)
+            _prev_used = bool(_prev.get('timeArrived') or _prev.get('timeDeparted'))
         for qr in job['reports']:
             if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[📍 Arrived]'):
                 try:
@@ -4583,6 +4705,9 @@ Desc: {job['description']}"""
 
         if times_prefilled:
             st.caption("⏱️ Times below were prefilled from your quick-status taps today — adjust if needed.")
+        elif _prev_used:
+            st.caption(f"↩️ Prefilled from the last report on this job "
+                       f"({str(_prev.get('timestamp', ''))[:10]}) — adjust anything that changed.")
 
         # Prefill Hours Worked from the viewer's time clock (today), rounded to 1/4 hr
         _viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
@@ -4608,9 +4733,16 @@ Desc: {job['description']}"""
 
             r_col1, r_col2 = st.columns(2)
             with r_col1:
-                # Techs on Site: Multiselect
+                # Techs on Site: prefer whoever was on site last time (same crew
+                # usually returns), falling back to the assigned tech.
                 available_techs = [t['name'] for t in st.session_state.techs]
                 default_techs = [tech['name']] if tech and tech['name'] in available_techs else []
+                if _prev and _prev.get('techsOnSite'):
+                    _prev_crew = [n.strip() for n in str(_prev['techsOnSite']).split(',') if n.strip()]
+                    # Drop anyone who has since left, so the multiselect can't error
+                    _prev_crew = [n for n in _prev_crew if n in available_techs]
+                    if _prev_crew:
+                        default_techs = _prev_crew
                 
                 techs_on_site_list = st.multiselect("Techs On Site", options=available_techs, default=default_techs)
                 time_arrived = time_select("Time Arrived", default_arrived, key=f"daily_arr_sel_{job_id}")
@@ -5539,7 +5671,9 @@ def render_invoicing_view(user_email):
                 str(j.get('date', ''))[:10],
                 f"{hrs:g} hrs" if hrs else "",
                 f"#{inv['number']}" if inv['number'] else "",
-                f"${inv['amount']}" if inv['amount'] else "",
+                # Billed amount once known, otherwise what we quoted
+                (f"billed {format_money(inv['amount'])}" if inv['amount']
+                 else (f"quoted {format_money(j.get('quoteValue'))}" if j.get('quoteValue') else "")),
             ] if x)
             st.markdown(
                 f"**{j['title']}**<br><span style='color:#71717a;font-size:0.82em;'>{meta}</span>",
@@ -5567,6 +5701,109 @@ def render_invoicing_view(user_email):
             if st.button("Open", key=f"inv_open_{j['id']}", use_container_width=True):
                 job_details_dialog(j['id'])
         st.divider()
+
+
+def render_profitability():
+    st.subheader("💰 Quote vs Actual")
+    st.caption("What a job earned against what it cost to deliver. Revenue is the "
+               "invoiced amount where one exists, otherwise the quote. Cost is hours "
+               "logged × your labor rate, plus recorded part costs.")
+
+    rate_now = float(get_setting('labor_rate', DEFAULT_LABOR_RATE) or DEFAULT_LABOR_RATE)
+    rc1, rc2 = st.columns([1, 2])
+    with rc1:
+        with st.form("labor_rate_form"):
+            new_rate = st.number_input("Labor rate ($/hr)", min_value=0.0, step=5.0,
+                                       value=rate_now,
+                                       help="Your loaded cost per tech hour — wage plus "
+                                            "overhead, not what you bill.")
+            if st.form_submit_button("Save rate"):
+                set_setting('labor_rate', float(new_rate))
+                st.success(f"Labor rate set to ${new_rate:,.2f}/hr.")
+                st.rerun()
+    rc2.caption("Jobs with no quote and no invoice amount are skipped — a margin "
+                "without a price doesn't mean anything. Add quote values on the job "
+                "to bring more jobs into this view.")
+
+    scope = sub_nav(["Completed only", "All jobs"], "profit_scope")
+    pool = [j for j in st.session_state.jobs
+            if scope == "All jobs" or j.get('status') == 'Completed']
+
+    rows, skipped = [], 0
+    for j in pool:
+        fin = job_financials(j, rate=rate_now)
+        if not fin:
+            skipped += 1
+            continue
+        loc = get_location(j.get('locationId'))
+        rows.append({
+            "Job": j.get('title', ''),
+            "Site": loc['name'] if loc else '',
+            "Type": j.get('type', ''),
+            "Quoted": fin['quoted'], "Billed": fin['billed'],
+            "Revenue": fin['revenue'], "Hours": round(fin['hours'], 2),
+            "Labor": round(fin['labor'], 2), "Parts": round(fin['parts'], 2),
+            "Margin": round(fin['margin'], 2),
+            "Margin %": round(fin['margin_pct'], 1) if fin['margin_pct'] is not None else None,
+            "Variance": fin['variance'],
+        })
+
+    if not rows:
+        st.info("Nothing to report yet. Add a quote value (or an invoice amount) to a job "
+                + ("and complete it." if scope == "Completed only" else "."))
+        return
+
+    df = pd.DataFrame(rows)
+    rev, cost = df["Revenue"].sum(), (df["Labor"].sum() + df["Parts"].sum())
+    margin = rev - cost
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Revenue", f"${rev:,.0f}")
+    m2.metric("Cost", f"${cost:,.0f}")
+    m3.metric("Margin", f"${margin:,.0f}",
+              delta=f"{(margin / rev * 100):.0f}%" if rev else None)  # rev==0 -> no delta
+    m4.metric("Jobs", len(df), help=f"{skipped} skipped for having no price")
+
+    losers = df[df["Margin"] < 0]
+    if not losers.empty:
+        st.warning(f"⚠️ {len(losers)} job(s) came in under water — worst first below.")
+
+    st.write("##### Per job — worst margin first")
+    st.dataframe(df.sort_values("Margin"), use_container_width=True, hide_index=True)
+
+    def _margin_pct(frame):
+        """Margin % per group, blank rather than inf when a group billed nothing."""
+        return [round(m / r * 100, 1) if r else None
+                for m, r in zip(frame["Margin"], frame["Revenue"])]
+
+    g1, g2 = st.columns(2)
+    with g1:
+        st.write("##### By job type")
+        by_type = df.groupby("Type", as_index=False).agg(
+            Jobs=("Job", "count"), Revenue=("Revenue", "sum"), Margin=("Margin", "sum"))
+        by_type["Margin %"] = _margin_pct(by_type)
+        st.dataframe(by_type.sort_values("Margin %"), use_container_width=True, hide_index=True)
+    with g2:
+        st.write("##### Worst sites by margin")
+        by_site = df.groupby("Site", as_index=False).agg(
+            Jobs=("Job", "count"), Revenue=("Revenue", "sum"), Margin=("Margin", "sum"))
+        by_site["Margin %"] = _margin_pct(by_site)
+        st.dataframe(by_site.sort_values("Margin").head(10),
+                     use_container_width=True, hide_index=True)
+
+    _var = df[df["Variance"].notna()]
+    if not _var.empty:
+        st.write("##### Quote accuracy")
+        over = _var[_var["Variance"] > 0]
+        under = _var[_var["Variance"] < 0]
+        v1, v2, v3 = st.columns(3)
+        v1.metric("Billed over quote", len(over))
+        v2.metric("Billed under quote", len(under))
+        v3.metric("Average variance", f"${_var['Variance'].mean():,.0f}",
+                  help="Positive means you tend to bill more than you quote.")
+
+    st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode("utf-8"),
+                       file_name=f"profitability_{now_local().strftime('%Y%m%d')}.csv",
+                       mime="text/csv", key="profit_csv")
 
 
 def render_analytics_dashboard():
@@ -6098,6 +6335,7 @@ def _admin_data():
             st.session_state.adminEmails = state["adminEmails"]
             st.session_state.agreements = state.get("agreements", [])
             st.session_state.sops = state.get("sops", [])
+            st.session_state.settings = state.get("settings", {})
             st.session_state.last_reminder_date = state.get("last_reminder_date")
             st.toast("Reloaded from DB.", icon="🔄")
             st.rerun()
@@ -6146,6 +6384,7 @@ def _admin_data():
                         st.session_state.adminEmails = data.get("adminEmails", [])
                         st.session_state.agreements = data.get("agreements", [])
                         st.session_state.sops = data.get("sops", [])
+                        st.session_state.settings = data.get("settings", {})
                         st.session_state.last_reminder_date = data.get("last_reminder_date")
                         ensure_loaded_into_session()
                         _sync_session_to_db()
@@ -6339,6 +6578,7 @@ def render_admin_panel():
         ("techs", "👷", "Technicians", _admin_techs),
         ("locations", "📍", "Locations", _admin_locations),
         ("agreements", "📄", "Service Agreements", render_service_agreements),
+        ("profit", "💰", "Quote vs Actual", render_profitability),
         ("hours", "🕒", "Hours Report", render_hours_report),
         ("browser", "🗂️", "Data Browser", render_data_browser),
         ("analytics", "📊", "Analytics", render_analytics_dashboard),
