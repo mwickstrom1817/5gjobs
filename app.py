@@ -618,6 +618,14 @@ def asset_scan_url(tag):
     to the asset — which is why no in-app QR scanner (and no fragile system
     library) is needed. Falls back to the bare tag if APP_URL isn't configured."""
     base = (os.getenv("APP_URL", "") or "").rstrip("/")
+    if not base:
+        # Streamlit Cloud secrets don't always surface as environment variables,
+        # so check there too (same fallback the keep-awake pinger uses).
+        try:
+            if "APP_URL" in st.secrets:
+                base = str(st.secrets["APP_URL"]).rstrip("/")
+        except Exception:
+            pass
     return f"{base}/?asset={tag}" if base else str(tag)
 
 def build_asset_labels_pdf(pairs):
@@ -1094,6 +1102,49 @@ class SystemLogger:
     def get_logs(self):
         with self.lock:
             return list(self.logs)
+
+class StepTimer:
+    """Times each stage of a slow operation so we can see where the seconds go
+    instead of guessing. Passed explicitly rather than kept in a global, because
+    Streamlit runs each session in its own thread and a global would collide
+    between concurrent users.
+
+    Usage:
+        t = StepTimer("daily submit")
+        ...work...
+        t.mark("photos")
+        ...work...
+        t.mark("email")
+        t.finish(photos=3)
+    """
+    def __init__(self, label):
+        self.label = label
+        self._t0 = time.perf_counter()
+        self._last = self._t0
+        self.steps = []
+
+    def mark(self, name):
+        now = time.perf_counter()
+        self.steps.append((name, now - self._last))
+        self._last = now
+
+    def total(self):
+        return time.perf_counter() - self._t0
+
+    def summary(self, **context):
+        parts = " | ".join(f"{n} {d:.2f}s" for n, d in self.steps)
+        ctx = " ".join(f"{k}={v}" for k, v in context.items() if v not in (None, ""))
+        return f"⏱️ {self.label}: TOTAL {self.total():.2f}s = {parts}" + (f"  [{ctx}]" if ctx else "")
+
+    def finish(self, **context):
+        """Write the breakdown to the system log (Admin → Diagnostics → Event Logs)."""
+        line = self.summary(**context)
+        try:
+            get_logger().log(line)
+        except Exception:
+            pass
+        return line
+
 
 def get_logger():
     return SystemLogger()
@@ -2425,7 +2476,7 @@ def send_assignment_email(job, tech, location):
         st.error(f"Failed to send email: {str(e)}")
         return False
 
-def send_completion_email(job, tech, location, report_data):
+def send_completion_email(job, tech, location, report_data, timer=None):
     """Sends an email notification to Admins when a job is completed, with PDF attachment."""
     # Helper to resolve config priority: Session > Secrets > Env
     def get_config_val(key, default=None):
@@ -2456,6 +2507,7 @@ def send_completion_email(job, tech, location, report_data):
     except Exception as e:
         st.error(f"Failed to generate PDF report: {e}")
         pdf_bytes = None
+    if timer: timer.mark(f"pdf({round(len(pdf_bytes)/1024) if pdf_bytes else 0}KB)")
 
     # Prepare email content
     subject = f"✅ Job Completed: {job['title']}"
@@ -2524,6 +2576,7 @@ def send_completion_email(job, tech, location, report_data):
             server.send_message(msg)
             
         server.quit()
+        if timer: timer.mark("smtp")
         st.toast("📧 Completion notification sent to Admins", icon="✅")
     except Exception as e:
         st.error(f"Failed to send completion email: {str(e)}")
@@ -2559,6 +2612,7 @@ def send_daily_report_email(job, tech, location, report_data):
     except Exception as e:
         st.error(f"Failed to generate PDF report: {e}")
         pdf_bytes = None
+    if timer: timer.mark(f"pdf({round(len(pdf_bytes)/1024) if pdf_bytes else 0}KB)")
 
     # Prepare email content
     subject = f"📝 Daily Report: {job['title']}"
@@ -2628,6 +2682,7 @@ def send_daily_report_email(job, tech, location, report_data):
             server.send_message(msg)
             
         server.quit()
+        if timer: timer.mark("smtp")
         st.toast("📧 Daily Report sent to Admins", icon="✅")
     except Exception as e:
         st.error(f"Failed to send daily report email: {str(e)}")
@@ -3318,11 +3373,13 @@ def render_completion_confirmation(job_index, report_payload):
         if final_note:
             report_payload["content"] += f"\n\n[Closing Note]: {final_note}"
 
+        _t = StepTimer("job completion")
         if report_payload.get("content"):
             with st.spinner("Generating AI Summary..."):
                 summary = generate_technician_summary(report_payload["content"], job["title"])
                 if summary:
                     report_payload["ai_summary"] = summary
+        _t.mark("gemini")
 
         st.session_state.jobs[job_index]["reports"].append(report_payload)
         _actor = st.session_state.user_info.get('email') if "user_info" in st.session_state else None
@@ -3331,9 +3388,11 @@ def render_completion_confirmation(job_index, report_payload):
 
         tech = get_tech(job["techId"])
         loc = get_location(job["locationId"])
-        send_completion_email(job, tech, loc, report_payload)
+        send_completion_email(job, tech, loc, report_payload, timer=_t)
 
         save_state()
+        _t.mark("save")
+        _t.finish(job=job.get('id'), photos=len(report_payload.get('photos') or []))
 
         if f"completion_pending_{job['id']}" in st.session_state:
             del st.session_state[f"completion_pending_{job['id']}"]
@@ -4589,17 +4648,20 @@ Desc: {job['description']}"""
             email_btn = f_c2.form_submit_button("📧 Email Report to Admins")
 
             if submit_btn or email_btn:
+                _t = StepTimer("daily submit")
                 # Wrapping up the day — clock the viewer out if they're still running
                 _open = open_time_entry(job.get('time_entries', []), _viewer_email)
                 if _open:
                     _open['clock_out'] = now_local().isoformat()
 
                 # Process any new photos uploaded directly in this form
+                _new_photo_count = len(daily_photos or [])
                 if daily_photos:
                     for up_file in daily_photos:
                         path = save_image_locally(up_file)
                         if path:
                             todays_photos.append(path)
+                _t.mark(f"upload({_new_photo_count})")
 
                 # Auto-calculate hours from arrival/finish times when left at 0
                 if not hours_worked:
@@ -4639,8 +4701,8 @@ Desc: {job['description']}"""
                     else:
                         # Automatically send email to admins for in-progress daily reports
                         with st.spinner("Sending Daily Report to Admins..."):
-                            send_daily_report_email(job, tech, loc, report_payload)
-                            
+                            send_daily_report_email(job, tech, loc, report_payload, timer=_t)
+
                         st.session_state.jobs[job_index]['reports'].append(report_payload)
                         
                         # Update Status
@@ -4649,6 +4711,9 @@ Desc: {job['description']}"""
                             st.session_state.briefing = "Data required to generate briefing."
                         
                         save_state()
+                        _t.mark("save")
+                        _t.finish(job=job_id, photos=len(todays_photos),
+                                  total_reports=len(st.session_state.jobs[job_index]['reports']))
                         st.success("Daily Report Submitted & Emailed to Admins!")
                         st.rerun(scope="fragment")
 
@@ -6125,6 +6190,36 @@ def _admin_diagnostics():
                         st.warning(f"💡 **Tip:** The bucket `{bucket}` does not exist or is not accessible with these credentials.")
                     elif "EndpointConnectionError" in str(e):
                         st.warning("💡 **Tip:** Could not connect to the endpoint URL. Check for typos.")
+
+    st.divider()
+    st.subheader("⏱️ Submit Timings")
+    st.caption("Where the seconds actually go when a tech hits submit. Each line breaks "
+               "one submit into its stages, so you can see what to fix instead of guessing.")
+    with st.expander("View timings", expanded=True):
+        _timings = [l for l in get_logger().get_logs() if "⏱️" in l]
+        if not _timings:
+            st.info("No submits recorded yet. File a daily report and it'll show up here.")
+        else:
+            for _line in _timings:
+                st.code(_line, language="text")
+            # Rough averages per stage across whatever is still in the log buffer
+            import re as _re
+            _agg, _totals = {}, []
+            for _line in _timings:
+                _m = _re.search(r"TOTAL ([\d.]+)s", _line)
+                if _m:
+                    _totals.append(float(_m.group(1)))
+                for _name, _secs in _re.findall(r"([a-z]+)(?:\([^)]*\))? ([\d.]+)s", _line):
+                    _agg.setdefault(_name, []).append(float(_secs))
+            if _totals:
+                st.metric("Average total", f"{sum(_totals)/len(_totals):.2f}s",
+                          help=f"across {len(_totals)} recorded submit(s)")
+                _rows = [{"Stage": k, "Avg (s)": round(sum(v)/len(v), 2),
+                          "Worst (s)": round(max(v), 2), "Samples": len(v)}
+                         for k, v in _agg.items() if k != "total"]
+                if _rows:
+                    _rows.sort(key=lambda r: -r["Avg (s)"])
+                    st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("📋 System Event Logs")
