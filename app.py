@@ -6585,7 +6585,10 @@ def render_admin_panel():
         ("techs", "👷", "Technicians", _admin_techs),
         ("locations", "📍", "Locations", _admin_locations),
         ("agreements", "📄", "Service Agreements", render_service_agreements),
-        ("profit", "💰", "Quote vs Actual", render_profitability),
+        # SHELVED Aug 2026 pending a conversation with the boss + office manager.
+        # The feature is complete and untouched — uncomment this single line to
+        # bring the tile back. render_profitability() is still defined below.
+        # ("profit", "💰", "Quote vs Actual", render_profitability),
         ("hours", "🕒", "Hours Report", render_hours_report),
         ("browser", "🗂️", "Data Browser", render_data_browser),
         ("analytics", "📊", "Analytics", render_analytics_dashboard),
