@@ -2699,8 +2699,9 @@ def send_completion_email(job, tech, location, report_data, timer=None):
     except Exception as e:
         st.error(f"Failed to send completion email: {str(e)}")
 
-def send_daily_report_email(job, tech, location, report_data):
-    """Sends a Daily Report email to Admins with PDF attachment."""
+def send_daily_report_email(job, tech, location, report_data, timer=None):
+    """Sends a Daily Report email to Admins with PDF attachment.
+    `timer` is an optional StepTimer so the caller can see the PDF vs SMTP split."""
     # Helper to resolve config priority: Session > Secrets > Env
 
     smtp_server = get_config_val("SMTP_SERVER")
