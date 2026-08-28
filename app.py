@@ -31,7 +31,15 @@ from persistence_pg import (
 from object_store import upload_streamlit_file, upload_bytes, get_view_url
 
 import io
+import html as _html
 from reportlab.lib.utils import ImageReader
+
+def esc_html(v):
+    """Escape a value for embedding in the raw HTML blocks we build for cards,
+    tiles and the calendar. Job titles, site names and the quote field are all
+    free text typed by users — an unescaped '&' or '<' breaks the markup, and
+    worse can inject script into every other user's view."""
+    return _html.escape(str(v if v is not None else ""), quote=True)
 
 # Try importing ReportLab for PDF generation
 try:
@@ -3206,6 +3214,22 @@ def edit_job_dialog(job_id):
     
     job = st.session_state.jobs[job_index]
 
+    # Documents are managed OUTSIDE the form: Streamlit raises
+    # "st.button() can't be used in an st.form()", so a job with documents used to
+    # crash this dialog outright.
+    existing_docs = job.get('documents', [])
+    if existing_docs:
+        st.write("###### 📄 Job Documents")
+        for i, d in enumerate(existing_docs):
+            c_d1, c_d2 = st.columns([4, 1])
+            c_d1.write(f"📎 {d['name']}")
+            if c_d2.button(":material/delete:", key=f"del_doc_{job_id}_{i}"):
+                existing_docs.pop(i)
+                st.session_state.jobs[job_index]['documents'] = existing_docs
+                save_state(invalidate_briefing=False)
+                st.toast(f"Removed {d['name']}", icon="🗑️")
+                st.rerun()
+
     with st.form(key=f"edit_job_form_{job_id}"):
         title = st.text_input("Job Title", value=job['title'])
         desc = st.text_area("Description", value=job['description'])
@@ -3305,20 +3329,9 @@ def edit_job_dialog(job_id):
         
         contact3_name = st.text_input("Additional Contact / Notes", value=c3_note)
 
-        # Document Upload
+        # Only the uploader lives in the form — st.button is not allowed inside
+        # st.form, so the delete controls sit above it (see the block before the form).
         st.write("---")
-        st.write("###### 📄 Job Documents")
-        existing_docs = job.get('documents', [])
-        if existing_docs:
-            for i, d in enumerate(existing_docs):
-                c_d1, c_d2 = st.columns([4, 1])
-                c_d1.write(f"📎 {d['name']}")
-                if c_d2.button(":material/delete:", key=f"del_doc_{job_id}_{i}"):
-                    existing_docs.pop(i)
-                    st.session_state.jobs[job_index]['documents'] = existing_docs
-                    save_state(invalidate_briefing=False)
-                    st.rerun()
-        
         uploaded_docs = st.file_uploader("Attach More Documents", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'], key=f"edit_docs_{job_id}")
 
         if st.form_submit_button("Update Job"):
@@ -3399,7 +3412,7 @@ def edit_location_dialog(loc_id):
                 st.session_state.locations[loc_index]['contact_phone'] = l_contact_phone
                 
                 save_state(invalidate_briefing=False)
-                st.success("Location updated!")
+                st.toast("Location updated!", icon="✅")
                 st.rerun()
             else:
                 st.error("Name and Address required.")
@@ -3506,7 +3519,7 @@ def render_completion_confirmation(job_index, report_payload):
         if f"completion_pending_{job['id']}" in st.session_state:
             del st.session_state[f"completion_pending_{job['id']}"]
 
-        st.success("Job Completed & Closed!")
+        st.toast("Job Completed & Closed!", icon="✅")
         st.rerun()
 
     if c_cancel.button("❌ Cancel & Discard Report"):
@@ -3597,7 +3610,7 @@ def render_edit_report_view(job_id, report_id):
             save_state(invalidate_briefing=False)
             if f"editing_report_{job_id}" in st.session_state:
                 del st.session_state[f"editing_report_{job_id}"]
-            st.success("Report updated!")
+            st.toast("Report updated!", icon="✅")
             st.rerun(scope="fragment")
 
     if st.button("Cancel Edit"):
@@ -3854,7 +3867,7 @@ Desc: {job['description']}"""
                             else:
                                 job.setdefault('documents', []).extend(new_keys)
                             save_state(invalidate_briefing=False)
-                            st.success(f"Uploaded {len(new_keys)} document(s)!")
+                            st.toast(f"Uploaded {len(new_keys)} document(s)!", icon="✅")
                             st.rerun(scope="fragment")
                 else:
                     st.warning("Please select files first.")
@@ -3990,7 +4003,7 @@ Desc: {job['description']}"""
                             'updated_at': now_local().isoformat(),
                         })
                         save_state(invalidate_briefing=False)
-                        st.success(f"Added {new_name.strip()}.")
+                        st.toast(f"Added {new_name.strip()}.", icon="✅")
                         st.rerun(scope="fragment")
 
         if not parts:
@@ -4097,7 +4110,7 @@ Desc: {job['description']}"""
                                 'updated_at': now_local().isoformat()
                             })
                             save_state(invalidate_briefing=False)
-                            st.success(f"'{sys_name}' saved!")
+                            st.toast(f"'{sys_name}' saved!", icon="✅")
                             st.rerun(scope="fragment")
 
             if not systems:
@@ -4148,7 +4161,7 @@ Desc: {job['description']}"""
                                     'updated_at': now_local().isoformat()
                                 })
                                 save_state(invalidate_briefing=False)
-                                st.success("System updated!")
+                                st.toast("System updated!", icon="✅")
                                 st.rerun(scope="fragment")
 
                             if ec2.form_submit_button("🗑️ Delete System"):
@@ -4206,7 +4219,7 @@ Desc: {job['description']}"""
                             made.append(tag)
                         save_state(invalidate_briefing=False)
                         get_logger().log(f"{_viewer_email} registered {len(made)} asset(s) at {loc['id']}: {', '.join(made)}")
-                        st.success(f"Registered {', '.join(made)}. Print labels below.")
+                        st.toast(f"Registered {', '.join(made)}. Print labels below.", icon="✅")
                         st.rerun(scope="fragment")
 
             site_assets = loc.get('assets') or []
@@ -4320,7 +4333,7 @@ Desc: {job['description']}"""
                 set_job_invoice(job_id, status=i_status, number=i_number,
                                 amount=i_amount, date=i_date, notes=i_notes)
                 get_logger().log(f"{_viewer_email} set invoice status '{i_status}' on job {job_id}")
-                st.success("Invoicing updated.")
+                st.toast("Invoicing updated.", icon="✅")
                 st.rerun(scope="fragment")
 
     if section == "history":
@@ -4618,7 +4631,7 @@ Desc: {job['description']}"""
                         st.session_state.briefing = "Data required to generate briefing."
                     
                     save_state()
-                    st.success("Update Posted!")
+                    st.toast("Update Posted!", icon="✅")
                     st.rerun(scope="fragment")
                 else:
                     st.warning("Please add a note or photo.")
@@ -4651,7 +4664,7 @@ Desc: {job['description']}"""
                 save_state()
                 
                 del st.session_state[confirm_key]
-                st.success("Report Sent & Saved!")
+                st.toast("Report Sent & Saved!", icon="✅")
                 st.rerun(scope="fragment")
                 
             if c_no.button("❌ Cancel", key="conf_no"):
@@ -4851,7 +4864,7 @@ Desc: {job['description']}"""
                             send_daily_report_email(job, tech, loc, report_payload, timer=_t)
                         _t.finish(job=job_id, photos=len(todays_photos),
                                   total_reports=len(st.session_state.jobs[job_index]['reports']))
-                        st.success("Daily Report Submitted & Emailed to Admins!")
+                        st.toast("Daily Report Submitted & Emailed to Admins!", icon="✅")
                         st.rerun(scope="fragment")
 
     # --- DEFERRED WEATHER ---
@@ -4893,11 +4906,12 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     status_bg = get_status_color(job['status'])
     
     map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
-    loc_html = f'<a href="{map_url}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {loc_name}</a>' if map_url else f"📍 {loc_name}"
+    loc_html = (f'<a href="{esc_html(map_url)}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {esc_html(loc_name)}</a>'
+                if map_url else f"📍 {esc_html(loc_name)}")
 
     # Quote value, if one has been entered (small, right of the site name)
     _qv = format_money(job.get('quoteValue'))
-    quote_html = (f'<span style="color:#a1a1aa; font-size:0.8em; white-space:nowrap;">{_qv}</span>'
+    quote_html = (f'<span style="color:#a1a1aa; font-size:0.8em; white-space:nowrap;">{esc_html(_qv)}</span>'
                   if _qv else "")
 
     # One signal row instead of a stack of alert lines. Each feature used to add
@@ -4940,16 +4954,16 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         st.markdown(f"""
         <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
             <div style="position:absolute; top:0; right:0; padding:2px 8px; background:{status_bg}; color:white; font-size:0.65em; font-weight:bold; border-bottom-left-radius:8px;">
-                {job['status'].upper()}
+                {esc_html(job['status']).upper()}
             </div>
             <div style="display:flex; justify-content:space-between; margin-top:10px;">
-                <span style="font-weight:bold; font-size:1.1em; max-width:70%;">{job['title']}</span>
-                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{job['priority']}</span>
+                <span style="font-weight:bold; font-size:1.1em; max-width:70%;">{esc_html(job['title'])}</span>
+                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{esc_html(job['priority'])}</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em;">{loc_html}</span>{quote_html}</div>
             <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
-                 <span>👤 {tech_name}</span>
-                 <span>📅 {job['date'][:10]}</span>
+                 <span>👤 {esc_html(tech_name)}</span>
+                 <span>📅 {esc_html(str(job.get('date', ''))[:10])}</span>
             </div>{signal_html}
         </div>
         """, unsafe_allow_html=True)
@@ -5208,7 +5222,7 @@ def render_sops_view(is_admin):
                 })
                 st.session_state.sops.append(vals)
                 save_state(invalidate_briefing=False)
-                st.success(f"Added '{vals['title']}'")
+                st.toast(f"Added '{vals['title']}'", icon="✅")
                 st.rerun()
             _sop_form({}, "new_sop", _create, "Add Procedure")
 
@@ -5291,7 +5305,7 @@ def render_sops_view(is_admin):
                                 break
                         save_state(invalidate_briefing=False)
                         st.session_state[_ek] = False
-                        st.success("Procedure updated.")
+                        st.toast("Procedure updated.", icon="✅")
                         st.rerun()
                     _sop_form(s, f"edit_sop_{s['id']}", _update, "Save Changes")
 
@@ -5678,7 +5692,7 @@ def render_invoicing_view(user_email):
                  else (f"quoted {format_money(j.get('quoteValue'))}" if j.get('quoteValue') else "")),
             ] if x)
             st.markdown(
-                f"**{j['title']}**<br><span style='color:#71717a;font-size:0.82em;'>{meta}</span>",
+                f"**{esc_html(j['title'])}**<br><span style='color:#71717a;font-size:0.82em;'>{esc_html(meta)}</span>",
                 unsafe_allow_html=True)
         with c2:
             st.markdown(
@@ -6041,7 +6055,7 @@ def render_service_agreements():
                             'status': 'Active',
                         })
                         save_state(invalidate_briefing=False)
-                        st.success(f"Added '{a_title.strip()}'")
+                        st.toast(f"Added '{a_title.strip()}'", icon="✅")
                         st.rerun()
 
     if not agreements:
@@ -6110,7 +6124,7 @@ def render_service_agreements():
                                   'renewal_date': str(e_renew), 'value': e_value,
                                   'billing': e_billing, 'auto_renew': e_auto, 'notes': e_notes})
                         save_state(invalidate_briefing=False)
-                        st.success("Updated.")
+                        st.toast("Updated.", icon="✅")
                         st.rerun()
                     if bc2.form_submit_button("🗑️ Delete"):
                         st.session_state.agreements = [x for x in st.session_state.agreements if x['id'] != a['id']]
@@ -6130,7 +6144,7 @@ def _admin_access():
                     if new_admin_email not in st.session_state.adminEmails:
                         st.session_state.adminEmails.append(new_admin_email)
                         save_state(invalidate_briefing=False)
-                        st.success(f"Added {new_admin_email}")
+                        st.toast(f"Added {new_admin_email}", icon="✅")
                         st.rerun()
                     else:
                         st.warning("Email already exists.")
@@ -6172,7 +6186,7 @@ def _admin_email():
                     "SMTP_PASSWORD": s_pass
                 }
                 save_state(invalidate_briefing=False)
-                st.success("SMTP Settings Saved to Database!")
+                st.toast("SMTP Settings Saved to Database!", icon="✅")
                 st.rerun()
 
     st.subheader("📧 Daily Summary Email")
@@ -6296,7 +6310,7 @@ def _admin_locations():
                     }
                     st.session_state.locations.append(new_loc)
                     save_state(invalidate_briefing=False)
-                    st.success(f"Added {l_name}")
+                    st.toast(f"Added {l_name}", icon="✅")
                     st.rerun()
                 else:
                     st.error("Name and Address required.")
@@ -6397,7 +6411,7 @@ def _admin_data():
                         ensure_loaded_into_session()
                         _sync_session_to_db()
                         force_overwrite_from_session(invalidate_briefing=False)
-                        st.success("Data restored successfully (DB overwritten).")
+                        st.toast("Data restored successfully (DB overwritten).", icon="✅")
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error restoring file: {e}")
@@ -7226,8 +7240,9 @@ def main():
                             _color = "#ef4444" if d >= thr * 2 else "#d97706"
                             st.markdown(
                                 f"- <span style='color:{_color};font-weight:bold;'>{d}d</span> "
-                                f"**{j.get('title', '')}** — {j.get('status')} · "
-                                f"📍 {_l['name'] if _l else 'No site'} · 👤 {_t['name'] if _t else 'Unassigned'}",
+                                f"**{esc_html(j.get('title', ''))}** — {esc_html(j.get('status'))} · "
+                                f"📍 {esc_html(_l['name'] if _l else 'No site')} · "
+                                f"👤 {esc_html(_t['name'] if _t else 'Unassigned')}",
                                 unsafe_allow_html=True)
 
             # Upcoming contract renewals — admins only (contract values are sensitive)
