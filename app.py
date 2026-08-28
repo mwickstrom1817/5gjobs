@@ -4914,10 +4914,10 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     quote_html = (f'<span style="color:#a1a1aa; font-size:0.8em; white-space:nowrap;">{esc_html(_qv)}</span>'
                   if _qv else "")
 
-    # One signal row instead of a stack of alert lines. Each feature used to add
-    # its own full-width coloured line (stale / follow-up / parts / invoice), so a
-    # busy job grew a four-line wall. These are compact chips on a single row —
-    # same information, muted background, colour carrying the meaning.
+    # Compact chips instead of a stack of alert lines. Each feature used to add its
+    # own full-width coloured line (stale / follow-up / parts / invoice), so a busy
+    # job grew a four-line wall. These sit inline on the tech/date row (see below),
+    # so a card with signals is the same height as one without.
     signals = []
 
     _fu = job_followup(job)
@@ -4940,15 +4940,13 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         signals.append((f'{INVOICE_STATUS_ICONS.get(_inv, "")} {_inv}',
                         INVOICE_STATUS_COLORS.get(_inv, SEMANTIC["neutral"])))
 
-    signal_html = ""
-    if signals:
-        chips = "".join(
-            f'<span style="background:#27272a;color:{c};font-size:0.72em;'
-            f'padding:2px 7px;border-radius:4px;margin:3px 4px 0 0;'
-            f'display:inline-block;white-space:nowrap;">{t}</span>'
-            for t, c in signals)
-        signal_html = (f'<div style="border-top:1px solid #27272a;margin-top:9px;'
-                       f'padding-top:7px;">{chips}</div>')
+    # Chips ride on the tech/date row rather than a band of their own — a separate
+    # row with a rule above it made any card with a signal noticeably taller than
+    # its neighbours in the grid.
+    signal_html = "".join(
+        f'<span style="background:#27272a;color:{c};font-size:0.9em;'
+        f'padding:1px 6px;border-radius:4px;white-space:nowrap;">{t}</span>'
+        for t, c in signals)
 
     with st.container():
         st.markdown(f"""
@@ -4961,10 +4959,10 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{esc_html(job['priority'])}</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em;">{loc_html}</span>{quote_html}</div>
-            <div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.8em; color:#71717a;">
-                 <span>👤 {esc_html(tech_name)}</span>
-                 <span>📅 {esc_html(str(job.get('date', ''))[:10])}</span>
-            </div>{signal_html}
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap; margin-top:10px; font-size:0.8em; color:#71717a;">
+                 <span style="white-space:nowrap;">👤 {esc_html(tech_name)}</span>
+                 <span style="display:flex; align-items:center; gap:5px; margin-left:auto;">{signal_html}<span style="white-space:nowrap;">📅 {esc_html(str(job.get('date', ''))[:10])}</span></span>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         # Status Dropdown
