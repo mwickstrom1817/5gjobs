@@ -4906,8 +4906,9 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     status_bg = get_status_color(job['status'])
     
     map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address']) if loc else None
-    loc_html = (f'<a href="{esc_html(map_url)}" target="_blank" style="color:#a1a1aa; text-decoration:none;">📍 {esc_html(loc_name)}</a>'
-                if map_url else f"📍 {esc_html(loc_name)}")
+    loc_html = (f'<a href="{esc_html(map_url)}" target="_blank" title="{esc_html(loc_name)}" '
+                f'style="color:#a1a1aa; text-decoration:none;">📍 {esc_html(loc_name)}</a>'
+                if map_url else f'<span title="{esc_html(loc_name)}">📍 {esc_html(loc_name)}</span>')
 
     # Quote value, if one has been entered (small, right of the site name)
     _qv = format_money(job.get('quoteValue'))
@@ -4954,13 +4955,13 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             <div style="position:absolute; top:0; right:0; padding:2px 8px; background:{status_bg}; color:white; font-size:0.65em; font-weight:bold; border-bottom-left-radius:8px;">
                 {esc_html(job['status']).upper()}
             </div>
-            <div style="display:flex; justify-content:space-between; margin-top:10px;">
-                <span style="font-weight:bold; font-size:1.1em; max-width:70%;">{esc_html(job['title'])}</span>
-                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content;">{esc_html(job['priority'])}</span>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:6px; margin-top:10px;">
+                <span title="{esc_html(job['title'])}" style="font-weight:bold; font-size:1.1em; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.3; height:2.6em;">{esc_html(job['title'])}</span>
+                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content; flex-shrink:0;">{esc_html(job['priority'])}</span>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em;">{loc_html}</span>{quote_html}</div>
+            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{loc_html}</span>{quote_html}</div>
             <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap; margin-top:10px; font-size:0.8em; color:#71717a;">
-                 <span style="white-space:nowrap;">👤 {esc_html(tech_name)}</span>
+                 <span title="{esc_html(tech_name)}" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">👤 {esc_html(tech_name)}</span>
                  <span style="display:flex; align-items:center; gap:5px; margin-left:auto;">{signal_html}<span style="white-space:nowrap;">📅 {esc_html(str(job.get('date', ''))[:10])}</span></span>
             </div>
         </div>
