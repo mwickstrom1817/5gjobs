@@ -4945,13 +4945,15 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         signals.append((f'{INVOICE_STATUS_ICONS.get(_inv, "")} {_short}',
                         INVOICE_STATUS_COLORS.get(_inv, SEMANTIC["neutral"])))
 
-    # Chips ride on the tech/date row rather than a band of their own — a separate
-    # row with a rule above it made any card with a signal noticeably taller than
-    # its neighbours in the grid.
-    signal_html = "".join(
-        f'<span style="background:#27272a;color:{c};font-size:0.9em;'
+    # Chips sit under the priority badge, inside vertical space the 2-line title
+    # clamp already reserves — so a card with signals is exactly as tall as one
+    # without, and the tech name keeps its own full-width row below.
+    signal_chips = "".join(
+        f'<span style="background:#27272a;color:{c};font-size:0.72em;'
         f'padding:1px 6px;border-radius:4px;white-space:nowrap;">{t}</span>'
         for t, c in signals)
+    signal_stack = (f'<span style="display:flex; gap:4px;">{signal_chips}</span>'
+                    if signal_chips else "")
 
     with st.container():
         st.markdown(f"""
@@ -4961,12 +4963,12 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             </div>
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:6px; margin-top:10px;">
                 <span title="{esc_html(job['title'])}" style="font-weight:bold; font-size:1.1em; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.3; height:2.6em;">{esc_html(job['title'])}</span>
-                <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content; flex-shrink:0;">{esc_html(job['priority'])}</span>
+                <span style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;"><span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px;">{esc_html(job['priority'])}</span>{signal_stack}</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{loc_html}</span>{quote_html}</div>
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:nowrap; margin-top:10px; font-size:0.8em; color:#71717a;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:nowrap; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span title="{esc_html(tech_name)}" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">👤 {esc_html(tech_name)}</span>
-                 <span style="display:flex; align-items:center; gap:5px; margin-left:auto; flex-shrink:0;">{signal_html}<span style="white-space:nowrap;">📅 {esc_html(str(job.get('date', ''))[:10])}</span></span>
+                 <span style="white-space:nowrap; flex-shrink:0;">📅 {esc_html(str(job.get('date', ''))[:10])}</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
