@@ -4927,8 +4927,11 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         signals.append((f'⏳ {_days}d waiting',
                         SEMANTIC["act"] if _days >= _thr * 2 else SEMANTIC["waiting"]))
 
+    # Only when there's no follow-up chip already: a job flagged "Customer on Hold
+    # 12 days" is self-evidently quiet, so showing both is noise — and two long
+    # chips plus the date won't fit on one row.
     stale_days = get_job_stale_days(job)
-    if stale_days is not None and stale_days >= STALE_JOB_DAYS:
+    if not _fu and stale_days is not None and stale_days >= STALE_JOB_DAYS:
         signals.append((f'🚨 {stale_days}d quiet', SEMANTIC["act"]))
 
     staged_parts, total_parts = parts_summary(job)
@@ -4938,7 +4941,8 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
 
     _inv = invoice_status(job)   # None unless the job is Completed
     if _inv:
-        signals.append((f'{INVOICE_STATUS_ICONS.get(_inv, "")} {_inv}',
+        _short = {"Ready to Invoice": "To invoice", "No Charge": "No charge"}.get(_inv, _inv)
+        signals.append((f'{INVOICE_STATUS_ICONS.get(_inv, "")} {_short}',
                         INVOICE_STATUS_COLORS.get(_inv, SEMANTIC["neutral"])))
 
     # Chips ride on the tech/date row rather than a band of their own — a separate
@@ -4960,9 +4964,9 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 <span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px; height:fit-content; flex-shrink:0;">{esc_html(job['priority'])}</span>
             </div>
             <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{loc_html}</span>{quote_html}</div>
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:wrap; margin-top:10px; font-size:0.8em; color:#71717a;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; flex-wrap:nowrap; margin-top:10px; font-size:0.8em; color:#71717a;">
                  <span title="{esc_html(tech_name)}" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">👤 {esc_html(tech_name)}</span>
-                 <span style="display:flex; align-items:center; gap:5px; margin-left:auto;">{signal_html}<span style="white-space:nowrap;">📅 {esc_html(str(job.get('date', ''))[:10])}</span></span>
+                 <span style="display:flex; align-items:center; gap:5px; margin-left:auto; flex-shrink:0;">{signal_html}<span style="white-space:nowrap;">📅 {esc_html(str(job.get('date', ''))[:10])}</span></span>
             </div>
         </div>
         """, unsafe_allow_html=True)
