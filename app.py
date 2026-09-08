@@ -3454,23 +3454,38 @@ def render_completion_confirmation(job_index, report_payload):
 
     st.write("#### ✍️ Customer Signature")
     signature_data = None
+    signed_name = ""
+    pad_ok = False
 
     if HAS_CANVAS:
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",
-            stroke_width=2,
-            stroke_color="#000000",
-            background_color="#ffffff",
-            update_streamlit=True,
-            height=150,
-            drawing_mode="freedraw",
-            key=f"sig_canvas_{job['id']}",
-        )
-
-        if canvas_result.image_data is not None:
+        try:
+            canvas_result = st_canvas(
+                fill_color="rgba(255, 165, 0, 0.3)",
+                stroke_width=2,
+                stroke_color="#000000",
+                background_color="#ffffff",
+                update_streamlit=True,
+                height=150,
+                drawing_mode="freedraw",
+                key=f"sig_canvas_{job['id']}",
+            )
+            # Reading .image_data raises a RuntimeError when streamlit-drawable-canvas
+            # and Streamlit versions disagree (both are unpinned, and the canvas
+            # library lags Streamlit releases). A drawing pad must never be the
+            # reason a tech can't close out a job — fall back to a typed name.
             signature_data = canvas_result.image_data
-    else:
-        st.warning("Signature pad not available (library missing). Please type name below.")
+            pad_ok = True
+        except Exception as e:
+            signature_data = None
+            pad_ok = False
+            try:
+                get_logger().log(f"Signature pad unavailable, using typed fallback: {e}")
+            except Exception:
+                pass
+
+    if not pad_ok:
+        st.info("✍️ The drawing pad isn't available right now — type the customer's "
+                "name below to sign off instead.")
         signed_name = st.text_input("Customer Name (Signed)")
 
     st.write("#### 📝 Final Notes")
@@ -3488,9 +3503,9 @@ def render_completion_confirmation(job_index, report_payload):
             checklist.append("Trash Taken Out")
 
         # Handle Signature (R2)
-        if HAS_CANVAS and signature_data is not None:
-            if signature_data.sum() > 0:
-                try:
+        if signature_data is not None:
+            try:
+                if signature_data.sum() > 0:
                     img = Image.fromarray(signature_data.astype("uint8"), "RGBA")
                     buf = io.BytesIO()
                     img.save(buf, format="PNG")
@@ -3501,10 +3516,10 @@ def render_completion_confirmation(job_index, report_payload):
 
                     report_payload["signature_key"] = sig_key
                     checklist.append("Customer Signed (Digital)")
-                except Exception as e:
-                    st.error(f"Error uploading signature: {e}")
-        elif not HAS_CANVAS and "signed_name" in locals() and signed_name:
-            checklist.append(f"Customer Signed: {signed_name}")
+            except Exception as e:
+                st.error(f"Error uploading signature: {e}")
+        elif signed_name.strip():
+            checklist.append(f"Customer Signed: {signed_name.strip()}")
 
         report_payload["completion_checklist"] = checklist
 
