@@ -1673,8 +1673,14 @@ def get_available_model(api_key):
     Prefers current stable Flash models. (Google retired the Gemini 1.x family -
     the old hardcoded 1.5 names now 404.)
     """
-    client = genai.Client(api_key=api_key)
     logger = get_logger()
+    try:
+        client = genai.Client(api_key=api_key)
+    except Exception as e:
+        # A bad key or an SDK hiccup must not propagate — callers treat a None
+        # client as 'AI unavailable' and carry on without it.
+        logger.log(f"Gemini client init failed: {e}")
+        return None, 'gemini-flash-latest'
 
     def _gen_actions(m):
         # google-genai SDK exposes 'supported_actions'; the legacy SDK used
@@ -1731,15 +1737,27 @@ def get_available_model(api_key):
         return client, 'gemini-flash-latest'
 
 def generate_technician_summary(notes, job_title):
-    """Uses Gemini to summarize the daily work for the PDF Report."""
-    api_key = get_api_key()
-    if not api_key: return None
-    client, model_name = get_available_model(api_key)
-    prompt = f"Summarize the following technician notes for job '{job_title}' into a concise, professional paragraph (approx 50 words) suitable for a client report:\n\n{notes}"
+    """Uses Gemini to summarize the daily work for the PDF Report.
+
+    Runs while a tech is closing a job, so EVERY failure path returns None rather
+    than raising — the summary is a nice-to-have and must never be the reason a
+    completion fails. Model selection is inside the try for that reason.
+    """
     try:
+        api_key = get_api_key()
+        if not api_key:
+            return None
+        client, model_name = get_available_model(api_key)
+        if client is None:
+            return None
+        prompt = f"Summarize the following technician notes for job '{job_title}' into a concise, professional paragraph (approx 50 words) suitable for a client report:\n\n{notes}"
         response = client.models.generate_content(model=model_name, contents=prompt)
         return response.text
-    except:
+    except Exception as e:
+        try:
+            get_logger().log(f"AI summary skipped for '{job_title}': {e}")
+        except Exception:
+            pass
         return None
 
 def transcribe_audio(audio_file):
