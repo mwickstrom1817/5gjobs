@@ -10,6 +10,7 @@ import streamlit as st
 from core import (
     now_local, save_state, get_logger, _sync_session_to_db,
     SKILL_OPTIONS, TECH_COLORS, download_data_as_csv, download_data_as_json,
+    expiring_assets,
 )
 from persistence_pg import (
     load_state, ensure_loaded_into_session, commit_from_session,
@@ -222,6 +223,57 @@ def _admin_locations():
                     st.session_state.locations.remove(l)
                     save_state(invalidate_briefing=False)
                     st.rerun()
+
+
+def _admin_warranty():
+    st.subheader("🛡️ Warranty Radar")
+    st.caption("Registered equipment whose warranty expires within 90 days (or already has), "
+               "soonest first. Every row is a renewal conversation — the site contact is one tap away. "
+               "Admins also get this list by email on the 1st of each month.")
+
+    rows = expiring_assets(st.session_state.locations)
+    if not rows:
+        st.success("Nothing expiring in the next 90 days. 🎉")
+        return
+
+    expired = sum(1 for *_x, d in rows if d < 0)
+    within30 = sum(1 for *_x, d in rows if 0 <= d <= 30)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Expired", expired)
+    m2.metric("Expiring ≤ 30 days", within30)
+    m3.metric("Total on radar", len(rows))
+    st.write("")
+
+    for loc, a, expiry, days_left in rows:
+        with st.container(border=True):
+            wc1, wc2, wc3 = st.columns([4, 2, 1])
+            _model = f" — {a['make_model']}" if a.get('make_model') else ""
+            wc1.markdown(f"**`{a.get('tag', '')}`** · {a.get('type', 'Asset')}{_model}")
+            _bits = [x for x in [a.get('position'), a.get('serial'),
+                                 f"warranty ends {expiry}"] if x]
+            wc1.caption(" · ".join(_bits))
+            _site_line = f"🏢 {loc.get('name', '?')}"
+            if loc.get('contact_name'):
+                _site_line += f" · {loc['contact_name']}"
+            wc1.caption(_site_line)
+            if days_left < 0:
+                wc2.markdown(f":red-background[EXPIRED {abs(days_left)}d ago]")
+            else:
+                wc2.markdown(f":orange-background[{days_left} days left]")
+            _phone = re.sub(r'\D', '', (loc.get('contact_phone') or ''))
+            if _phone:
+                wc3.link_button("📞 Call", f"tel:{_phone}", use_container_width=True)
+
+    csv_df = pd.DataFrame([
+        {"Tag": a.get('tag'), "Type": a.get('type'), "Make / Model": a.get('make_model'),
+         "Serial": a.get('serial'), "Site": loc.get('name'), "Warranty Ends": str(expiry),
+         "Days Left": d, "Contact": loc.get('contact_name'), "Phone": loc.get('contact_phone')}
+        for loc, a, expiry, d in rows
+    ])
+    st.download_button("⬇️ Download CSV",
+                       csv_df.to_csv(index=False).encode("utf-8"),
+                       file_name=f"warranty_radar_{now_local().strftime('%Y%m%d')}.csv",
+                       mime="text/csv")
 
 
 def _admin_data():
@@ -505,6 +557,7 @@ def render_admin_panel():
     # Tile-based navigation: a grid of cards instead of one long scroll
     tiles = [
         ("invoicing", "💵", "Invoicing", _admin_invoicing),
+        ("warranty", "🛡️", "Warranty Radar", _admin_warranty),
         ("techs", "👷", "Technicians", _admin_techs),
         ("locations", "📍", "Locations", _admin_locations),
         ("agreements", "📄", "Service Agreements", render_service_agreements),

@@ -600,9 +600,12 @@ def send_ops_summary_email(recipients, subject_prefix=""):
         return sent, str(e)
 
 def _send_hours_digest_email(label, recipients, smtp_server, smtp_port,
-                             sender_email, sender_password, jobs, techs, locations, start_d, end_d):
+                             sender_email, sender_password, jobs, techs, locations, start_d, end_d,
+                             extra_row=None):
     """Builds and emails the weekly hours digest (CSV attached).
-    Pure/thread-safe — used by the Friday scheduler. Returns rows sent (0 if nothing)."""
+    Pure/thread-safe — used by the Friday scheduler. Returns rows sent (0 if nothing).
+    `extra_row` is an optional (label, value) tuple appended to the summary
+    table (used for the unbilled-invoice aging line)."""
     recipients = list(dict.fromkeys([r for r in (recipients or []) if r]))  # dedup, keep order
     if not (recipients and smtp_server and sender_email and sender_password):
         return 0
@@ -615,6 +618,8 @@ def _send_hours_digest_email(label, recipients, smtp_server, smtp_port,
         totals[row["Tech"]] = totals.get(row["Tech"], 0) + row["Hours"]
     detail_rows = [(tn, f"{round(th, 2)} hrs") for tn, th in sorted(totals.items(), key=lambda x: -x[1])]
     detail_rows.append(("Total", f"{round(sum(totals.values()), 2)} hrs"))
+    if extra_row:
+        detail_rows.append(extra_row)
 
     subject = f"🕒 {label} Weekly Hours — {start_d} to {end_d}"
     plain_body = (f"{label} hours logged {start_d} to {end_d}:\n\n"
@@ -656,3 +661,42 @@ def _send_hours_digest_email(label, recipients, smtp_server, smtp_port,
     except Exception:
         return 0
     return len(rows)
+
+
+def build_warranty_expiry_email(rows, period_label, within_days=90):
+    """Monthly warranty-expiration heads-up. `rows` is the output of
+    core.expiring_assets(): (location, asset, expiry_date, days_left).
+    Returns (subject, plain_text, html) - or (None, None, None) when there is
+    nothing to report (caller then skips the month silently)."""
+    if not rows:
+        return None, None, None
+
+    def _status(days_left):
+        return f"EXPIRED {abs(days_left)}d ago" if days_left < 0 else f"{days_left}d left"
+
+    plain_lines = [f"5G Security - Asset warranty report ({period_label})", "",
+                   f"{len(rows)} asset(s) expired or expiring within {within_days} days:", ""]
+    for loc, a, expiry, days_left in rows:
+        model = a.get('make_model') or 'unknown model'
+        plain_lines.append(
+            f"- [{_status(days_left)}] {loc.get('name', '?')} — "
+            f"{a.get('type', 'Asset')} {model} ({a.get('tag', '')}), warranty ends {expiry}")
+    plain_lines += ["", "Every one of these is a renewal conversation waiting to happen."]
+    plain = "\n".join(plain_lines)
+
+    detail_rows = [
+        (loc.get('name', '?'),
+         f"{a.get('type', 'Asset')} — {a.get('make_model') or 'unknown model'} · "
+         f"{_status(d)} (warranty ends {expiry})")
+        for loc, a, expiry, d in rows
+    ]
+    try:
+        html = build_admin_email_html(
+            "Warranty Expirations",
+            f"{len(rows)} asset(s) expired or expiring within {within_days} days.",
+            detail_rows,
+            "Call these customers about renewals before the equipment (or the competition) forces the conversation.")
+    except Exception:
+        html = None
+
+    return f"🛡️ Warranty report — {period_label}", plain, html

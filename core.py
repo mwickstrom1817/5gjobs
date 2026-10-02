@@ -375,6 +375,27 @@ def asset_warranty_left(asset):
     today = now_local().date()
     return (expiry.year - today.year) * 12 + (expiry.month - today.month), expiry
 
+# Assets whose warranty ends within this window (or already has) show up on the
+# Warranty Radar and in the monthly warranty email.
+ASSET_WARRANTY_ALERT_DAYS = 90
+
+def expiring_assets(locations, within_days=ASSET_WARRANTY_ALERT_DAYS):
+    """(location, asset, expiry_date, days_left) for every registered asset whose
+    warranty expires within `within_days` - including already-expired ones
+    (negative days_left). Soonest expiry first. Assets with no determinable
+    warranty are skipped."""
+    out = []
+    today = now_local().date()
+    for loc in (locations or []):
+        for a in (loc.get('assets') or []):
+            _months, expiry = asset_warranty_left(a)
+            if not expiry:
+                continue
+            days_left = (expiry - today).days
+            if days_left <= within_days:
+                out.append((loc, a, expiry, days_left))
+    return sorted(out, key=lambda x: x[3])
+
 def asset_label_lines(location, asset):
     """The four text lines printed on a label."""
     kind = asset.get('type', 'Asset')

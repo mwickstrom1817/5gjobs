@@ -11,7 +11,7 @@ from core import (
     INVOICE_STATUSES, INVOICE_STATUS_COLORS, INVOICE_STATUS_ICONS,
     agreement_days_left, AGREEMENT_TYPES, BILLING_CYCLES,
     AGREEMENT_RENEWAL_DAYS, job_value_summary, compute_hours_rows,
-    save_document_locally, resolve_image_source, esc_html,
+    save_document_locally, resolve_image_source, esc_html, job_status_since,
 )
 from services_ai import get_api_key, get_available_model
 from ui_dialogs import job_details_dialog
@@ -524,6 +524,11 @@ def render_invoicing_view(user_email):
         for s in INVOICE_STATUSES
     )
     st.markdown(chips, unsafe_allow_html=True)
+    # Unbilled aging: completed work waiting to be invoiced should never go stale.
+    _ready = buckets.get("Ready to Invoice", [])
+    _ages = [(now_local().date() - d).days for j in _ready if (d := job_status_since(j))]
+    if _ages:
+        st.caption(f"⏰ {len(_ages)} job(s) waiting to invoice · oldest {max(_ages)} days")
     st.write("")
 
     view = st.radio("Show", INVOICE_STATUSES + ["All"], horizontal=True,
@@ -553,6 +558,12 @@ def render_invoicing_view(user_email):
 
         c1, c2, c3 = st.columns([5, 2, 2])
         with c1:
+            # Age of the bill: how long this job has been sitting in 'Ready to Invoice'
+            _age = None
+            if cur == "Ready to Invoice":
+                _d = job_status_since(j)
+                if _d:
+                    _age = (now_local().date() - _d).days
             meta = " · ".join(x for x in [
                 loc['name'] if loc else "No site",
                 tech['name'] if tech else "Unassigned",
@@ -562,6 +573,7 @@ def render_invoicing_view(user_email):
                 # Billed amount once known, otherwise what we quoted
                 (f"billed {format_money(inv['amount'])}" if inv['amount']
                  else (f"quoted {format_money(j.get('quoteValue'))}" if j.get('quoteValue') else "")),
+                f"⏰ unbilled {_age}d" if (_age or 0) >= 7 else "",
             ] if x)
             st.markdown(
                 f"**{esc_html(j['title'])}**<br><span style='color:#71717a;font-size:0.82em;'>{esc_html(meta)}</span>",

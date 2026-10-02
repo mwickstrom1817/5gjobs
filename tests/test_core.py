@@ -4,7 +4,7 @@ import datetime
 from core import (
     esc_html, money_to_float, format_money, parts_summary,
     job_is_warranty, invoice_status, job_man_hours, job_parts_cost,
-    job_value_summary, asset_warranty_left, _parse_report_time,
+    job_value_summary, asset_warranty_left, expiring_assets, _parse_report_time,
     get_job_stale_days, agreement_days_left, apply_job_status, days_in_status,
     job_followup, followup_jobs, compute_hours_rows, now_local,
 )
@@ -192,6 +192,30 @@ def test_asset_warranty_left():
     # unparseable / missing data -> (None, None), never an exception
     assert asset_warranty_left({}) == (None, None)
     assert asset_warranty_left({"installed_date": "bad", "warranty_months": 12}) == (None, None)
+
+
+def test_expiring_assets_filters_and_orders():
+    today = now_local().date()
+
+    def installed_months_ago(m):
+        total = today.year * 12 + (today.month - 1) - m
+        return datetime.date(total // 12, total % 12 + 1, min(today.day, 28)).isoformat()
+
+    locations = [{
+        "id": "l1", "name": "HQ",
+        "assets": [
+            {"tag": "A-SOON", "installed_date": installed_months_ago(11), "warranty_months": 12},
+            {"tag": "A-FAR", "installed_date": installed_months_ago(2), "warranty_months": 12},
+            {"tag": "A-OLD", "installed_date": installed_months_ago(13), "warranty_months": 12},
+            {"tag": "A-NONE"},  # no warranty info -> skipped
+        ],
+    }]
+    rows = expiring_assets(locations)
+    tags = [a["tag"] for _l, a, _e, _d in rows]
+    assert tags == ["A-OLD", "A-SOON"]   # far-future + unknown excluded, expired first
+    assert rows[0][3] < 0                # negative days_left = already expired
+    assert 0 < rows[1][3] <= 90
+    assert rows[0][0]["name"] == "HQ"    # location rides along
 
 
 # --- job value ---

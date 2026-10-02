@@ -72,3 +72,31 @@ def test_daily_report_has_single_submit_path():
     labels = [(b.label or "") for b in at.button]
     assert "Submit Daily Report" in labels
     assert not any("Email Report to Admins" in l for l in labels)
+
+
+def test_warranty_radar_tile_renders():
+    """The Warranty Radar admin tile must list expiring assets without errors."""
+    at = AppTest.from_file(str(APP), default_timeout=120)
+    at.session_state["user_info"] = {"email": "boss@x.com", "name": "Boss", "picture": ""}
+    at.session_state["adminEmails"] = ["boss@x.com"]
+    at.session_state["jobs"] = []
+    at.session_state["techs"] = []
+    at.session_state["locations"] = [{
+        "id": "l1", "name": "HQ", "contact_name": "Cust", "contact_phone": "806-555-1234",
+        "assets": [{"tag": "5GS-000001", "type": "NVR", "make_model": "Test",
+                    "installed_date": "2025-10-01", "warranty_months": 12}],  # expires ~now
+    }]
+    at.session_state["agreements"] = []
+    at.session_state["sops"] = []
+    at.session_state["settings"] = {}
+    at.session_state["smtp_settings"] = {}
+    at.session_state["briefing"] = "b"
+    at.session_state["last_reminder_date"] = None
+    at.session_state["chat_history"] = []
+    at.session_state["_db_version"] = 1
+    at.run()
+    assert not at.exception
+    at.session_state["admin_view"] = "warranty"
+    at.run()
+    assert not at.exception, f"Warranty tile raised: {[str(e.value) for e in at.exception]}"
+    assert any(m.label == "Total on radar" and m.value == "1" for m in at.metric)

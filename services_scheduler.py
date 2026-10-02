@@ -6,9 +6,10 @@ import threading
 import requests
 import streamlit as st
 
-from core import now_local, get_logger, compute_hours_rows
+from core import now_local, get_logger, compute_hours_rows, invoice_status, job_status_since, expiring_assets
 from persistence_pg import load_state, save_state_to_db, ping_db
-from services_email import daily_summary_recipients, build_ops_summary_email, _send_hours_digest_email
+from services_email import (daily_summary_recipients, build_ops_summary_email,
+                            _send_hours_digest_email, build_warranty_expiry_email)
 from services_push import send_push
 
 def keep_awake():
@@ -166,13 +167,78 @@ def start_background_scheduler():
                         techs = state.get("techs", [])
                         locations = state.get("locations", [])
 
+                        # Unbilled-invoice aging: completed jobs still sitting in
+                        # 'Ready to Invoice', folded into the digest as one row.
+                        ready = [j for j in jobs
+                                 if j.get('status') == 'Completed' and invoice_status(j) == 'Ready to Invoice']
+                        ages = [(now.date() - d).days for j in ready
+                                if (d := job_status_since(j))]
+                        unbilled_row = None
+                        if ages:
+                            unbilled_row = ("Unbilled jobs", f"{len(ages)} waiting to invoice, oldest {max(ages)}d")
+
                         # Weekly hours digest -> admins only
                         _send_hours_digest_email('Hours', admin_emails,
                                                  smtp_server, smtp_port, sender_email, sender_password,
-                                                 jobs, techs, locations, start_d, end_d)
+                                                 jobs, techs, locations, start_d, end_d,
+                                                 extra_row=unbilled_row)
 
                         get_logger().log(f"Sent weekly hours digest for {start_d} to {end_d}")
                         state["last_hours_digest_date"] = today_str
+                        save_state_to_db(state, expected_version=version)
+
+                # 1st of the month, 7 AM: warranty-expiration report to admins.
+                # Every expiring asset is a renewal/upsell conversation the
+                # office wouldn't otherwise know to start.
+                if now.day == 1 and now.hour == 7:
+                    from persistence_pg import load_state, save_state_to_db
+                    state, version = load_state()
+                    month_key = now.strftime("%Y-%m")
+
+                    if state.get("last_warranty_report_month") != month_key:
+                        smtp_server = secrets_dict.get("SMTP_SERVER") or os.getenv("SMTP_SERVER")
+                        smtp_port = secrets_dict.get("SMTP_PORT") or os.getenv("SMTP_PORT", 587)
+                        sender_email = secrets_dict.get("SMTP_EMAIL") or os.getenv("SMTP_EMAIL")
+                        sender_password = secrets_dict.get("SMTP_PASSWORD") or os.getenv("SMTP_PASSWORD")
+                        admin_emails = state.get("adminEmails", [])
+
+                        rows = expiring_assets(state.get("locations", []))
+                        subject, plain, html = build_warranty_expiry_email(
+                            rows, now.strftime("%B %Y"))
+                        if subject and admin_emails and smtp_server and sender_email and sender_password:
+                            import smtplib
+                            from email.mime.text import MIMEText
+                            from email.mime.multipart import MIMEMultipart
+                            try:
+                                if int(smtp_port) == 465:
+                                    server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+                                    server.ehlo()
+                                else:
+                                    server = smtplib.SMTP(smtp_server, int(smtp_port))
+                                    server.ehlo()
+                                    server.starttls()
+                                    server.ehlo()
+                                server.login(sender_email, sender_password)
+                                for recipient in admin_emails:
+                                    try:
+                                        msg = MIMEMultipart("alternative")
+                                        msg['From'] = sender_email
+                                        msg['To'] = recipient
+                                        msg['Subject'] = subject
+                                        msg.attach(MIMEText(plain, 'plain'))
+                                        if html:
+                                            msg.attach(MIMEText(html, 'html'))
+                                        server.send_message(msg)
+                                    except Exception:
+                                        continue
+                                server.quit()
+                                get_logger().log(f"Sent warranty report for {month_key} ({len(rows)} assets)")
+                            except Exception as e:
+                                get_logger().log(f"Warranty report send failed: {e}")
+
+                        # Mark the month done whether or not anything was
+                        # expiring - a quiet month shouldn't re-check hourly.
+                        state["last_warranty_report_month"] = month_key
                         save_state_to_db(state, expected_version=version)
 
                 # 1 AM daily: snapshot the whole DB state to object storage.
