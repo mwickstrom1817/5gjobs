@@ -597,53 +597,6 @@ def set_job_invoice(job_id, **fields):
     save_state(invalidate_briefing=False)
     return True
 
-# --- TIME CLOCK ---
-def _fmt_duration(hours):
-    """0h 0m formatting from a float hours value."""
-    mins = int(round((hours or 0) * 60))
-    return f"{mins // 60}h {mins % 60}m"
-
-def clocked_hours(entries, user_email=None, on_date=None, include_open=True):
-    """Total labor hours from time-clock entries. Optionally filter to one user
-    and/or one date. Open (not-yet-clocked-out) entries count up to 'now'."""
-    total = 0.0
-    now = now_local()
-    for e in (entries or []):
-        if user_email and (e.get('userEmail', '').lower() != user_email.lower()):
-            continue
-        ci = e.get('clock_in')
-        if not ci:
-            continue
-        try:
-            ci_dt = datetime.datetime.fromisoformat(ci)
-        except (ValueError, TypeError):
-            continue
-        if on_date and ci_dt.date() != on_date:
-            continue
-        co = e.get('clock_out')
-        if co:
-            try:
-                co_dt = datetime.datetime.fromisoformat(co)
-            except (ValueError, TypeError):
-                continue
-        else:
-            if not include_open:
-                continue
-            co_dt = now
-            # Safety: a forgotten open timer shouldn't accrue endlessly (cap at 12h)
-            if (co_dt - ci_dt).total_seconds() > 12 * 3600:
-                co_dt = ci_dt + datetime.timedelta(hours=12)
-        if co_dt > ci_dt:
-            total += (co_dt - ci_dt).total_seconds() / 3600
-    return total
-
-def open_time_entry(entries, user_email):
-    """The user's currently-running (not clocked-out) entry, if any."""
-    return next((e for e in (entries or [])
-                 if e.get('userEmail', '').lower() == (user_email or '').lower()
-                 and not e.get('clock_out')), None)
-
-
 # --- HELPER FUNCTIONS ---
 
 @st.cache_resource

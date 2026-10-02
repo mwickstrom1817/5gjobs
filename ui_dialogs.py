@@ -15,8 +15,8 @@ from core import (
     format_money, SEMANTIC, ASSET_TYPES, SYSTEM_PRESETS,
     next_asset_tag, asset_warranty_left, find_asset, build_asset_labels_pdf,
     save_image_locally, save_document_locally, resolve_image_source,
-    last_daily_report, _parse_report_time, _fmt_duration, clocked_hours,
-    open_time_entry, get_google_maps_url, create_ics_file, HAS_REPORTLAB,
+    last_daily_report, _parse_report_time,
+    get_google_maps_url, create_ics_file, HAS_REPORTLAB,
 )
 from object_store import upload_bytes, get_view_url, upload_streamlit_file
 from services_ai import generate_technician_summary, transcribe_audio
@@ -597,6 +597,7 @@ def render_edit_report_view(job_id, report_id):
                     hours_worked = round((dep_dt - arr_dt).total_seconds() / 3600 * 4) / 4
 
             # Update report in session state
+            user_email = st.session_state.user_info.get("email", "Unknown") if "user_info" in st.session_state else "Unknown"
             st.session_state.jobs[job_index]['reports'][report_index].update({
                 'content': content,
                 'techsOnSite': ", ".join(techs_on_site_list),
@@ -604,12 +605,15 @@ def render_edit_report_view(job_id, report_id):
                 'timeDeparted': str(time_departed),
                 'hoursWorked': str(hours_worked),
                 'partsUsed': parts_used,
-                'billableItems': billable_items
+                'billableItems': billable_items,
+                # Audit trail: an edited report shows who changed it and when,
+                # right in the history view.
+                'updated_by': user_email,
+                'updated_at': now_local().isoformat()
             })
-            
+
             # Log the action
-            user_email = st.session_state.user_info.get("email", "Unknown Admin")
-            get_logger().log(f"Admin {user_email} updated daily report {report_id} for job {job_id}")
+            get_logger().log(f"{user_email} updated daily report {report_id} for job {job_id}")
             
             save_state(invalidate_briefing=False)
             if f"editing_report_{job_id}" in st.session_state:
@@ -824,7 +828,7 @@ Desc: {job['description']}"""
     _section_labels = {
         "history": "📋 Details & History", "photos": "🖼️ Photos",
         "docs": "📄 Documents", "parts": parts_tab_label,
-        "progress": "📸 In-Progress", "daily": "📝 Daily Report",
+        "progress": "📝 Updates", "daily": "📝 Daily Report",
         "creds": creds_tab_label, "invoice": "💵 Invoicing",
         "assets": "🏷️ Equipment",
     }
@@ -1460,11 +1464,17 @@ Desc: {job['description']}"""
                     h1.caption(f"🕒 Hours: {r.get('hoursWorked')}")
                     h2.caption(f"⏰ In: {r.get('timeArrived')}")
                     h3.caption(f"⏰ Out: {r.get('timeDeparted')}")
-                    
-                    if is_admin and not is_completion:
+
+                    # Techs may fix their own entries (same rule as delete/move);
+                    # completion reports stay admin-only since they carry the
+                    # customer sign-off.
+                    if can_manage and not is_completion:
                         if st.button("✏️ Edit Report", key=f"edit_rep_{r['id']}"):
                             st.session_state[f"editing_report_{job_id}"] = r['id']
                             st.rerun(scope="fragment")
+
+                    if r.get('updated_at'):
+                        st.caption(f"✏️ Edited {str(r['updated_at'])[:16].replace('T', ' ')} by {r.get('updated_by', 'unknown')}")
                 
                 if r.get('content'):
                     st.write(r['content'])
@@ -1488,101 +1498,9 @@ Desc: {job['description']}"""
                                 st.image(url, use_container_width=True)
 
     if section == "progress":
-        # --- TIME CLOCK ---
-        st.write("#### ⏱️ Time Clock")
-        viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
-        viewer_name = st.session_state.user_info.get('name', '') if "user_info" in st.session_state else ''
-        entries = st.session_state.jobs[job_index].setdefault('time_entries', [])
-        my_open = open_time_entry(entries, viewer_email)
-
-        tc1, tc2 = st.columns([2, 1])
-        if my_open:
-            try:
-                ci_dt = datetime.datetime.fromisoformat(my_open['clock_in'])
-                since_str = ci_dt.strftime('%I:%M %p').lstrip('0')
-            except (ValueError, TypeError):
-                since_str = "earlier"
-            elapsed = clocked_hours([my_open])
-            tc1.success(f"🟢 Clocked in since {since_str} · {_fmt_duration(elapsed)}")
-            if tc2.button("⏹️ Clock Out", key=f"clockout_{job_id}", use_container_width=True):
-                my_open['clock_out'] = now_local().isoformat()
-                save_state(invalidate_briefing=False)
-                st.toast("Clocked out", icon="⏹️")
-                st.rerun(scope="fragment")
-        else:
-            tc1.caption("Not clocked in.")
-            if tc2.button("⏱️ Clock In", key=f"clockin_{job_id}", use_container_width=True):
-                entries.append({
-                    'id': f"tc{now_local().timestamp()}",
-                    'userEmail': viewer_email,
-                    'tech_name': viewer_name or viewer_email,
-                    'clock_in': now_local().isoformat(),
-                    'clock_out': None,
-                })
-                save_state(invalidate_briefing=False)
-                st.toast("Clocked in", icon="⏱️")
-                st.rerun(scope="fragment")
-
-        my_today = clocked_hours(entries, viewer_email, now_local().date())
-        job_total = clocked_hours(entries)
-        st.caption(f"Your time today: **{_fmt_duration(my_today)}**  ·  Everyone, all-time on this job: **{_fmt_duration(job_total)}**")
-
-        # Labor log (per person) — handy for admins
-        if entries:
-            with st.expander("🕒 Time Log"):
-                by_person = {}
-                for e in entries:
-                    by_person.setdefault(e.get('tech_name', 'Unknown'), 0.0)
-                    by_person[e['tech_name'] if e.get('tech_name') else 'Unknown'] += clocked_hours([e])
-                for name, hrs in sorted(by_person.items(), key=lambda x: -x[1]):
-                    st.write(f"**{name}** — {_fmt_duration(hrs)}")
-                st.divider()
-                for e in sorted(entries, key=lambda x: x.get('clock_in', ''), reverse=True):
-                    try:
-                        ci = datetime.datetime.fromisoformat(e['clock_in'])
-                        ci_s = ci.strftime('%b %d, %I:%M %p').replace(' 0', ' ')
-                    except (ValueError, TypeError):
-                        ci_s = e.get('clock_in', '?')
-                    if e.get('clock_out'):
-                        try:
-                            co = datetime.datetime.fromisoformat(e['clock_out'])
-                            co_s = co.strftime('%I:%M %p').lstrip('0')
-                        except (ValueError, TypeError):
-                            co_s = "?"
-                        st.caption(f"{e.get('tech_name', 'Unknown')}: {ci_s} → {co_s} ({_fmt_duration(clocked_hours([e]))})")
-                    else:
-                        st.caption(f"{e.get('tech_name', 'Unknown')}: {ci_s} → 🟢 still clocked in")
-
-        st.divider()
-
-        st.write("#### 📸 Quick Update")
-        st.caption("Add photos and notes while working. These save to history immediately.")
-
-        # Quick Status Buttons
-        qs_cols = st.columns(4)
-        status_opts = [("🚗 En Route", "En Route to Site"), ("📍 Arrived", "Arrived on Site"), ("🥪 Lunch", "On Lunch Break"), ("✅ Done for Day", "Finished for the day")]
-        
-        for i, (label, note_text) in enumerate(status_opts):
-            if qs_cols[i].button(label, key=f"qs_{i}_{job_id}"):
-                # Post update immediately
-                report_payload = {
-                    'id': f"r{now_local().timestamp()}",
-                    'techId': job['techId'] or 'unknown',
-                    'timestamp': now_local().isoformat(),
-                    'content': f"[{label}] {note_text}",
-                    'photos': [],
-                    'techsOnSite': "", 'timeArrived': "", 'timeDeparted': "", 
-                    'hoursWorked': "", 'partsUsed': "", 'billableItems': ""
-                }
-                st.session_state.jobs[job_index]['reports'].append(report_payload)
-                
-                # Auto-update status for Arrived
-                if label == "📍 Arrived" and job['status'] in ['Pending', 'Not Started']:
-                    apply_job_status(st.session_state.jobs[job_index], 'In Progress', _viewer_email)
-                
-                save_state()
-                st.toast(f"Status updated: {label}", icon="✅")
-                st.rerun(scope="fragment")
+        st.write("#### 📝 Post an Update")
+        st.caption("Add photos and notes while working. These save to history immediately, "
+                   "and today's photos are attached to your daily report automatically.")
 
         # Voice Note Feature
         audio_val = st.audio_input("🎙️ Record Voice Note", key=f"audio_prog_{job_id}")
@@ -1641,40 +1559,50 @@ Desc: {job['description']}"""
                     st.warning("Please add a note or photo.")
 
     if section == "daily":
-        # Check for confirmation state for emailing report
+        # Review step: every submission passes through here before it counts.
         confirm_key = f"confirm_daily_send_{job['id']}"
         if confirm_key in st.session_state:
-            payload = st.session_state[confirm_key]
-            
+            bundle = st.session_state[confirm_key]
+            payload = bundle["payload"]
+            new_status = bundle["status"]
+
             st.warning("⚠️ **Review & Confirm Daily Report**")
             st.info("Please double-check your times, photos, and notes below before sending to Admins.")
-            
+
             with st.container(border=True):
+                st.markdown(f"**Status:** {new_status}")
                 st.markdown(f"**Time:** {payload['timeArrived']} - {payload['timeDeparted']} ({payload['hoursWorked']} hrs)")
                 st.markdown(f"**Techs:** {payload['techsOnSite']}")
                 st.markdown(f"**Warranty:** {'Yes' if payload.get('isWarranty') else 'No'}")
                 st.markdown(f"**Notes:** {payload['content']}")
                 if payload.get('photos'):
                     st.markdown(f"**Photos:** {len(payload['photos'])} attached")
-            
+
             c_yes, c_no = st.columns(2)
-            if c_yes.button("✅ Yes, Send Email", key="conf_yes", type="primary"):
-                # Send Email
-                send_daily_report_email(job, tech, loc, payload)
-                
-                # Also save to history if not already there (optional, but good practice)
-                # We'll append it as a report so there's a record
-                st.session_state.jobs[job_index]['reports'].append(payload)
-                save_state()
-                
+            if c_yes.button("✅ Yes, Submit Report", key="conf_yes", type="primary"):
                 del st.session_state[confirm_key]
-                st.toast("Report Sent & Saved!", icon="✅")
-                st.rerun(scope="fragment")
-                
+                if new_status == "Completed":
+                    # Completion goes through the sign-off flow (checklist,
+                    # customer signature, completion email) - never just an email.
+                    st.session_state[f"completion_pending_{job['id']}"] = payload
+                    st.rerun(scope="fragment")
+                else:
+                    # Persist FIRST, then email. The tech's work is safe the moment
+                    # they confirm instead of riding on whether SMTP answers.
+                    st.session_state.jobs[job_index]['reports'].append(payload)
+                    if new_status != job['status']:
+                        apply_job_status(st.session_state.jobs[job_index], new_status, _viewer_email)
+                        st.session_state.briefing = "Data required to generate briefing."
+                    save_state()
+                    with st.spinner("Sending Daily Report to Admins..."):
+                        send_daily_report_email(job, tech, loc, payload)
+                    st.toast("Daily Report Submitted & Emailed to Admins!", icon="✅")
+                    st.rerun(scope="fragment")
+
             if c_no.button("❌ Cancel", key="conf_no"):
                 del st.session_state[confirm_key]
                 st.rerun(scope="fragment")
-            
+
             st.divider()
 
         st.write("#### 📝 Daily Field Report")
@@ -1692,12 +1620,10 @@ Desc: {job['description']}"""
                 if daily_transcribed:
                     st.success("Audio Transcribed!")
 
-        # Prefill, in increasing order of authority:
-        #   1. plain defaults  2. the job's last daily report  3. today's quick-status taps
-        today_prefix = now_local().strftime('%Y-%m-%d')
+        # Prefill from the job's last daily report - the same crew usually
+        # returns day after day and shouldn't have to retype the same times.
         default_arrived = datetime.time(8, 0)
         default_departed = datetime.time(17, 0)
-        times_prefilled = False
 
         _prev = last_daily_report(job)
         _prev_used = False
@@ -1705,35 +1631,10 @@ Desc: {job['description']}"""
             default_arrived = _parse_report_time(_prev.get('timeArrived'), default_arrived)
             default_departed = _parse_report_time(_prev.get('timeDeparted'), default_departed)
             _prev_used = bool(_prev.get('timeArrived') or _prev.get('timeDeparted'))
-        for qr in job['reports']:
-            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[📍 Arrived]'):
-                try:
-                    default_arrived = datetime.datetime.fromisoformat(qr['timestamp']).time().replace(second=0, microsecond=0)
-                    times_prefilled = True
-                except Exception:
-                    pass
-                break
-        for qr in reversed(job['reports']):
-            if qr.get('timestamp', '').startswith(today_prefix) and qr.get('content', '').startswith('[✅ Done for Day]'):
-                try:
-                    default_departed = datetime.datetime.fromisoformat(qr['timestamp']).time().replace(second=0, microsecond=0)
-                    times_prefilled = True
-                except Exception:
-                    pass
-                break
 
-        if times_prefilled:
-            st.caption("⏱️ Times below were prefilled from your quick-status taps today — adjust if needed.")
-        elif _prev_used:
+        if _prev_used:
             st.caption(f"↩️ Prefilled from the last report on this job "
                        f"({str(_prev.get('timestamp', ''))[:10]}) — adjust anything that changed.")
-
-        # Prefill Hours Worked from the viewer's time clock (today), rounded to 1/4 hr
-        _viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
-        clocked_today = clocked_hours(job.get('time_entries', []), _viewer_email, now_local().date())
-        default_hours = round(clocked_today * 4) / 4 if clocked_today > 0 else 0.0
-        if clocked_today > 0:
-            st.caption(f"⏱️ Hours Worked is prefilled from your time clock today ({_fmt_duration(clocked_today)}) — adjust if needed.")
 
         with st.form(key=f"daily_form_{job_id}"):
             status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged", "Completed"]
@@ -1767,7 +1668,7 @@ Desc: {job['description']}"""
                 time_arrived = time_select("Time Arrived", default_arrived, key=f"daily_arr_sel_{job_id}")
                 parts_used = st.text_area("Parts/Materials Used")
             with r_col2:
-                hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, value=default_hours, help="Prefilled from your time clock; leave at 0 to calc from arrival/finish times.")
+                hours_worked = st.number_input("Hours Worked", min_value=0.0, step=0.5, value=0.0, help="Leave at 0 to calculate from your arrival/finish times.")
                 time_departed = time_select("Time Finished", default_departed, key=f"daily_dep_sel_{job_id}")
                 billable_items = st.text_area("Billable Items / Extras")
 
@@ -1791,30 +1692,20 @@ Desc: {job['description']}"""
             todays_photos = list(todays_photos_set)
             
             if todays_photos:
-                st.info(f"📸 {len(todays_photos)} photos taken today via 'In-Progress' updates will be automatically attached.")
+                st.info(f"📸 {len(todays_photos)} photos taken today via Updates will be automatically attached.")
             
             # Allow adding more photos directly here
             daily_photos = st.file_uploader("Attach Additional Photos/Docs (Optional)", accept_multiple_files=True, type=['png', 'jpg', 'jpeg', 'pdf'], key=f"daily_up_{job_id}")
 
-            f_c1, f_c2 = st.columns(2)
-            submit_btn = f_c1.form_submit_button("Submit Daily Report")
-            email_btn = f_c2.form_submit_button("📧 Email Report to Admins")
+            submit_btn = st.form_submit_button("Submit Daily Report", use_container_width=True)
 
-            if submit_btn or email_btn:
-                _t = StepTimer("daily submit")
-                # Wrapping up the day — clock the viewer out if they're still running
-                _open = open_time_entry(job.get('time_entries', []), _viewer_email)
-                if _open:
-                    _open['clock_out'] = now_local().isoformat()
-
+            if submit_btn:
                 # Process any new photos uploaded directly in this form
-                _new_photo_count = len(daily_photos or [])
                 if daily_photos:
                     for up_file in daily_photos:
                         path = save_image_locally(up_file)
                         if path:
                             todays_photos.append(path)
-                _t.mark(f"upload({_new_photo_count})")
 
                 # Auto-calculate hours from arrival/finish times when left at 0
                 if not hours_worked:
@@ -1836,40 +1727,13 @@ Desc: {job['description']}"""
                     'partsUsed': parts_used,
                     'billableItems': billable_items,
                     'isWarranty': is_warranty,
-                    'photos': todays_photos # Photos handled in other tab
+                    'photos': todays_photos
                 }
 
-                if email_btn:
-                    # Trigger confirmation flow (fragment scope keeps the dialog open)
-                    st.session_state[f"confirm_daily_send_{job['id']}"] = report_payload
-                    st.rerun(scope="fragment")
-
-                if submit_btn:
-                    if new_status == "Completed":
-                        # Set pending state and rerun to show confirmation UI.
-                        # Fragment scope keeps the dialog open so the confirmation
-                        # appears immediately instead of the window closing.
-                        st.session_state[f"completion_pending_{job['id']}"] = report_payload
-                        st.rerun(scope="fragment")
-                    else:
-                        # Persist FIRST, then email. The tech's work is safe the moment
-                        # they hit submit instead of riding on whether SMTP answers.
-                        st.session_state.jobs[job_index]['reports'].append(report_payload)
-
-                        # Update Status
-                        if new_status != job['status']:
-                            apply_job_status(st.session_state.jobs[job_index], new_status, _viewer_email)
-                            st.session_state.briefing = "Data required to generate briefing."
-
-                        save_state()
-                        _t.mark("save")
-
-                        with st.spinner("Sending Daily Report to Admins..."):
-                            send_daily_report_email(job, tech, loc, report_payload, timer=_t)
-                        _t.finish(job=job_id, photos=len(todays_photos),
-                                  total_reports=len(st.session_state.jobs[job_index]['reports']))
-                        st.toast("Daily Report Submitted & Emailed to Admins!", icon="✅")
-                        st.rerun(scope="fragment")
+                # Every submission goes through the same review step; the confirm
+                # button routes Completed jobs into the sign-off flow.
+                st.session_state[f"confirm_daily_send_{job['id']}"] = {"payload": report_payload, "status": new_status}
+                st.rerun(scope="fragment")
 
     # --- DEFERRED WEATHER ---
     # The dialog body has now rendered, so the network call below backfills the

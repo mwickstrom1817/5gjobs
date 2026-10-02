@@ -2,11 +2,11 @@
 import datetime
 
 from core import (
-    esc_html, money_to_float, format_money, _fmt_duration, parts_summary,
+    esc_html, money_to_float, format_money, parts_summary,
     job_is_warranty, invoice_status, job_man_hours, job_parts_cost,
     job_value_summary, asset_warranty_left, _parse_report_time,
     get_job_stale_days, agreement_days_left, apply_job_status, days_in_status,
-    job_followup, followup_jobs, clocked_hours, compute_hours_rows, now_local,
+    job_followup, followup_jobs, compute_hours_rows, now_local,
 )
 from services_email import daily_summary_recipients
 
@@ -37,12 +37,6 @@ def test_money_round_trip():
 def test_esc_html_escapes_markup_and_quotes():
     assert esc_html('<b>&"\'') == "&lt;b&gt;&amp;&quot;&#x27;"
     assert esc_html(None) == ""
-
-
-def test_fmt_duration():
-    assert _fmt_duration(2.5) == "2h 30m"
-    assert _fmt_duration(0) == "0h 0m"
-    assert _fmt_duration(1 / 60) == "0h 1m"
 
 
 def test_parse_report_time():
@@ -97,20 +91,6 @@ def test_job_man_hours_counts_crew_members():
         {"hoursWorked": "bad"},                           # garbage skipped
     ]}
     assert job_man_hours(job) == 26.0
-
-
-def test_clocked_hours_closed_entries():
-    entries = [{
-        "clock_in": "2026-09-30T08:00:00",
-        "clock_out": "2026-09-30T12:00:00",
-    }]
-    assert clocked_hours(entries) == 4.0
-
-
-def test_clocked_hours_open_entry_capped_at_12h():
-    long_ago = (now_local() - datetime.timedelta(hours=20)).isoformat()
-    entries = [{"clock_in": long_ago, "clock_out": None}]
-    assert clocked_hours(entries) == 12.0  # forgotten timer must not run forever
 
 
 def test_compute_hours_rows_credits_everyone_on_site():
