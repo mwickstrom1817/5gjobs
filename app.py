@@ -361,26 +361,43 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS to match the React App's Zinc/Red/Black theme
+# Custom CSS — "Midnight Ops" theme: blacks, greys, red. Same layout as always;
+# this block only controls color depth, shadows, corner radius, and typography.
 st.markdown("""
    <style>
-   /* Main Background */
+   /* Font: Inter gives the console a tighter, more modern voice. Icons keep
+      their own icon fonts — this only changes inherited text. */
+   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+   html, body, .stApp {
+       font-family: 'Inter', 'Source Sans Pro', sans-serif;
+   }
+   h1, h2, h3 { letter-spacing: -0.01em; }
+
+   /* Main Background: near-black with a whisper of red glow */
    .stApp {
-       background-color: #09090b;
-       color: #e4e4e7;
+       background: radial-gradient(1100px 600px at 88% -12%, rgba(220, 38, 38, 0.055), transparent 62%),
+                   radial-gradient(900px 500px at -8% 112%, rgba(220, 38, 38, 0.035), transparent 60%),
+                   #070708;
+       color: #ececee;
    }
 
    /* Inputs */
    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div, .stNumberInput > div > div > input, .stMultiSelect > div > div > div {
        background-color: #000000;
-       color: white;
-       border-color: #27272a;
+       color: #ececee;
+       border-color: #2a2a30;
+       border-radius: 10px;
+   }
+   .stTextInput > div > div > input:focus, .stTextArea > div > div > textarea:focus,
+   .stNumberInput > div > div > input:focus {
+       border-color: #7f1d1d !important;
+       box-shadow: 0 0 0 1px rgba(185, 28, 28, 0.35);
    }
 
    /* Sidebar */
    [data-testid="stSidebar"] {
-       background-color: #18181b;
-       border-right: 1px solid #27272a;
+       background-color: #0c0c0e;
+       border-right: 1px solid #1c1c21;
    }
 
    /* Tighter page headroom (Streamlit's fixed header bar is ~3.75rem tall and
@@ -389,21 +406,28 @@ st.markdown("""
        padding-top: 4.2rem !important;
    }
 
-   /* Buttons */
+   /* Buttons: red gradient with an under-glow */
    .stButton > button {
-       background-color: #b91c1c;
+       background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
        color: white;
        border: none;
-       border-radius: 8px;
-       font-weight: bold;
+       border-radius: 10px;
+       font-weight: 700;
        min-height: 2rem;
        width: 100%;
        padding: 0.3rem 0.8rem !important;
+       letter-spacing: 0.01em;
+       box-shadow: 0 6px 18px rgba(185, 28, 28, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+       transition: background 0.15s, box-shadow 0.15s;
    }
    .stButton > button:hover {
-       background-color: #991b1b;
+       background: linear-gradient(180deg, #991b1b 0%, #7f1d1d 100%);
        color: white;
        border-color: #7f1d1d;
+       box-shadow: 0 4px 12px rgba(127, 29, 29, 0.35);
+   }
+   .stButton > button:active {
+       transform: translateY(1px);
    }
    /* Fix for button text centering */
    .stButton > button div {
@@ -417,15 +441,21 @@ st.markdown("""
        white-space: nowrap;
    }
 
-   /* Custom Job Card Style */
+   /* Custom Job Card Style: layered panels that lift on hover */
    .job-card {
-       background-color: #18181b;
-       border: 1px solid #27272a;
+       background: linear-gradient(180deg, #17171b 0%, #121215 100%);
+       border: 1px solid #232329;
        padding: 15px;
-       border-radius: 10px;
+       border-radius: 14px;
        border-left: 5px solid #52525b;
        margin-bottom: 10px;
-       transition: transform 0.2s;
+       box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
+       transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+   }
+   .job-card:hover {
+       transform: translateY(-2px);
+       border-color: #3a3a42;
+       box-shadow: 0 12px 26px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(220, 38, 38, 0.05);
    }
    .priority-Critical { border-left-color: #ef4444 !important; }
    .priority-High { border-left-color: #dc2626 !important; }
@@ -435,16 +465,16 @@ st.markdown("""
    /* Tabs: underline style (active = white text + red underline) */
    .stTabs [data-baseweb="tab-list"] {
        gap: 2px;
-       border-bottom: 1px solid #27272a;
+       border-bottom: 1px solid #1f1f24;
    }
    .stTabs [data-baseweb="tab"] {
        background-color: transparent;
        border-radius: 0;
-       color: #a1a1aa;
+       color: #8b8b95;
        padding: 4px 10px;
    }
    .stTabs [data-baseweb="tab"]:hover {
-       color: #e4e4e7;
+       color: #d4d4d8;
    }
    .stTabs [aria-selected="true"] {
        background-color: transparent !important;
@@ -452,11 +482,11 @@ st.markdown("""
        font-weight: bold;
    }
    .stTabs [data-baseweb="tab-highlight"] {
-       background-color: #b91c1c !important;
+       background-color: #dc2626 !important;
        height: 3px !important;
    }
    .stTabs [data-baseweb="tab-border"] {
-       background-color: #27272a !important;
+       background-color: #1f1f24 !important;
    }
    /* Mobile fix: only the ACTIVE tab's panel should show. Streamlit keeps every
       tab panel in the DOM and hides inactive ones with the `hidden` attribute;
@@ -476,14 +506,20 @@ st.markdown("""
        text-align: center;
    }
    .login-box {
-       background-color: #18181b;
-       border: 1px solid #27272a;
+       background-color: #101013;
+       border: 1px solid #26262c;
        padding: 40px;
-       border-radius: 12px;
+       border-radius: 16px;
        max-width: 400px;
        width: 100%;
-       box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
+       box-shadow: 0 0 0 1px #26262c, 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 50px rgba(185, 28, 28, 0.10);
    }
+
+   /* Scrollbars: dark, red on hover */
+   ::-webkit-scrollbar { width: 10px; height: 10px; }
+   ::-webkit-scrollbar-track { background: transparent; }
+   ::-webkit-scrollbar-thumb { background: #26262c; border-radius: 8px; border: 2px solid #070708; }
+   ::-webkit-scrollbar-thumb:hover { background: #b91c1c; }
    </style>
 """, unsafe_allow_html=True)
 
@@ -978,13 +1014,13 @@ def main():
         cal_css = (
             "<style>"
             ".cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}"
-            ".cal-hdr{text-align:center;font-weight:bold;color:#a1a1aa;font-size:0.75em;"
+            ".cal-hdr{text-align:center;font-weight:bold;color:#8b8b95;font-size:0.75em;"
             "padding:4px 0;text-transform:uppercase;letter-spacing:0.5px;}"
-            ".cal-cell{background:#18181b;border:1px solid #27272a;border-radius:8px;"
+            ".cal-cell{background:#121215;border:1px solid #232329;border-radius:10px;"
             "min-height:104px;padding:6px;overflow:hidden;}"
             ".cal-empty{background:transparent;border:1px solid transparent;}"
-            ".cal-weekend{background:#141417;}"
-            ".cal-today{border:2px solid #b91c1c;background:#201416;}"
+            ".cal-weekend{background:#0e0e10;}"
+            ".cal-today{border:2px solid #dc2626;background:#1a1214;}"
             ".cal-daynum{font-size:0.8em;font-weight:bold;color:#d4d4d8;margin-bottom:4px;}"
             ".cal-today .cal-daynum{color:#ef4444;}"
             ".cal-pill{color:white;padding:2px 6px;border-radius:4px;font-size:0.7em;"

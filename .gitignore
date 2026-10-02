@@ -1,5 +1,6 @@
 .streamlit/secrets.toml
 .refactor_backup/
+previews/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
