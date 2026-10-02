@@ -15,6 +15,7 @@ NVRs, access control, alarm systems, infrastructure cabling; **not** 5G towers).
 - **Contracts & invoicing** — service agreements with renewal alerts; completed jobs flow into an invoicing worklist
 - **AI assistant** — Gemini-powered morning briefing, report summaries, and a data-aware chatbot
 - **Notifications** — assignment/completion emails, daily ops summary (weekday 7 AM), weekly hours digest (Friday), ntfy push to techs' phones
+- **Nightly backups** — the whole database is snapshotted to object storage at 1 AM (newest 30 days kept); restorable from Admin → Data & Backup
 - **Wall display** — auto-rotating read-only TV/kiosk board (`?kiosk=<KIOSK_TOKEN>`)
 - **Admin panel** — technicians, locations, hours report, data browser, analytics, backup/restore, diagnostics
 
@@ -33,6 +34,7 @@ Originally a single 7,500-line `app.py`; now split into focused modules with
 | `services_pdf.py` | ReportLab PDF report generation |
 | `services_email.py` | SMTP email builders/senders |
 | `services_scheduler.py` | Keep-awake pinger + background reminder scheduler |
+| `services_backup.py` | Nightly DB snapshot to object storage (30-day retention) |
 | `ui_widgets.py` | Reusable input widgets (mobile time picker, sub-nav) |
 | `ui_dialogs.py` | `@st.dialog` modals (job details, completion, assets) |
 | `ui_cards.py` | Job cards/grids + interactive map view |
@@ -100,6 +102,19 @@ Safety nets from the August refactor: branch `backup/pre-refactor` and tag
 git revert <commit> && git push origin main        # revert a change cleanly
 # or: git reset --hard pre-refactor && git push --force origin main
 ```
+
+## Tests
+
+```bash
+pip install pytest
+python -m pytest tests/ -q
+```
+
+`tests/` covers `core.py`'s business math (hours, invoicing, warranty, money,
+follow-up rules) plus boot smoke tests that execute the whole app in
+Streamlit's simulated runtime (login screen + admin backup page). A GitHub
+Actions workflow (`.github/workflows/tests.yml`) runs the suite on every push
+to `main`.
 
 ## Notes
 

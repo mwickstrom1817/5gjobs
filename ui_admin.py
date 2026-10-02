@@ -309,6 +309,21 @@ def _admin_data():
                 except Exception as e:
                     st.error(f"Error restoring file: {e}")
 
+    st.divider()
+    st.subheader("☁️ Cloud Backups (R2)")
+    st.caption("A snapshot of the entire database is written to object storage every night at 1 AM "
+               "(the newest 30 daily snapshots are kept). Backup files match the restore format "
+               "above, so one can be pulled from the bucket and restored here if the database is lost.")
+    if st.button("💾 Back Up Now", key="backup_now_btn"):
+        from services_backup import run_daily_backup
+        with st.spinner("Writing backup to object storage..."):
+            ok, msg = run_daily_backup()
+        if ok:
+            st.success(f"✅ {msg}")
+            st.toast(msg, icon="💾")
+        else:
+            st.error(f"Backup failed: {msg}")
+
 
 def _admin_diagnostics():
     st.subheader("☁️ Storage Debugger (R2/S3)")

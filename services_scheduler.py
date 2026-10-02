@@ -73,6 +73,7 @@ def start_background_scheduler():
         
     def run():
         time.sleep(15)
+        backup_done_for = None
         while True:
             try:
                 now = now_local()
@@ -173,6 +174,19 @@ def start_background_scheduler():
                         get_logger().log(f"Sent weekly hours digest for {start_d} to {end_d}")
                         state["last_hours_digest_date"] = today_str
                         save_state_to_db(state, expected_version=version)
+
+                # 1 AM daily: snapshot the whole DB state to object storage.
+                # The snapshot file is date-keyed, so re-running the same day
+                # just overwrites it - an in-memory flag is enough to skip
+                # duplicate work without another DB write.
+                if now.hour == 1:
+                    from services_backup import run_daily_backup
+                    today_str = now.strftime("%Y-%m-%d")
+                    if backup_done_for != today_str:
+                        ok, msg = run_daily_backup()
+                        if ok:
+                            backup_done_for = today_str
+                        get_logger().log(f"Scheduled backup: {msg}")
             except Exception as e:
                 get_logger().log(f"Background reminder error: {e}")
             
