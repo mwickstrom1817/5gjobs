@@ -11,12 +11,17 @@ from core import (
 from services_geo import get_lat_lon_from_address
 from ui_dialogs import job_details_dialog, edit_job_dialog
 
-try:
-    import folium
-    from streamlit_folium import st_folium
-    HAS_MAP = True
-except ImportError:
-    HAS_MAP = False
+
+def _load_map_libs():
+    """Lazy-load folium: it and its deps cost real startup time and only pay
+    for themselves when a map actually renders. Returns (folium, st_folium)
+    or (None, None) when unavailable."""
+    try:
+        import folium
+        from streamlit_folium import st_folium
+        return folium, st_folium
+    except ImportError:
+        return None, None
 
 
 def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
@@ -173,7 +178,8 @@ def render_job_grid(jobs, key_suffix="", allow_delete=False, cols=3):
 def render_map_view(jobs):
     """Interactive Folium map: one dot per job at its location, colored by status
     (same palette as the Tech Board). Click a dot for a detail card + Navigate link."""
-    if not HAS_MAP:
+    folium, st_folium = _load_map_libs()
+    if not folium:
         st.info("🗺️ Map view needs the `folium` and `streamlit-folium` packages. "
                 "Add them to requirements.txt and redeploy.")
         return

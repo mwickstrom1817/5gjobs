@@ -6,7 +6,6 @@ import datetime
 import pandas as pd
 import requests
 import streamlit as st
-from google import genai
 
 from core import (
     now_local, save_state, get_logger, _sync_session_to_db,
@@ -414,6 +413,7 @@ def _admin_diagnostics():
             st.code(f"Key Found: {'*' * (len(api_key)-4)}{api_key[-4:]}")
             if st.button("Run AI Diagnostics"):
                 try:
+                    from google import genai
                     client = genai.Client(api_key=api_key)
                     st.success("✅ Gemini Client Initialized.")
                     with st.spinner("Fetching available models..."):

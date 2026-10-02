@@ -2,10 +2,22 @@ import os
 import datetime
 
 import streamlit as st
-from google import genai
-from google.genai import types
 
 from core import get_logger, now_local, STALE_JOB_DAYS, get_job_stale_days
+
+_GENAI = None
+_GENAI_TYPES = None
+
+
+def _genai():
+    """Lazy import: google-genai and its dependencies cost real startup time,
+    and most runs never call the AI."""
+    global _GENAI, _GENAI_TYPES
+    if _GENAI is None:
+        from google import genai as _g
+        from google.genai import types as _t
+        _GENAI, _GENAI_TYPES = _g, _t
+    return _GENAI, _GENAI_TYPES
 
 def get_api_key():
     # Try getting from Streamlit secrets, then Env, then return None
@@ -21,6 +33,7 @@ def get_available_model(api_key):
     the old hardcoded 1.5 names now 404.)
     """
     logger = get_logger()
+    genai, _ = _genai()
     try:
         client = genai.Client(api_key=api_key)
     except Exception as e:
@@ -113,7 +126,8 @@ def transcribe_audio(audio_file):
     if not api_key: return None
     
     client, model_name = get_available_model(api_key)
-    
+
+    _, types = _genai()
     try:
         audio_bytes = audio_file.read()
         response = client.models.generate_content(

@@ -42,7 +42,7 @@ Originally a single 7,500-line `app.py`; now split into focused modules with
 | `ui_views.py` | SOPs, data browser, invoicing, analytics, hours, chatbot |
 | `ui_admin.py` | Admin panel tiles |
 | `api.py` | FastAPI backend (`uvicorn api:app`) exposing the same data to the iOS client |
-| `persistence_pg.py` | Postgres persistence (single versioned JSONB state row, optimistic locking) |
+| `persistence_pg.py` | Postgres persistence (single versioned JSONB row, optimistic locking, connection pooling) |
 | `object_store.py` | Cloudflare R2 / S3 file storage (photos, signatures, docs) |
 
 ## Tech stack

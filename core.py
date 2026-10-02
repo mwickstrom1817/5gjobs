@@ -29,23 +29,8 @@ from persistence_pg import (
 )
 from object_store import upload_streamlit_file, upload_bytes, get_view_url
 
-# Try importing ReportLab (used here for asset label sheets)
-try:
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib import colors
-    HAS_REPORTLAB = True
-except ImportError:
-    HAS_REPORTLAB = False
-
-# QR generation ships inside reportlab, so asset labels need no extra dependency.
-try:
-    from reportlab.graphics.barcode import qr as _rl_qr
-    from reportlab.graphics.shapes import Drawing as _RLDrawing
-    from reportlab.graphics import renderPDF as _rl_renderPDF
-    HAS_QR = True
-except ImportError:
-    HAS_QR = False
+# ReportLab is imported lazily inside build_asset_labels_pdf - it costs real
+# startup time and most runs never print labels.
 
 
 def esc_html(v):
@@ -417,7 +402,17 @@ def asset_scan_url(tag):
 def build_asset_labels_pdf(pairs):
     """Avery 5160/8160 sheet (letter, 3 x 10 = 30 labels). `pairs` is a list of
     (location, asset). Returns PDF bytes, or None if reportlab is unavailable."""
-    if not (HAS_REPORTLAB and pairs):
+    try:
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib import colors
+        from reportlab.graphics.barcode import qr as _rl_qr
+        from reportlab.graphics.shapes import Drawing as _RLDrawing
+        from reportlab.graphics import renderPDF as _rl_renderPDF
+        has_qr = True
+    except ImportError:
+        return None
+    if not pairs:
         return None
 
     INCH = 72.0
@@ -443,7 +438,7 @@ def build_asset_labels_pdf(pairs):
 
         # QR square on the left, sized to the label height
         qr_side = LBL_H - 2 * PAD
-        if HAS_QR:
+        if has_qr:
             try:
                 widget = _rl_qr.QrCodeWidget(asset_scan_url(tag))
                 bx0, by0, bx1, by1 = widget.getBounds()

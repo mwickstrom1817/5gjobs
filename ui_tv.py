@@ -8,12 +8,15 @@ from core import (
     get_logo_data_uri, refresh_session_from_db,
 )
 
-try:
-    import folium
-    from streamlit_folium import st_folium
-    HAS_MAP = True
-except ImportError:
-    HAS_MAP = False
+
+def _load_map_libs():
+    """Lazy-load folium (heavy); returns (folium, st_folium) or (None, None)."""
+    try:
+        import folium
+        from streamlit_folium import st_folium
+        return folium, st_folium
+    except ImportError:
+        return None, None
 
 
 # TV rotation: the wall display cycles through these screens
@@ -154,7 +157,8 @@ def _tv_board():
             if lat and lon:
                 map_points.append((j, lat, lon))
 
-        if HAS_MAP and map_points:
+        folium, st_folium = _load_map_libs()
+        if folium and map_points:
             avg_lat = sum(p[1] for p in map_points) / len(map_points)
             avg_lon = sum(p[2] for p in map_points) / len(map_points)
             fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=6, tiles="CartoDB dark_matter")
@@ -172,7 +176,7 @@ def _tv_board():
                     tooltip=j['title'],
                 ).add_to(fmap)
             st_folium(fmap, use_container_width=True, height=470, returned_objects=[], key="tv_map")
-        elif not HAS_MAP:
+        elif not folium:
             st.markdown('<div style="text-align:center;color:#71717a;font-size:22px;margin-top:40px;">Map unavailable (folium not installed).</div>', unsafe_allow_html=True)
         else:
             st.markdown('<div style="text-align:center;color:#52525b;font-size:22px;margin-top:40px;">No mapped jobs yet.</div>', unsafe_allow_html=True)

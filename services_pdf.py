@@ -5,21 +5,9 @@ from io import BytesIO
 
 import streamlit as st
 from PIL import Image
-from reportlab.lib.utils import ImageReader
 
-# Try importing ReportLab for PDF generation
-try:
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.pagesizes import letter
-    from reportlab.lib import colors
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-        Image as RLImage, KeepTogether, PageBreak,
-    )
-    HAS_REPORTLAB = True
-except ImportError:
-    HAS_REPORTLAB = False
+# ReportLab is imported lazily inside generate_job_pdf - it costs real startup
+# time and most runs never build a PDF.
 
 from object_store import get_view_url
 from core import now_local, LOGO_PATH, remember_photo_bytes, photo_bytes_for_key, get_image_bytes
@@ -27,7 +15,17 @@ from core import now_local, LOGO_PATH, remember_photo_bytes, photo_bytes_for_key
 @st.cache_data(show_spinner="Generating PDF...")
 def generate_job_pdf(job, tech, location, report):
     """Generates a styled PDF report for a job (completion or daily field report)."""
-    if not HAS_REPORTLAB:
+    try:
+        from reportlab.lib.utils import ImageReader
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.platypus import (
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+            Image as RLImage, KeepTogether, PageBreak,
+        )
+    except ImportError:
         return None
 
     is_completion = 'completion_checklist' in report

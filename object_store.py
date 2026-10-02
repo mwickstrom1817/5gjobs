@@ -1,20 +1,31 @@
+import importlib.util
 import os
 import streamlit as st
 import mimetypes
 
-try:
-    import boto3
-    from botocore.exceptions import ClientError
-    from botocore.config import Config
-    HAS_BOTO3 = True
-except ImportError:
-    HAS_BOTO3 = False
+# Detect boto3 without paying its import cost at startup - boto3 + botocore
+# are heavy, and they're only needed when storage is actually touched.
+HAS_BOTO3 = importlib.util.find_spec("boto3") is not None
+
+_boto_cache = None
+
+
+def _boto():
+    """Lazy import of boto3/botocore; returns (boto3, ClientError, Config)."""
+    global _boto_cache
+    if _boto_cache is None:
+        import boto3
+        from botocore.exceptions import ClientError
+        from botocore.config import Config
+        _boto_cache = (boto3, ClientError, Config)
+    return _boto_cache
 
 @st.cache_resource
 def get_r2_client():
     if not HAS_BOTO3:
         st.error("❌ `boto3` library not found. Please add it to `requirements.txt`.")
         return None
+    boto3, _ClientError, Config = _boto()
 
     endpoint_url = os.environ.get("R2_ENDPOINT_URL") or st.secrets.get("R2_ENDPOINT_URL")
     access_key_id = os.environ.get("R2_ACCESS_KEY_ID") or st.secrets.get("R2_ACCESS_KEY_ID")
@@ -70,6 +81,7 @@ def upload_bytes(data, key, content_type):
     if not bucket:
         st.error("⚠️ Bucket name not configured.")
         return None
+    _boto3, ClientError, _Config = _boto()
     try:
         s3.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
         return key
@@ -92,6 +104,7 @@ def upload_streamlit_file(uploaded_file, folder="photos"):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = uploaded_file.name
     key = f"{folder}/{timestamp}_{filename}"
+    _boto3, ClientError, _Config = _boto()
     try:
         s3.upload_fileobj(uploaded_file, bucket, key, ExtraArgs={'ContentType': uploaded_file.type})
         return key
@@ -107,6 +120,7 @@ def get_view_url(key, expires_seconds=3600):
     bucket = get_bucket_name()
     if not s3 or not bucket:
         return None
+    _boto3, ClientError, _Config = _boto()
     try:
         url = s3.generate_presigned_url(
             'get_object',

@@ -219,3 +219,23 @@ def test_daily_summary_recipients_dedups_case_insensitive():
     techs = [{"email": "A@x.com"}, {"email": "b@x.com"}, {"email": "a@x.com"}]
     out = daily_summary_recipients(techs, ["B@X.com", "", None, "c@x.com"])
     assert out == ["A@x.com", "b@x.com", "c@x.com"]
+
+
+# --- persistence: version cache ---
+
+def test_get_db_version_caches_within_ttl(monkeypatch):
+    import persistence_pg as pg
+    calls = {"n": 0}
+
+    def fake_read():
+        calls["n"] += 1
+        return calls["n"]
+
+    monkeypatch.setattr(pg, "_read_db_version", fake_read)
+    monkeypatch.setattr(pg, "_VER_CACHE", {"version": None, "at": 0.0})
+    assert pg.get_db_version() == 1
+    assert pg.get_db_version() == 1      # second call served from cache
+    assert calls["n"] == 1
+    # after the TTL expires the next call re-queries
+    monkeypatch.setattr(pg, "VERSION_TTL_SECONDS", -1.0)
+    assert pg.get_db_version() == 2

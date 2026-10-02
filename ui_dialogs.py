@@ -16,7 +16,7 @@ from core import (
     next_asset_tag, asset_warranty_left, find_asset, build_asset_labels_pdf,
     save_image_locally, save_document_locally, resolve_image_source,
     last_daily_report, _parse_report_time,
-    get_google_maps_url, create_ics_file, HAS_REPORTLAB,
+    get_google_maps_url, create_ics_file,
 )
 from object_store import upload_bytes, get_view_url, upload_streamlit_file
 from services_ai import generate_technician_summary, transcribe_audio
@@ -1238,24 +1238,23 @@ Desc: {job['description']}"""
                 st.caption(f"{len(site_assets)} on site"
                            + (f" · {len(_here)} from this job" if _here else ""))
 
-                if HAS_REPORTLAB:
-                    pc1, pc2 = st.columns([1, 1])
-                    if _here:
-                        pdf_here = build_asset_labels_pdf([(loc, a) for a in _here])
-                        if pdf_here:
-                            pc1.download_button(f"🏷️ Print labels — this job ({len(_here)})",
-                                                pdf_here, file_name=f"labels_{job_id}.pdf",
-                                                mime="application/pdf", use_container_width=True,
-                                                key=f"lbl_job_{job_id}")
-                    pdf_all = build_asset_labels_pdf([(loc, a) for a in site_assets])
-                    if pdf_all:
-                        pc2.download_button(f"🏷️ Print labels — whole site ({len(site_assets)})",
-                                            pdf_all, file_name=f"labels_site_{loc['id']}.pdf",
+                # build_asset_labels_pdf returns None when reportlab isn't installed
+                pc1, pc2 = st.columns([1, 1])
+                if _here:
+                    pdf_here = build_asset_labels_pdf([(loc, a) for a in _here])
+                    if pdf_here:
+                        pc1.download_button(f"🏷️ Print labels — this job ({len(_here)})",
+                                            pdf_here, file_name=f"labels_{job_id}.pdf",
                                             mime="application/pdf", use_container_width=True,
-                                            key=f"lbl_site_{job_id}")
+                                            key=f"lbl_job_{job_id}")
+                pdf_all = build_asset_labels_pdf([(loc, a) for a in site_assets])
+                if pdf_all:
+                    pc2.download_button(f"🏷️ Print labels — whole site ({len(site_assets)})",
+                                        pdf_all, file_name=f"labels_site_{loc['id']}.pdf",
+                                        mime="application/pdf", use_container_width=True,
+                                        key=f"lbl_site_{job_id}")
+                if pdf_all or pdf_here:
                     st.caption("Avery 5160 / 8160 sheets — 30 labels per page.")
-                else:
-                    st.caption("Label printing needs reportlab, which isn't available here.")
 
                 for a in site_assets:
                     months, expiry = asset_warranty_left(a)

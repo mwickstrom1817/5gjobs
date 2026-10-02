@@ -7,7 +7,7 @@ import requests
 import streamlit as st
 
 from core import now_local, get_logger, compute_hours_rows
-from persistence_pg import load_state, save_state_to_db
+from persistence_pg import load_state, save_state_to_db, ping_db
 from services_email import daily_summary_recipients, build_ops_summary_email, _send_hours_digest_email
 from services_push import send_push
 
@@ -187,6 +187,14 @@ def start_background_scheduler():
                         if ok:
                             backup_done_for = today_str
                         get_logger().log(f"Scheduled backup: {msg}")
+
+                # Keep the serverless DB warm. Without periodic traffic Neon
+                # dozes off, and the first real query of the morning pays a
+                # cold-connection penalty.
+                try:
+                    ping_db()
+                except Exception:
+                    pass
             except Exception as e:
                 get_logger().log(f"Background reminder error: {e}")
             
