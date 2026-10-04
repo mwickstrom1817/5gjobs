@@ -35,6 +35,7 @@ import requests
 from core import (
     now_local, esc_html, get_logger, save_state, load_data,
     refresh_session_from_db, init_db_session, get_db_version,
+    ensure_loaded_into_session,
     _square_icon, get_logo_data_uri, LOGO_PATH, ICON_PATH,
     get_job_stale_days, STALE_JOB_DAYS, followup_jobs,
     get_tech, get_location, agreement_days_left, AGREEMENT_RENEWAL_DAYS,
@@ -535,7 +536,28 @@ init_db_session()
 
 # --- SESSION STATE INITIALIZATION ---
 if "jobs" not in st.session_state:
-    db_data = load_data()
+    try:
+        ensure_loaded_into_session()
+        db_data = dict(st.session_state.db)
+        st.session_state._db_load_error = None
+    except Exception as e:
+        # If the DB didn't load, we still populate defaults so the UI can render,
+        # but we mark the session unsafe-to-save. This prevents a transient load
+        # failure from being written back as a real empty state.
+        st.session_state._db_load_error = str(e)
+        st.error(f"Failed to load data from DB: {e}")
+        db_data = {
+            "jobs": [],
+            "techs": [],
+            "locations": [],
+            "briefing": "Data required to generate briefing.",
+            "adminEmails": [],
+            "agreements": [],
+            "sops": [],
+            "settings": {},
+            "smtp_settings": {},
+            "last_reminder_date": None,
+        }
     st.session_state.jobs = db_data.get("jobs", [])
     st.session_state.techs = db_data.get("techs", [])
     st.session_state.locations = db_data.get("locations", [])
@@ -658,8 +680,11 @@ def main():
     user_name = user.get("name")
 
     # 2. Determine Role (Admin or Tech)
-    # Bootstrapping: If no admins exist in DB, first login becomes Admin
-    if not st.session_state.adminEmails:
+    # Bootstrapping: If no admins exist in DB, first login becomes Admin.
+    # Only bootstrap when we successfully loaded from the DB (db is in session
+    # state). If the DB failed to load we must NOT save empty defaults, or
+    # we'd wipe the real data.
+    if not st.session_state.adminEmails and 'db' in st.session_state:
         st.session_state.adminEmails.append(user_email)
         save_state()
         st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")

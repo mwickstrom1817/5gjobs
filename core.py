@@ -141,6 +141,12 @@ def refresh_session_from_db():
     st.session_state.last_reminder_date = data.get("last_reminder_date")
 
 def save_state(invalidate_briefing=False):
+    if st.session_state.get('_db_load_error'):
+        st.error(
+            "⚠️ Cannot save: the app failed to load data from the database when it started. "
+            "Please refresh the page. If the problem persists, check your DATABASE_URL/NEON_DB_URL secret."
+        )
+        return
     if invalidate_briefing:
         st.session_state.briefing = "Data required to generate briefing."
     _sync_session_to_db()

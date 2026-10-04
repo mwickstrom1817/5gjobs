@@ -66,7 +66,7 @@ def _get_pool():
     with _POOL_LOCK:
         if _POOL is None and not _POOL_FAILED:
             try:
-                _POOL = _pg_pool.ThreadedConnectionPool(minconn=1, maxconn=4, dsn=_resolve_dsn())
+                _POOL = _pg_pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=_resolve_dsn())
             except Exception:
                 _POOL_FAILED = True
                 _POOL = None
@@ -95,24 +95,32 @@ def _db_conn():
         return
     for attempt in range(2):
         conn = pool.getconn()
+        close_conn = False
         try:
             yield conn
             conn.commit()
-            pool.putconn(conn)
             return
         except (psycopg2.OperationalError, psycopg2.InterfaceError):
             # Dead connection (serverless idle timeout): discard and retry once.
+            close_conn = True
             try:
                 conn.rollback()
             except Exception:
                 pass
-            pool.putconn(conn, close=True)
             if attempt == 1:
                 raise
         except Exception:
-            conn.rollback()
-            pool.putconn(conn, close=True)
+            # Any other error (including StaleStateError) rolls back and releases.
+            close_conn = True
+            try:
+                conn.rollback()
+            except Exception:
+                pass
             raise
+        finally:
+            # Guarantee the connection goes back to the pool so we don't leak it,
+            # even if rollback() above raised an exception.
+            pool.putconn(conn, close=close_conn)
 
 
 def init_db():
