@@ -25,8 +25,25 @@ DEFAULT_DATA = {
     "adminEmails": [],
     "construction_emails": [],
     "agreements": [],
+    "sops": [],
+    "settings": {},
+    "smtp_settings": {},
     "last_reminder_date": None
 }
+
+# Per-entity tables. Each row is (id TEXT PK, data JSONB).
+ENTITY_TABLES = ["jobs", "techs", "locations", "agreements", "sops"]
+
+# Global scalar values stored as rows in app_settings.
+SETTINGS_KEYS = [
+    "briefing",
+    "adminEmails",
+    "construction_emails",
+    "last_reminder_date",
+    "settings",
+    "smtp_settings",
+]
+VERSION_KEY = "_version"
 
 # --- Connection pooling -------------------------------------------------------
 # Every interaction used to open a fresh TCP+TLS+auth handshake against a
@@ -125,29 +142,98 @@ def _db_conn():
             pool.putconn(conn, close=close_conn)
 
 
+def _table_ddl(table: str) -> str:
+    return f"""
+        CREATE TABLE IF NOT EXISTS {table} (
+            id TEXT PRIMARY KEY,
+            data JSONB NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+    """
+
+
+def _migrate_legacy_state(cur):
+    """One-time copy from app_state.global_state into per-entity tables.
+
+    Existing data is copied, not moved or deleted. The legacy row is left
+    untouched so it remains a complete fallback backup.
+    """
+    # If the version row exists, migration already happened.
+    cur.execute("SELECT 1 FROM app_settings WHERE key = %s LIMIT 1", (VERSION_KEY,))
+    if cur.fetchone():
+        return
+
+    cur.execute("SELECT value, version FROM app_state WHERE key = 'global_state'")
+    row = cur.fetchone()
+    if not row:
+        return
+
+    data, version = row['value'], row['version']
+    if not data:
+        return
+
+    for table in ENTITY_TABLES:
+        for item in data.get(table, []):
+            if isinstance(item, dict) and item.get("id"):
+                cur.execute(
+                    f"INSERT INTO {table} (id, data) VALUES (%s, %s) "
+                    f"ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data",
+                    (item["id"], json.dumps(item))
+                )
+
+    for key in SETTINGS_KEYS:
+        if key in data:
+            cur.execute(
+                "INSERT INTO app_settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                (key, json.dumps(data[key]))
+            )
+
+    # Seed the global version from the legacy row's version.
+    cur.execute(
+        "INSERT INTO app_settings (key, value, version) VALUES (%s, %s, %s) "
+        "ON CONFLICT (key) DO UPDATE SET version = EXCLUDED.version",
+        (VERSION_KEY, None, version or 1)
+    )
+
+
 def init_db():
-    """Initialize the table if it doesn't exist."""
+    """Initialize the legacy table and new per-entity tables."""
     try:
         with _db_conn() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT to_regclass('app_state');")
-                table_oid = cur.fetchone()[0]
+                # Legacy monolithic row. Kept as a fallback and dual-write backup.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS app_state (
+                        key TEXT PRIMARY KEY,
+                        value JSONB,
+                        version SERIAL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                cur.execute(
+                    "INSERT INTO app_state (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    ('global_state', json.dumps(DEFAULT_DATA))
+                )
 
-                if not table_oid:
-                    cur.execute("""
-                        CREATE TABLE IF NOT EXISTS app_state (
-                            key TEXT PRIMARY KEY,
-                            value JSONB,
-                            version SERIAL,
-                            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                        );
-                    """)
-                    cur.execute(
-                        "INSERT INTO app_state (key, value) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                        ('global_state', json.dumps(DEFAULT_DATA))
-                    )
+                # New per-entity tables.
+                for table in ENTITY_TABLES:
+                    cur.execute(_table_ddl(table))
+
+                # Global settings + optimistic-lock version.
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS app_settings (
+                        key TEXT PRIMARY KEY,
+                        value JSONB,
+                        version SERIAL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+
+                _migrate_legacy_state(cur)
     except Exception as e:
         print(f"DB Init Error: {e}")
+
 
 # Initialize on module load
 try:
@@ -155,8 +241,9 @@ try:
 except Exception as e:
     pass
 
-def load_state():
-    """Returns (data_dict, version_int)."""
+
+def _load_legacy_state():
+    """Fallback load from the old monolithic row."""
     with _db_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT value, version FROM app_state WHERE key = 'global_state'")
@@ -166,10 +253,57 @@ def load_state():
                 return data, row['version']
             return DEFAULT_DATA.copy(), 0
 
+
+def _load_from_tables():
+    """Load and assemble state from per-entity tables.
+
+    Raises an exception if the new schema has not been initialized (no version
+    row), so load_state() can fall back to the legacy row.
+    """
+    data = DEFAULT_DATA.copy()
+    with _db_conn() as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT version FROM app_settings WHERE key = %s", (VERSION_KEY,))
+            row = cur.fetchone()
+            if not row or row[0] is None:
+                raise RuntimeError("New tables not initialized; falling back to legacy state")
+            version = row[0] or 0
+
+            for table in ENTITY_TABLES:
+                cur.execute(f"SELECT data FROM {table}")
+                data[table] = [r['data'] for r in cur.fetchall()]
+
+            cur.execute("SELECT key, value FROM app_settings")
+            settings = {r['key']: r['value'] for r in cur.fetchall()}
+
+            for key in SETTINGS_KEYS:
+                if key in settings:
+                    data[key] = settings[key]
+
+    data = decrypt_state_systems(data)
+    return data, version
+
+
+def load_state():
+    """Returns (data_dict, version_int).
+
+    Reads from the new per-entity tables. If that fails or the tables are
+    empty, falls back to the legacy app_state.global_state row.
+    """
+    if not HAS_PSYCOPG2:
+        return DEFAULT_DATA.copy(), 0
+
+    try:
+        return _load_from_tables()
+    except Exception:
+        return _load_legacy_state()
+
+
 class StaleStateError(Exception):
-    """Raised when the DB row has a newer version than the one this session loaded.
+    """Raised when the DB version is newer than the one this session loaded.
     Saving anyway would silently overwrite someone else's changes."""
     pass
+
 
 # --- Version cache ------------------------------------------------------------
 # get_db_version() is called on every script run (the freshness check) and every
@@ -185,13 +319,18 @@ VERSION_TTL_SECONDS = 5.0
 def _read_db_version():
     with _db_conn() as conn:
         with conn.cursor() as cur:
+            cur.execute("SELECT version FROM app_settings WHERE key = %s", (VERSION_KEY,))
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return row[0]
+            # Fallback to legacy row.
             cur.execute("SELECT version FROM app_state WHERE key = 'global_state'")
             row = cur.fetchone()
             return row[0] if row else None
 
 
 def get_db_version():
-    """Returns the current version of the global state row (None if missing).
+    """Returns the current global version (None if missing).
     Cached for VERSION_TTL_SECONDS; call _read_db_version() when the live
     value is required."""
     now = time.monotonic()
@@ -216,22 +355,55 @@ def ping_db():
 
 
 def save_state_to_db(data, expected_version=None):
-    """Saves data to DB, incrementing version.
-    If expected_version is provided and the row has moved past it (someone else
-    saved first), raises StaleStateError instead of clobbering their changes."""
-    # Encrypt sensitive site credentials before they hit the database. We work
-    # on a copy so the in-memory state remains plaintext for the app to use.
+    """Saves data to per-entity tables, incrementing the global version.
+    If expected_version is provided and the DB has moved past it, raises
+    StaleStateError instead of clobbering someone else's changes.
+
+    Also dual-writes the full state to app_state.global_state as a warm
+    backup until the new schema is proven stable.
+    """
     encrypted_data = encrypt_state_systems(data)
+
     with _db_conn() as conn:
         with conn.cursor() as cur:
             if expected_version is not None:
-                cur.execute("SELECT version FROM app_state WHERE key = 'global_state' FOR UPDATE")
+                cur.execute("SELECT version FROM app_settings WHERE key = %s FOR UPDATE", (VERSION_KEY,))
                 row = cur.fetchone()
-                current_version = row[0] if row else None
+                current_version = row[0] if row and row[0] is not None else None
                 if current_version is not None and current_version != expected_version:
                     raise StaleStateError(
                         f"DB is at version {current_version}, but this session loaded version {expected_version}."
                     )
+
+            # Replace entity tables.
+            for table in ENTITY_TABLES:
+                cur.execute(f"DELETE FROM {table}")
+                for item in encrypted_data.get(table, []):
+                    if isinstance(item, dict) and item.get("id"):
+                        cur.execute(
+                            f"INSERT INTO {table} (id, data) VALUES (%s, %s)",
+                            (item["id"], json.dumps(item))
+                        )
+
+            # Upsert global settings.
+            for key in SETTINGS_KEYS:
+                value = encrypted_data.get(key)
+                cur.execute(
+                    "INSERT INTO app_settings (key, value) VALUES (%s, %s) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    (key, json.dumps(value))
+                )
+
+            # Increment the global version. The version column auto-increments.
+            cur.execute(
+                "INSERT INTO app_settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET version = app_settings.version + 1 "
+                "RETURNING version",
+                (VERSION_KEY, None)
+            )
+            new_version = cur.fetchone()[0]
+
+            # Dual-write legacy backup.
             cur.execute(
                 """
                 INSERT INTO app_state (key, value)
@@ -242,7 +414,7 @@ def save_state_to_db(data, expected_version=None):
                 """,
                 (json.dumps(encrypted_data),)
             )
-            new_version = cur.fetchone()[0]
+
     return new_version
 
 
