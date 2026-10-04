@@ -37,7 +37,7 @@ from core import (
     refresh_session_from_db, init_db_session, get_db_version,
     ensure_loaded_into_session,
     _square_icon, get_logo_data_uri, LOGO_PATH, ICON_PATH,
-    get_job_stale_days, STALE_JOB_DAYS, followup_jobs,
+    get_job_stale_days, STALE_JOB_DAYS,
     get_tech, get_location, agreement_days_left, AGREEMENT_RENEWAL_DAYS,
     PRIORITY_COLORS, find_asset, get_status_color,
 )
@@ -890,28 +890,6 @@ def main():
                     f'<div style="color:#f87171;font-size:13px;font-weight:bold;margin-bottom:6px;">🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days</div>'
                     f'{_rows}</div>',
                     unsafe_allow_html=True)
-
-            # Follow-ups: jobs parked waiting on a customer or vendor. Grouped by who
-            # needs chasing, since that's how the work actually gets divided up.
-            _followups = followup_jobs([j for j in filtered_jobs if j['status'] != 'Completed'])
-            if _followups:
-                st.markdown(f"##### ⏳ Needs Follow-Up — {len(_followups)} job(s)")
-                with st.container(border=True):
-                    _by_action = {}
-                    for j, d, thr, action in _followups:
-                        _by_action.setdefault(action, []).append((j, d, thr))
-                    for action, items in _by_action.items():
-                        st.markdown(f"**{action}**")
-                        for j, d, thr in items:
-                            _l = get_location(j.get('locationId'))
-                            _t = get_tech(j.get('techId'))
-                            _color = "#ef4444" if d >= thr * 2 else "#d97706"
-                            st.markdown(
-                                f"- <span style='color:{_color};font-weight:bold;'>{d}d</span> "
-                                f"**{esc_html(j.get('title', ''))}** — {esc_html(j.get('status'))} · "
-                                f"📍 {esc_html(_l['name'] if _l else 'No site')} · "
-                                f"👤 {esc_html(_t['name'] if _t else 'Unassigned')}",
-                                unsafe_allow_html=True)
 
             # Upcoming contract renewals — admins only (contract values are sensitive)
             if is_admin:
