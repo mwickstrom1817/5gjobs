@@ -6,6 +6,8 @@ from contextlib import contextmanager
 
 import streamlit as st
 
+from crypto import encrypt_state_systems, decrypt_state_systems
+
 try:
     import psycopg2
     from psycopg2.extras import RealDictCursor
@@ -160,7 +162,8 @@ def load_state():
             cur.execute("SELECT value, version FROM app_state WHERE key = 'global_state'")
             row = cur.fetchone()
             if row:
-                return row['value'], row['version']
+                data = decrypt_state_systems(row['value'])
+                return data, row['version']
             return DEFAULT_DATA.copy(), 0
 
 class StaleStateError(Exception):
@@ -216,6 +219,9 @@ def save_state_to_db(data, expected_version=None):
     """Saves data to DB, incrementing version.
     If expected_version is provided and the row has moved past it (someone else
     saved first), raises StaleStateError instead of clobbering their changes."""
+    # Encrypt sensitive site credentials before they hit the database. We work
+    # on a copy so the in-memory state remains plaintext for the app to use.
+    encrypted_data = encrypt_state_systems(data)
     with _db_conn() as conn:
         with conn.cursor() as cur:
             if expected_version is not None:
@@ -234,7 +240,7 @@ def save_state_to_db(data, expected_version=None):
                 DO UPDATE SET value = EXCLUDED.value, version = app_state.version + 1, updated_at = CURRENT_TIMESTAMP
                 RETURNING version;
                 """,
-                (json.dumps(data),)
+                (json.dumps(encrypted_data),)
             )
             new_version = cur.fetchone()[0]
     return new_version

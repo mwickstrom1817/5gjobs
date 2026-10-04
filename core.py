@@ -121,7 +121,11 @@ def _sync_session_to_db():
     st.session_state.db["agreements"] = st.session_state.get("agreements", [])
     st.session_state.db["sops"] = st.session_state.get("sops", [])
     st.session_state.db["settings"] = st.session_state.get("settings", {})
-    st.session_state.db["smtp_settings"] = st.session_state.get("smtp_settings", {})
+    # Never persist the SMTP password to the database. Server/port/email can
+    # be saved, but the password must live in env/secrets only.
+    smtp = dict(st.session_state.get("smtp_settings", {}))
+    smtp.pop("SMTP_PASSWORD", None)
+    st.session_state.db["smtp_settings"] = smtp
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
 
 def refresh_session_from_db():
@@ -687,9 +691,13 @@ class StepTimer:
 
 def get_config_val(key, default=None):
     """SMTP/config lookup, in priority order: saved settings > secrets > env.
-    Was duplicated verbatim inside four different email functions."""
-    if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
-        return st.session_state.smtp_settings[key]
+    Was duplicated verbatim inside four different email functions.
+
+    The SMTP password is never read from saved settings; it must come from
+    secrets or environment so it is not persisted to the database."""
+    if key != "SMTP_PASSWORD":
+        if 'smtp_settings' in st.session_state and st.session_state.smtp_settings.get(key):
+            return st.session_state.smtp_settings[key]
     try:
         if key in st.secrets:
             return st.secrets[key]
@@ -1060,3 +1068,42 @@ def get_image_bytes(url):
     except Exception:
         pass
     return None
+
+
+def validate_state_dict(data: dict) -> tuple:
+    """Validate a backup/state dict before it replaces production data.
+
+    Returns (ok: bool, message: str). Checks required keys, basic structure,
+    duplicate IDs, and referential integrity between jobs, techs, and locations.
+    """
+    required = ["jobs", "techs", "locations"]
+    for k in required:
+        if k not in data:
+            return False, f"Missing required key: {k}"
+        if not isinstance(data[k], list):
+            return False, f"'{k}' must be a list"
+
+    tech_ids = {t.get("id") for t in data["techs"] if t.get("id")}
+    loc_ids = {l.get("id") for l in data["locations"] if l.get("id")}
+
+    seen = {"jobs": set(), "techs": set(), "locations": set()}
+    for entity_type in ("jobs", "techs", "locations"):
+        for item in data[entity_type]:
+            if not isinstance(item, dict):
+                return False, f"Invalid item in {entity_type}: {item!r}"
+            eid = item.get("id")
+            if not eid:
+                return False, f"Missing 'id' in {entity_type} item"
+            if eid in seen[entity_type]:
+                return False, f"Duplicate {entity_type} id: {eid}"
+            seen[entity_type].add(eid)
+
+    for job in data["jobs"]:
+        tech_id = job.get("techId")
+        loc_id = job.get("locationId")
+        if tech_id and tech_id not in tech_ids:
+            return False, f"Job '{job.get('id')}' references unknown tech '{tech_id}'"
+        if loc_id and loc_id not in loc_ids:
+            return False, f"Job '{job.get('id')}' references unknown location '{loc_id}'"
+
+    return True, "State dict is valid"

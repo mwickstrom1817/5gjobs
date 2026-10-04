@@ -46,8 +46,22 @@ except ImportError:
 
 # ── App ────────────────────────────────────────────────────────────────────────
 
+def _get_cors_origins() -> list:
+    """Allowed CORS origins. Restricted to the app URL by default; open CORS
+    with credentials is a security risk. Override with ALLOWED_ORIGINS env var
+    (comma-separated)."""
+    origins = os.environ.get("ALLOWED_ORIGINS", "")
+    if origins:
+        return [o.strip() for o in origins.split(",") if o.strip()]
+    app_url = os.environ.get("APP_URL", "").rstrip("/")
+    if app_url:
+        return [app_url]
+    # Safe development fallback only.
+    return ["http://localhost:8501", "http://127.0.0.1:8501"]
+
+
 app = FastAPI(title="5G Security Job Board API", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+app.add_middleware(CORSMiddleware, allow_origins=_get_cors_origins(), allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("startup")
@@ -484,11 +498,24 @@ def regen_briefing(user: dict = Depends(verify_google_token)):
     state["briefing"] = b; save_state(invalidate_briefing=False); return {"briefing": b}
 
 @app.post("/chat")
+def _safe_locations_for_ai(locations: list) -> list:
+    """Strip site credentials/systems (logins, passwords, IPs) before sending
+    location data to the external LLM API."""
+    return [{k: v for k, v in l.items() if k not in ('credentials', 'systems')} for l in locations]
+
+
+@app.post("/chat")
 def chat(msg: ChatIn, user: dict = Depends(verify_google_token)):
     api_key = get_api_key()
     if not api_key or not HAS_GENAI: raise HTTPException(503, "AI not available")
     state = get_state(); client, model = get_model(api_key)
-    ctx = f"You are an AI assistant for the 5G Security Job Board.\nJobs: {json.dumps(state['jobs'],default=str)}\nTechs: {json.dumps(state['techs'])}\nLocations: {json.dumps(state['locations'])}"
+    safe_locations = _safe_locations_for_ai(state.get('locations', []))
+    ctx = (
+        f"You are an AI assistant for the 5G Security Job Board.\n"
+        f"Jobs: {json.dumps(state['jobs'], default=str)}\n"
+        f"Techs: {json.dumps(state['techs'])}\n"
+        f"Locations: {json.dumps(safe_locations)}"
+    )
     contents = [{"role":"user","parts":[ctx]}] + (msg.history or []) + [{"role":"user","parts":[msg.message]}]
     try: return {"reply": client.models.generate_content(model=model, contents=contents).text}
     except Exception as e: raise HTTPException(500, str(e))

@@ -10,7 +10,7 @@ import streamlit as st
 from core import (
     now_local, save_state, get_logger, _sync_session_to_db,
     SKILL_OPTIONS, TECH_COLORS, download_data_as_csv, download_data_as_json,
-    expiring_assets,
+    expiring_assets, validate_state_dict,
 )
 from persistence_pg import (
     load_state, ensure_loaded_into_session, commit_from_session,
@@ -64,22 +64,23 @@ def _admin_email():
                 current_smtp = {
                     "SMTP_SERVER": st.secrets.get("SMTP_SERVER", ""),
                     "SMTP_PORT": st.secrets.get("SMTP_PORT", 587),
-                    "SMTP_EMAIL": st.secrets.get("SMTP_EMAIL", ""),
-                    "SMTP_PASSWORD": st.secrets.get("SMTP_PASSWORD", "")
+                    "SMTP_EMAIL": st.secrets.get("SMTP_EMAIL", "")
                 }
             s_server = st.text_input("SMTP Server", value=current_smtp.get("SMTP_SERVER", ""))
             s_port = st.number_input("SMTP Port", value=int(current_smtp.get("SMTP_PORT", 587)))
             s_email = st.text_input("Sender Email", value=current_smtp.get("SMTP_EMAIL", ""))
-            s_pass = st.text_input("Sender Password", value=current_smtp.get("SMTP_PASSWORD", ""), type="password")
+            # Password is read from secrets/env at send time and is never persisted to the DB.
+            pw_source = "Secrets" if "SMTP_PASSWORD" in st.secrets else ("Env" if os.environ.get("SMTP_PASSWORD") else "Not set")
+            st.text_input("Sender Password", value="••••••••", type="password", disabled=True,
+                          help=f"Password is read from {pw_source} and is not stored in the database.")
             if st.form_submit_button("Save SMTP Settings"):
                 st.session_state.smtp_settings = {
                     "SMTP_SERVER": s_server,
                     "SMTP_PORT": s_port,
-                    "SMTP_EMAIL": s_email,
-                    "SMTP_PASSWORD": s_pass
+                    "SMTP_EMAIL": s_email
                 }
                 save_state(invalidate_briefing=False)
-                st.toast("SMTP Settings Saved to Database!", icon="✅")
+                st.toast("SMTP Settings Saved!", icon="✅")
                 st.rerun()
 
     st.subheader("📧 Daily Summary Email")
@@ -339,9 +340,9 @@ def _admin_data():
             if st.button("⚠️ Restore from Backup", key="restore_btn"):
                 try:
                     data = json.load(uploaded_file)
-                    required_keys = ["jobs", "techs", "locations"]
-                    if not all(k in data for k in required_keys):
-                        st.error("Invalid backup file format.")
+                    ok, msg = validate_state_dict(data)
+                    if not ok:
+                        st.error(f"Invalid backup: {msg}")
                     else:
                         st.session_state.jobs = data["jobs"]
                         st.session_state.techs = data["techs"]
