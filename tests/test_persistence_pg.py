@@ -32,6 +32,21 @@ def fake_conn():
         "versions": {"app_settings": 0, "app_state": 0},
     }
 
+    def _insert_entity(table, params):
+        """Handle single or multi-row entity INSERTs."""
+        # params is a flat list: [id1, json1, id2, json2, ...]
+        it = iter(params)
+        for eid, data_json in zip(it, it):
+            state[table][eid] = json.loads(data_json)
+
+    def _insert_settings(params):
+        """Handle single or multi-row app_settings INSERTs."""
+        it = iter(params)
+        for key, val in zip(it, it):
+            if isinstance(val, str):
+                val = json.loads(val)
+            state["app_settings"][key] = val
+
     def execute(sql, params=None):
         sql = sql.strip()
         params = params or ()
@@ -99,19 +114,15 @@ def fake_conn():
 
         # INSERT INTO app_settings (with or without explicit version)
         if "INSERT INTO app_settings" in sql and "ON CONFLICT" in sql:
-            key = params[0]
-            val = params[1]
-            if isinstance(val, str):
-                val = json.loads(val)
-            # Migration sets version explicitly as third param.
-            if len(params) >= 3 and params[2] is not None:
-                state["versions"]["app_settings"] = params[2]
+            # Migration sets version explicitly as the third param: ('_version', None, version).
+            if len(params) == 3 and params[2] is not None:
+                state["versions"]["app_settings"] = int(params[2])
             if "RETURNING version" in sql:
-                state["versions"]["app_settings"] += 1
-                state["app_settings"][key] = val
+                state["versions"]["app_settings"] = int(state["versions"]["app_settings"]) + 1
+                _insert_settings(params[:2])
                 cur.fetchone.return_value = (state["versions"]["app_settings"],)
             else:
-                state["app_settings"][key] = val
+                _insert_settings(params[:2])
             return
 
         # DELETE FROM <entity>
@@ -123,18 +134,12 @@ def fake_conn():
         # INSERT INTO <entity>
         if sql.startswith("INSERT INTO") and any(t in sql.split()[2] for t in pg.ENTITY_TABLES):
             table = sql.split()[2]
-            eid, data_json = params
-            state[table][eid] = json.loads(data_json)
+            _insert_entity(table, params)
             return
 
         raise NotImplementedError(f"Unhandled SQL in mock: {sql} params={params}")
 
-    def executemany(sql, params_list):
-        for params in params_list:
-            execute(sql, params)
-
     cur.execute.side_effect = execute
-    cur.executemany.side_effect = executemany
     return conn, state
 
 
@@ -206,6 +211,35 @@ def test_save_state_to_db_writes_entities_and_increments_version(fake_conn):
     assert new_ver == 2
     assert state["jobs"]["j1"]["title"] == "T"
     assert state["app_settings"]["briefing"] == "b"
+
+
+def test_save_state_to_db_writes_only_dirty_tables(fake_conn):
+    conn, state = fake_conn
+    state["versions"]["app_settings"] = 1
+    state["app_settings"][pg.VERSION_KEY] = None
+    # Pre-seed techs so we can verify it is NOT cleared when jobs is dirty.
+    state["techs"]["t1"] = {"id": "t1", "name": "N"}
+
+    data = {
+        "jobs": [{"id": "j1", "title": "T"}],
+        "techs": [{"id": "t1", "name": "N"}],
+        "locations": [],
+        "agreements": [],
+        "sops": [],
+        "briefing": "b",
+        "adminEmails": [],
+        "settings": {},
+        "smtp_settings": {},
+        "last_reminder_date": None,
+    }
+
+    with patch.object(pg, "_db_conn", return_value=conn):
+        new_ver = pg.save_state_to_db(data, expected_version=1, dirty_tables=["jobs"])
+
+    assert new_ver == 2
+    assert state["jobs"]["j1"]["title"] == "T"
+    # techs should still have the pre-seeded row because it was not dirty.
+    assert state["techs"]["t1"]["name"] == "N"
 
 
 def test_save_state_to_db_raises_stale_state(fake_conn):

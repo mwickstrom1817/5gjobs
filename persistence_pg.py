@@ -2,6 +2,7 @@ import os
 import json
 import time
 import threading
+import hashlib
 from contextlib import contextmanager
 
 import streamlit as st
@@ -354,16 +355,18 @@ def ping_db():
             cur.fetchone()
 
 
-def save_state_to_db(data, expected_version=None):
+def save_state_to_db(data, expected_version=None, dirty_tables=None):
     """Saves data to per-entity tables, incrementing the global version.
     If expected_version is provided and the DB has moved past it, raises
     StaleStateError instead of clobbering someone else's changes.
 
-    Entity rows are inserted with executemany to avoid a round-trip per row.
-    The legacy app_state.global_state row is no longer dual-written on every
-    save; it is kept only as a fallback snapshot from the migration.
+    Only tables named in dirty_tables are rewritten. When omitted, all entity
+    tables are rewritten (legacy behavior). Entity rows are sent as a single
+    multi-row INSERT per table to minimize round-trips. The legacy
+    app_state.global_state row is no longer dual-written on every save.
     """
     encrypted_data = encrypt_state_systems(data)
+    tables_to_write = set(dirty_tables) if dirty_tables else set(ENTITY_TABLES)
 
     with _db_conn() as conn:
         with conn.cursor() as cur:
@@ -376,8 +379,10 @@ def save_state_to_db(data, expected_version=None):
                         f"DB is at version {current_version}, but this session loaded version {expected_version}."
                     )
 
-            # Replace entity tables in bulk.
+            # Replace only dirty entity tables in a single multi-row INSERT.
             for table in ENTITY_TABLES:
+                if table not in tables_to_write:
+                    continue
                 cur.execute(f"DELETE FROM {table}")
                 rows = [
                     (item["id"], json.dumps(item))
@@ -385,21 +390,25 @@ def save_state_to_db(data, expected_version=None):
                     if isinstance(item, dict) and item.get("id")
                 ]
                 if rows:
-                    cur.executemany(
-                        f"INSERT INTO {table} (id, data) VALUES (%s, %s)",
-                        rows
+                    placeholders = ",".join(["(%s, %s)"] * len(rows))
+                    params = [p for row in rows for p in row]
+                    cur.execute(
+                        f"INSERT INTO {table} (id, data) VALUES {placeholders}",
+                        params
                     )
 
-            # Upsert global settings in bulk.
+            # Upsert global settings in a single multi-row statement.
             setting_rows = [
                 (key, json.dumps(encrypted_data.get(key)))
                 for key in SETTINGS_KEYS
             ]
             if setting_rows:
-                cur.executemany(
-                    "INSERT INTO app_settings (key, value) VALUES (%s, %s) "
-                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-                    setting_rows
+                placeholders = ",".join(["(%s, %s)"] * len(setting_rows))
+                params = [p for row in setting_rows for p in row]
+                cur.execute(
+                    f"INSERT INTO app_settings (key, value) VALUES {placeholders} "
+                    f"ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+                    params
                 )
 
             # Increment the global version. The version column auto-increments.
@@ -414,17 +423,47 @@ def save_state_to_db(data, expected_version=None):
     return new_version
 
 
+def _hash_entities(items):
+    """Stable hash of an entity list for dirty-table detection."""
+    return hashlib.sha256(
+        json.dumps(items, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def store_db_hashes(data):
+    """Remember hashes of the last-loaded/saved entity lists."""
+    st.session_state._db_hashes = {
+        table: _hash_entities(data.get(table, []))
+        for table in ENTITY_TABLES
+    }
+
+
+def compute_dirty_tables():
+    """Compare current session entity lists to their last-known hashes."""
+    stored = st.session_state.get("_db_hashes", {})
+    dirty = []
+    for table in ENTITY_TABLES:
+        current = st.session_state.get(table, [])
+        if _hash_entities(current) != stored.get(table):
+            dirty.append(table)
+    return dirty
+
+
 def ensure_loaded_into_session():
     """Ensures st.session_state.db is populated."""
     if 'db' not in st.session_state:
         data, version = load_state()
         st.session_state.db = data
         st.session_state._db_version = version
+        store_db_hashes(data)
 
 
-def commit_from_session(invalidate_briefing=True):
+def commit_from_session(invalidate_briefing=True, dirty_tables=None):
     """Saves st.session_state.db to DB.
-    Raises StaleStateError if another session saved since this one loaded."""
+    Raises StaleStateError if another session saved since this one loaded.
+
+    If dirty_tables is provided, only those entity tables are rewritten.
+    """
     if 'db' not in st.session_state:
         return
 
@@ -432,8 +471,13 @@ def commit_from_session(invalidate_briefing=True):
         st.session_state.db['briefing'] = "Data required to generate briefing."
 
     try:
-        new_ver = save_state_to_db(st.session_state.db, expected_version=st.session_state.get('_db_version'))
+        new_ver = save_state_to_db(
+            st.session_state.db,
+            expected_version=st.session_state.get('_db_version'),
+            dirty_tables=dirty_tables
+        )
         st.session_state._db_version = new_ver
+        store_db_hashes(st.session_state.db)
     except StaleStateError:
         raise
     except Exception as e:
@@ -451,5 +495,6 @@ def force_overwrite_from_session(invalidate_briefing=False):
     try:
         new_ver = save_state_to_db(st.session_state.db)
         st.session_state._db_version = new_ver
+        store_db_hashes(st.session_state.db)
     except Exception as e:
         st.error(f"Failed to save to DB: {e}")

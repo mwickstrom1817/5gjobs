@@ -26,6 +26,9 @@ from persistence_pg import (
     load_state,
     get_db_version,
     StaleStateError,
+    ENTITY_TABLES,
+    compute_dirty_tables,
+    store_db_hashes,
 )
 from object_store import upload_streamlit_file, upload_bytes, get_view_url
 
@@ -143,6 +146,7 @@ def refresh_session_from_db():
     st.session_state.settings = data.get("settings", {})
     st.session_state.smtp_settings = data.get("smtp_settings", {})
     st.session_state.last_reminder_date = data.get("last_reminder_date")
+    store_db_hashes(data)
 
 def save_state(invalidate_briefing=False):
     if st.session_state.get('_db_load_error'):
@@ -153,9 +157,10 @@ def save_state(invalidate_briefing=False):
         return
     if invalidate_briefing:
         st.session_state.briefing = "Data required to generate briefing."
+    dirty_tables = compute_dirty_tables()
     _sync_session_to_db()
     try:
-        commit_from_session(invalidate_briefing=invalidate_briefing)
+        commit_from_session(invalidate_briefing=invalidate_briefing, dirty_tables=dirty_tables)
     except StaleStateError:
         # Someone else saved while this session held old data. Don't clobber their
         # changes - reload fresh state and ask the user to re-apply theirs.
