@@ -284,9 +284,11 @@ def _load_from_tables():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute("SELECT version FROM app_settings WHERE key = %s", (VERSION_KEY,))
             row = cur.fetchone()
-            if not row or row[0] is None:
+            # RealDictCursor returns a dict-like row, but tests/mock may return a tuple.
+            row_version = row.get("version") if isinstance(row, dict) else row[0] if row else None
+            if row_version is None:
                 raise RuntimeError("New tables not initialized; falling back to legacy state")
-            version = row[0] or 0
+            version = row_version or 0
 
             for table in ENTITY_TABLES:
                 cur.execute(f"SELECT data FROM {table}")
