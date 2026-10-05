@@ -147,6 +147,8 @@ def refresh_session_from_db():
     st.session_state.smtp_settings = data.get("smtp_settings", {})
     st.session_state.last_reminder_date = data.get("last_reminder_date")
     store_db_hashes(data)
+    from persistence_pg import clear_db_version_cache
+    clear_db_version_cache()
 
 def save_state(invalidate_briefing=False):
     if st.session_state.get('_db_load_error'):

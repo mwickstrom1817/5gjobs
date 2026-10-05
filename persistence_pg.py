@@ -346,6 +346,16 @@ def get_db_version():
     return version
 
 
+def clear_db_version_cache():
+    """Clear the in-memory version cache so the next check reads from the DB.
+
+    Called after our own saves and after explicit reloads so we never compare
+    a freshly updated _db_version against a stale cached value."""
+    with _VER_LOCK:
+        _VER_CACHE["version"] = None
+        _VER_CACHE["at"] = 0.0
+
+
 def ping_db():
     """Cheap liveness query; calling this periodically keeps a serverless
     database from dozing off between active periods."""
@@ -455,6 +465,7 @@ def save_state_to_db(data, expected_version=None, dirty_tables=None, entity_chan
             )
             new_version = cur.fetchone()[0]
 
+    clear_db_version_cache()
     return new_version
 
 
@@ -539,11 +550,13 @@ def compute_entity_changes(data):
 
 def ensure_loaded_into_session():
     """Ensures st.session_state.db is populated."""
-    if 'db' not in st.session_state:
+    db_hashes = st.session_state.get('_db_hashes')
+    if 'db' not in st.session_state or not isinstance(db_hashes, dict):
         data, version = load_state()
         st.session_state.db = data
         st.session_state._db_version = version
         store_db_hashes(data)
+        clear_db_version_cache()
 
 
 def commit_from_session(invalidate_briefing=True, dirty_tables=None, entity_changes=None):
