@@ -61,27 +61,41 @@ def _decrypt(password: str, token: str) -> str:
     return Fernet(key).decrypt(base64.urlsafe_b64decode(ct_b64)).decode("utf-8")
 
 
-def encrypt_state_systems(state: dict) -> dict:
-    """Return a deep copy of state with location['systems'] encrypted.
+def encrypt_location(loc: dict) -> dict:
+    """Return a shallow copy of a location with its systems list encrypted.
 
-    Plaintext list values are serialized and encrypted; already-encrypted string
-    values are left untouched. If no encryption key is configured, the state is
-    returned unchanged.
+    Already-encrypted string values are left untouched. If no encryption key is
+    configured, the location is returned unchanged (still shallow-copied).
+    """
+    if not isinstance(loc, dict):
+        return loc
+    password = get_encryption_key()
+    loc = dict(loc)
+    systems = loc.get("systems")
+    if password and HAS_CRYPTO and isinstance(systems, list):
+        try:
+            loc["systems"] = _encrypt(password, json.dumps(systems))
+        except Exception:
+            # Encryption failure must not block a save; leave plaintext so
+            # the app keeps working. A warning is logged by the caller.
+            pass
+    return loc
+
+
+def encrypt_state_systems(state: dict) -> dict:
+    """Return a copy of state with location['systems'] encrypted.
+
+    Only the top-level state dict and each location dict are shallow-copied;
+    jobs/techs/etc. are not deep-copied. Plaintext list values are serialized
+    and encrypted; already-encrypted string values are left untouched. If no
+    encryption key is configured, the state is returned unchanged.
     """
     password = get_encryption_key()
     if not password or not HAS_CRYPTO:
         return state
 
-    state = copy.deepcopy(state)
-    for loc in state.get("locations", []):
-        systems = loc.get("systems")
-        if isinstance(systems, list):
-            try:
-                loc["systems"] = _encrypt(password, json.dumps(systems))
-            except Exception:
-                # Encryption failure must not block a save; leave plaintext so
-                # the app keeps working. A warning is logged by the caller.
-                pass
+    state = dict(state)
+    state["locations"] = [encrypt_location(loc) for loc in state.get("locations", [])]
     return state
 
 

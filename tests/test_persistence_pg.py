@@ -125,10 +125,16 @@ def fake_conn():
                 _insert_settings(params[:2])
             return
 
-        # DELETE FROM <entity>
+        # DELETE FROM <entity> (full or by id list)
         if sql.startswith("DELETE FROM") and any(t in sql for t in pg.ENTITY_TABLES):
-            table = sql.split("FROM")[1].strip()
-            state[table].clear()
+            parts = sql.split()
+            table = parts[parts.index("FROM") + 1]
+            if "WHERE" in sql:
+                ids = params[0] if params else []
+                for eid in ids:
+                    state[table].pop(eid, None)
+            else:
+                state[table].clear()
             return
 
         # INSERT INTO <entity>
@@ -240,6 +246,71 @@ def test_save_state_to_db_writes_only_dirty_tables(fake_conn):
     assert state["jobs"]["j1"]["title"] == "T"
     # techs should still have the pre-seeded row because it was not dirty.
     assert state["techs"]["t1"]["name"] == "N"
+
+
+def test_save_state_to_db_writes_only_changed_rows(fake_conn):
+    conn, state = fake_conn
+    state["versions"]["app_settings"] = 1
+    state["app_settings"][pg.VERSION_KEY] = None
+    # Pre-seed existing rows.
+    state["jobs"]["j1"] = {"id": "j1", "title": "Old"}
+    state["techs"]["t1"] = {"id": "t1", "name": "Tech"}
+
+    data = {
+        "jobs": [{"id": "j1", "title": "New"}, {"id": "j2", "title": "Added"}],
+        "techs": [{"id": "t1", "name": "Tech"}],
+        "locations": [],
+        "agreements": [],
+        "sops": [],
+        "briefing": "b",
+        "adminEmails": [],
+        "settings": {},
+        "smtp_settings": {},
+        "last_reminder_date": None,
+    }
+    entity_changes = {
+        "jobs": {
+            "upsert": [{"id": "j1", "title": "New"}, {"id": "j2", "title": "Added"}],
+            "delete": [],
+        }
+    }
+
+    with patch.object(pg, "_db_conn", return_value=conn):
+        new_ver = pg.save_state_to_db(data, expected_version=1, entity_changes=entity_changes)
+
+    assert new_ver == 2
+    assert state["jobs"]["j1"]["title"] == "New"
+    assert state["jobs"]["j2"]["title"] == "Added"
+    # Unchanged table should not have been touched.
+    assert state["techs"]["t1"]["name"] == "Tech"
+
+
+def test_save_state_to_db_deletes_removed_rows(fake_conn):
+    conn, state = fake_conn
+    state["versions"]["app_settings"] = 1
+    state["app_settings"][pg.VERSION_KEY] = None
+    state["jobs"]["j1"] = {"id": "j1", "title": "Gone"}
+    state["jobs"]["j2"] = {"id": "j2", "title": "Keep"}
+
+    data = {
+        "jobs": [{"id": "j2", "title": "Keep"}],
+        "techs": [],
+        "locations": [],
+        "agreements": [],
+        "sops": [],
+        "briefing": "b",
+        "adminEmails": [],
+        "settings": {},
+        "smtp_settings": {},
+        "last_reminder_date": None,
+    }
+    entity_changes = {"jobs": {"upsert": [], "delete": ["j1"]}}
+
+    with patch.object(pg, "_db_conn", return_value=conn):
+        pg.save_state_to_db(data, expected_version=1, entity_changes=entity_changes)
+
+    assert "j1" not in state["jobs"]
+    assert state["jobs"]["j2"]["title"] == "Keep"
 
 
 def test_save_state_to_db_raises_stale_state(fake_conn):

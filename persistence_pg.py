@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 import streamlit as st
 
-from crypto import encrypt_state_systems, decrypt_state_systems
+from crypto import encrypt_state_systems, decrypt_state_systems, encrypt_location
 
 try:
     import psycopg2
@@ -355,17 +355,31 @@ def ping_db():
             cur.fetchone()
 
 
-def save_state_to_db(data, expected_version=None, dirty_tables=None):
+def _entity_rows_for_table(table, items):
+    """Build (id, json) pairs for a list of entity dicts, encrypting location
+    systems when necessary."""
+    rows = []
+    for item in items:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        if table == "locations":
+            item = encrypt_location(item)
+        rows.append((item["id"], json.dumps(item)))
+    return rows
+
+
+def save_state_to_db(data, expected_version=None, dirty_tables=None, entity_changes=None):
     """Saves data to per-entity tables, incrementing the global version.
     If expected_version is provided and the DB has moved past it, raises
     StaleStateError instead of clobbering someone else's changes.
 
-    Only tables named in dirty_tables are rewritten. When omitted, all entity
-    tables are rewritten (legacy behavior). Entity rows are sent as a single
-    multi-row INSERT per table to minimize round-trips. The legacy
+    entity_changes is a dict of table -> {"upsert": [...], "delete": [ids...]}.
+    When provided, only those rows are touched. When omitted, dirty_tables
+    controls full-table rewrites (legacy behavior). Entity rows are sent as a
+    single multi-row statement per table to minimize round-trips. The legacy
     app_state.global_state row is no longer dual-written on every save.
     """
-    encrypted_data = encrypt_state_systems(data)
+    use_row_changes = bool(entity_changes)
     tables_to_write = set(dirty_tables) if dirty_tables else set(ENTITY_TABLES)
 
     with _db_conn() as conn:
@@ -379,27 +393,48 @@ def save_state_to_db(data, expected_version=None, dirty_tables=None):
                         f"DB is at version {current_version}, but this session loaded version {expected_version}."
                     )
 
-            # Replace only dirty entity tables in a single multi-row INSERT.
-            for table in ENTITY_TABLES:
-                if table not in tables_to_write:
-                    continue
-                cur.execute(f"DELETE FROM {table}")
-                rows = [
-                    (item["id"], json.dumps(item))
-                    for item in encrypted_data.get(table, [])
-                    if isinstance(item, dict) and item.get("id")
-                ]
-                if rows:
-                    placeholders = ",".join(["(%s, %s)"] * len(rows))
-                    params = [p for row in rows for p in row]
-                    cur.execute(
-                        f"INSERT INTO {table} (id, data) VALUES {placeholders}",
-                        params
-                    )
+            if use_row_changes:
+                # Row-level incremental write: only changed/new/deleted rows.
+                for table, change in entity_changes.items():
+                    delete_ids = change.get("delete", [])
+                    if delete_ids:
+                        cur.execute(
+                            f"DELETE FROM {table} WHERE id = ANY(%s::text[])",
+                            (delete_ids,)
+                        )
+                    upsert = change.get("upsert", [])
+                    rows = _entity_rows_for_table(table, upsert)
+                    if rows:
+                        placeholders = ",".join(["(%s, %s)"] * len(rows))
+                        params = [p for row in rows for p in row]
+                        cur.execute(
+                            f"INSERT INTO {table} (id, data) VALUES {placeholders} "
+                            f"ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data",
+                            params
+                        )
+            else:
+                # Full-table rewrite fallback (force overwrite / legacy callers).
+                encrypted_data = encrypt_state_systems(data)
+                for table in ENTITY_TABLES:
+                    if table not in tables_to_write:
+                        continue
+                    cur.execute(f"DELETE FROM {table}")
+                    rows = [
+                        (item["id"], json.dumps(item))
+                        for item in encrypted_data.get(table, [])
+                        if isinstance(item, dict) and item.get("id")
+                    ]
+                    if rows:
+                        placeholders = ",".join(["(%s, %s)"] * len(rows))
+                        params = [p for row in rows for p in row]
+                        cur.execute(
+                            f"INSERT INTO {table} (id, data) VALUES {placeholders}",
+                            params
+                        )
 
             # Upsert global settings in a single multi-row statement.
             setting_rows = [
-                (key, json.dumps(encrypted_data.get(key)))
+                (key, json.dumps(data.get(key)))
                 for key in SETTINGS_KEYS
             ]
             if setting_rows:
@@ -423,6 +458,13 @@ def save_state_to_db(data, expected_version=None, dirty_tables=None):
     return new_version
 
 
+def _hash_item(item):
+    """Stable hash of a single entity dict for dirty-row detection."""
+    return hashlib.sha256(
+        json.dumps(item, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
 def _hash_entities(items):
     """Stable hash of an entity list for dirty-table detection."""
     return hashlib.sha256(
@@ -431,9 +473,13 @@ def _hash_entities(items):
 
 
 def store_db_hashes(data):
-    """Remember hashes of the last-loaded/saved entity lists."""
+    """Remember per-entity hashes of the last-loaded/saved entity lists."""
     st.session_state._db_hashes = {
-        table: _hash_entities(data.get(table, []))
+        table: {
+            item["id"]: _hash_item(item)
+            for item in data.get(table, [])
+            if isinstance(item, dict) and item.get("id")
+        }
         for table in ENTITY_TABLES
     }
 
@@ -449,6 +495,35 @@ def compute_dirty_tables():
     return dirty
 
 
+def compute_entity_changes(data):
+    """Compare current entities to last-known per-entity hashes.
+
+    Returns a dict mapping table name -> {"upsert": [...], "delete": [id, ...]}.
+    Only items that are new or changed are included in upsert; delete lists ids
+    that existed in the last saved snapshot but are missing now.
+    """
+    stored = st.session_state.get("_db_hashes", {})
+    changes = {}
+    for table in ENTITY_TABLES:
+        current_items = [
+            item for item in data.get(table, [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        current_by_id = {item["id"]: item for item in current_items}
+        prev_hashes = stored.get(table, {})
+
+        upsert = []
+        for eid, item in current_by_id.items():
+            if prev_hashes.get(eid) != _hash_item(item):
+                upsert.append(item)
+
+        delete_ids = [eid for eid in prev_hashes if eid not in current_by_id]
+
+        if upsert or delete_ids:
+            changes[table] = {"upsert": upsert, "delete": delete_ids}
+    return changes
+
+
 def ensure_loaded_into_session():
     """Ensures st.session_state.db is populated."""
     if 'db' not in st.session_state:
@@ -458,11 +533,12 @@ def ensure_loaded_into_session():
         store_db_hashes(data)
 
 
-def commit_from_session(invalidate_briefing=True, dirty_tables=None):
+def commit_from_session(invalidate_briefing=True, dirty_tables=None, entity_changes=None):
     """Saves st.session_state.db to DB.
     Raises StaleStateError if another session saved since this one loaded.
 
-    If dirty_tables is provided, only those entity tables are rewritten.
+    If entity_changes is provided, only those rows are touched. If dirty_tables
+    is provided without entity_changes, those tables are fully rewritten.
     """
     if 'db' not in st.session_state:
         return
@@ -474,7 +550,8 @@ def commit_from_session(invalidate_briefing=True, dirty_tables=None):
         new_ver = save_state_to_db(
             st.session_state.db,
             expected_version=st.session_state.get('_db_version'),
-            dirty_tables=dirty_tables
+            dirty_tables=dirty_tables,
+            entity_changes=entity_changes
         )
         st.session_state._db_version = new_ver
         store_db_hashes(st.session_state.db)
