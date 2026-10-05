@@ -487,10 +487,17 @@ def store_db_hashes(data):
 def compute_dirty_tables():
     """Compare current session entity lists to their last-known hashes."""
     stored = st.session_state.get("_db_hashes", {})
+    if not isinstance(stored, dict):
+        stored = {}
     dirty = []
     for table in ENTITY_TABLES:
         current = st.session_state.get(table, [])
-        if _hash_entities(current) != stored.get(table):
+        prev_hash = stored.get(table)
+        if isinstance(prev_hash, dict):
+            # New per-entity format can't be compared with a single table hash,
+            # so treat as dirty to force a fresh snapshot on save.
+            dirty.append(table)
+        elif _hash_entities(current) != prev_hash:
             dirty.append(table)
     return dirty
 
@@ -503,6 +510,10 @@ def compute_entity_changes(data):
     that existed in the last saved snapshot but are missing now.
     """
     stored = st.session_state.get("_db_hashes", {})
+    # Older sessions stored a single table-level hash string. Treat that as
+    # unknown so we rebuild the per-entity hash map on the next save.
+    if not isinstance(stored, dict):
+        stored = {}
     changes = {}
     for table in ENTITY_TABLES:
         current_items = [
@@ -511,6 +522,8 @@ def compute_entity_changes(data):
         ]
         current_by_id = {item["id"]: item for item in current_items}
         prev_hashes = stored.get(table, {})
+        if not isinstance(prev_hashes, dict):
+            prev_hashes = {}
 
         upsert = []
         for eid, item in current_by_id.items():
