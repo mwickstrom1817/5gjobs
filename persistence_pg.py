@@ -86,7 +86,9 @@ def _get_pool():
     with _POOL_LOCK:
         if _POOL is None and not _POOL_FAILED:
             try:
-                _POOL = _pg_pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=_resolve_dsn())
+                # A few more connections than before; the real backstop is the
+                # fallback in _db_conn() when the pool is exhausted.
+                _POOL = _pg_pool.ThreadedConnectionPool(minconn=1, maxconn=20, dsn=_resolve_dsn())
             except Exception:
                 _POOL_FAILED = True
                 _POOL = None
@@ -113,8 +115,24 @@ def _db_conn():
         finally:
             conn.close()
         return
+
     for attempt in range(2):
-        conn = pool.getconn()
+        try:
+            conn = pool.getconn()
+        except _pg_pool.PoolError:
+            # Pool exhausted: create a one-off connection so the user action still
+            # works. We close it ourselves because it is not from the pool.
+            conn = psycopg2.connect(_resolve_dsn())
+            try:
+                yield conn
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+            return
+
         close_conn = False
         try:
             yield conn
@@ -288,16 +306,25 @@ def _load_from_tables():
 def load_state():
     """Returns (data_dict, version_int).
 
-    Reads from the new per-entity tables. If that fails or the tables are
-    empty, falls back to the legacy app_state.global_state row.
+    Reads from the new per-entity tables. Only falls back to the legacy
+    app_state.global_state row when the new schema has not been initialized
+    (no _version row / missing tables). Other errors are raised so connection
+    or permission problems are visible instead of silently showing legacy data.
     """
     if not HAS_PSYCOPG2:
         return DEFAULT_DATA.copy(), 0
 
     try:
         return _load_from_tables()
-    except Exception:
+    except RuntimeError:
+        # New tables exist but have not been seeded yet (migration path).
         return _load_legacy_state()
+    except psycopg2.OperationalError as e:
+        # Missing tables also surface as OperationalError (42P01). Treat those
+        # as a migration fallback; anything else (auth/network) should fail loud.
+        if "42P01" in str(e) or "does not exist" in str(e).lower():
+            return _load_legacy_state()
+        raise
 
 
 class StaleStateError(Exception):
