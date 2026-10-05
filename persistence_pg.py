@@ -359,8 +359,9 @@ def save_state_to_db(data, expected_version=None):
     If expected_version is provided and the DB has moved past it, raises
     StaleStateError instead of clobbering someone else's changes.
 
-    Also dual-writes the full state to app_state.global_state as a warm
-    backup until the new schema is proven stable.
+    Entity rows are inserted with executemany to avoid a round-trip per row.
+    The legacy app_state.global_state row is no longer dual-written on every
+    save; it is kept only as a fallback snapshot from the migration.
     """
     encrypted_data = encrypt_state_systems(data)
 
@@ -375,23 +376,30 @@ def save_state_to_db(data, expected_version=None):
                         f"DB is at version {current_version}, but this session loaded version {expected_version}."
                     )
 
-            # Replace entity tables.
+            # Replace entity tables in bulk.
             for table in ENTITY_TABLES:
                 cur.execute(f"DELETE FROM {table}")
-                for item in encrypted_data.get(table, []):
-                    if isinstance(item, dict) and item.get("id"):
-                        cur.execute(
-                            f"INSERT INTO {table} (id, data) VALUES (%s, %s)",
-                            (item["id"], json.dumps(item))
-                        )
+                rows = [
+                    (item["id"], json.dumps(item))
+                    for item in encrypted_data.get(table, [])
+                    if isinstance(item, dict) and item.get("id")
+                ]
+                if rows:
+                    cur.executemany(
+                        f"INSERT INTO {table} (id, data) VALUES (%s, %s)",
+                        rows
+                    )
 
-            # Upsert global settings.
-            for key in SETTINGS_KEYS:
-                value = encrypted_data.get(key)
-                cur.execute(
+            # Upsert global settings in bulk.
+            setting_rows = [
+                (key, json.dumps(encrypted_data.get(key)))
+                for key in SETTINGS_KEYS
+            ]
+            if setting_rows:
+                cur.executemany(
                     "INSERT INTO app_settings (key, value) VALUES (%s, %s) "
                     "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
-                    (key, json.dumps(value))
+                    setting_rows
                 )
 
             # Increment the global version. The version column auto-increments.
@@ -402,18 +410,6 @@ def save_state_to_db(data, expected_version=None):
                 (VERSION_KEY, None)
             )
             new_version = cur.fetchone()[0]
-
-            # Dual-write legacy backup.
-            cur.execute(
-                """
-                INSERT INTO app_state (key, value)
-                VALUES ('global_state', %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value, version = app_state.version + 1, updated_at = CURRENT_TIMESTAMP
-                RETURNING version;
-                """,
-                (json.dumps(encrypted_data),)
-            )
 
     return new_version
 

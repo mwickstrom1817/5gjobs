@@ -129,7 +129,12 @@ def fake_conn():
 
         raise NotImplementedError(f"Unhandled SQL in mock: {sql} params={params}")
 
+    def executemany(sql, params_list):
+        for params in params_list:
+            execute(sql, params)
+
     cur.execute.side_effect = execute
+    cur.executemany.side_effect = executemany
     return conn, state
 
 
@@ -201,7 +206,6 @@ def test_save_state_to_db_writes_entities_and_increments_version(fake_conn):
     assert new_ver == 2
     assert state["jobs"]["j1"]["title"] == "T"
     assert state["app_settings"]["briefing"] == "b"
-    assert state["app_state"]["global_state"]["value"]["jobs"][0]["title"] == "T"
 
 
 def test_save_state_to_db_raises_stale_state(fake_conn):
