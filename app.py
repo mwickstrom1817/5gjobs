@@ -598,10 +598,11 @@ if "chat_history" not in st.session_state:
 
 @st.fragment(run_every="15s")
 def live_update_watcher():
-    """Keeps idle sessions in sync. Polls the DB version every 15s; when another
-    user saves, quietly refreshes this session's data and shows a refresh banner.
-    Deliberately does NOT force a full rerun - that would close any open dialog
-    (e.g. a tech mid-report). Any interaction redraws with fresh data anyway."""
+    """Keeps idle sessions in sync. Polls the DB version every script run; when
+    another user saves, show a refresh banner. We do NOT auto-refresh here — it
+    can put sessions into a loop when the version cache and session state get
+    out of step, and it would close open dialogs (e.g. a tech mid-report).
+    The user can click Refresh, or any save will re-check the live version."""
     try:
         db_ver = get_db_version()
     except Exception:
@@ -610,13 +611,13 @@ def live_update_watcher():
         return
 
     if db_ver != st.session_state._db_version:
-        refresh_session_from_db()
         st.session_state['_pending_board_update'] = True
 
     if st.session_state.get('_pending_board_update'):
         c1, c2 = st.columns([4, 1])
         c1.info("🔄 The board was updated by another user. Refresh to see the latest.")
         if c2.button("Refresh now", key="live_refresh_btn", use_container_width=True):
+            refresh_session_from_db()
             st.session_state.pop('_pending_board_update', None)
             st.rerun(scope="app")
 
@@ -645,15 +646,15 @@ def main():
         return  # Stop rendering if not logged in
 
     # Pick up other users' saves: if the DB moved on since this session loaded,
-    # refresh so we render current data (and so our next save doesn't conflict).
+    # flag a pending refresh. We no longer auto-refresh here because it can loop
+    # when the cached DB version and _db_version drift; the banner lets the user
+    # refresh when ready, and save_state still detects true conflicts via the DB.
     try:
         db_ver = get_db_version()
         if db_ver is not None and st.session_state.get('_db_version') is not None and db_ver != st.session_state._db_version:
-            refresh_session_from_db()
+            st.session_state['_pending_board_update'] = True
     except Exception:
         pass
-    # A full run means the page is being redrawn with fresh data - clear any pending banner
-    st.session_state.pop('_pending_board_update', None)
 
     # Deep-link: open a job dialog requested from elsewhere (e.g. Site History)
     open_target = st.session_state.pop("_open_job_after_rerun", None)
