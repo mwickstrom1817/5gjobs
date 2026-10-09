@@ -55,7 +55,8 @@ def add_job_dialog():
     selected_loc = get_location(loc_map[loc_selection]) if loc_selection in loc_map else None
     prefill_name = (selected_loc or {}).get('contact_name', '') or ''
     prefill_phone = (selected_loc or {}).get('contact_phone', '') or ''
-    if selected_loc and (prefill_name or prefill_phone):
+    prefill_email = (selected_loc or {}).get('contact_email', '') or ''
+    if selected_loc and (prefill_name or prefill_phone or prefill_email):
         st.caption(f"📇 Loaded the saved contact for **{selected_loc['name']}** — edit below if needed.")
 
     with st.form("new_job_form"):
@@ -82,11 +83,14 @@ def add_job_dialog():
         c1, c2 = st.columns(2)
         contact1_name = c1.text_input("Primary Contact Name", value=prefill_name, key=f"njc1_name_{loc_selection}")
         contact1_phone = c1.text_input("Primary Contact Phone", value=prefill_phone, key=f"njc1_phone_{loc_selection}")
+        contact1_email = c1.text_input("Primary Contact Email", value=prefill_email, key=f"njc1_email_{loc_selection}")
 
         contact2_name = c2.text_input("Secondary Contact Name")
         contact2_phone = c2.text_input("Secondary Contact Phone")
+        contact2_email = c2.text_input("Secondary Contact Email")
 
         contact3_name = st.text_input("Additional Contact / Notes")
+        contact3_email = st.text_input("Additional Contact Email")
 
         # Tech Selection
         company_crew = list(st.session_state.techs)
@@ -125,7 +129,8 @@ def add_job_dialog():
                         "address": new_loc_address,
                         "mapsUrl": new_loc_maps,
                         "contact_name": contact1_name,
-                        "contact_phone": contact1_phone
+                        "contact_phone": contact1_phone,
+                        "contact_email": contact1_email,
                     }
                     st.session_state.locations.append(new_loc)
                 else:
@@ -143,12 +148,12 @@ def add_job_dialog():
 
             # Contacts List
             contacts = []
-            if contact1_name or contact1_phone:
-                contacts.append({'name': contact1_name, 'phone': contact1_phone, 'label': 'Primary'})
-            if contact2_name or contact2_phone:
-                contacts.append({'name': contact2_name, 'phone': contact2_phone, 'label': 'Secondary'})
-            if contact3_name:
-                contacts.append({'name': contact3_name, 'phone': '', 'label': 'Note'})
+            if contact1_name or contact1_phone or contact1_email:
+                contacts.append({'name': contact1_name, 'phone': contact1_phone, 'email': contact1_email, 'label': 'Primary'})
+            if contact2_name or contact2_phone or contact2_email:
+                contacts.append({'name': contact2_name, 'phone': contact2_phone, 'email': contact2_email, 'label': 'Secondary'})
+            if contact3_name or contact3_email:
+                contacts.append({'name': contact3_name, 'phone': '', 'email': contact3_email, 'label': 'Note'})
 
             # Combine date with current time for ISO format
             full_date = datetime.datetime.combine(job_date, now_local().time())
@@ -182,8 +187,9 @@ def add_job_dialog():
                     # Push notification to the tech's phone (ntfy)
                     push_assignment(new_job, tech)
 
-            # Invalidate briefing so it regenerates with new data
-            st.session_state.briefing = "Data required to generate briefing."
+            # Briefing is no longer invalidated here. Generating it on every new
+            # job added a multi-second AI call to the save path; users can refresh
+            # the briefing manually from the Today tab when they want an update.
             save_state()  # Save changes
             
             if email_status_msg:

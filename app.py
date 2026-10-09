@@ -864,13 +864,6 @@ def main():
                     save_state(invalidate_briefing=False)
                     st.rerun()
 
-            # Automatically generate briefing ONLY if it's the default first-time text
-            if st.session_state.briefing == "Data required to generate briefing." and st.session_state.jobs:
-                with st.spinner("🤖 AI is preparing your initial morning briefing..."):
-                    st.session_state.briefing = generate_morning_briefing()
-                    save_state(invalidate_briefing=False)
-                    st.rerun()
-
             # Stale job alerts: badged rows (red = ancient, amber = recent)
             if stale_list:
                 def _b_esc(s):
