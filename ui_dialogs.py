@@ -9,6 +9,7 @@ from PIL import Image
 from core import (
     now_local, save_state, get_tech, get_location, apply_job_status,
     get_logger, StepTimer, location_has_system_info, job_is_warranty,
+    esc_html,
     parts_summary, PART_STATUSES, PART_STATUS_COLORS,
     update_part_status_callback, job_invoice, set_job_invoice,
     INVOICE_STATUSES, INVOICE_STATUS_COLORS, INVOICE_STATUS_ICONS,
@@ -652,131 +653,127 @@ def job_details_dialog(job_id):
 
     # Header
     weather_ph = None  # backfilled with weather at the end of the dialog (see below)
-    c1, c2 = st.columns([3, 1])
-    with c1:
+
+    # Title + status badge: side-by-side on desktop, stacked on mobile.
+    st.markdown('<div class="job-details-header"></div>', unsafe_allow_html=True)
+    h1, h2 = form_row([3, 1])
+    with h1:
         st.subheader(f"{job['title']}")
+    with h2:
+        status_color_hex = {
+            "Not Started": "#52525b",
+            "Pending": "#52525b",
+            "In Progress": "#d97706",
+            "Customer on Hold": "#b91c1c",
+            "Waiting on Parts": "#2563eb",
+            "Parts not ordered": "#b91c1c",
+            "Parts Staged": "#7c3aed",
+            "Completed": "#10b981",
+        }.get(job['status'], "#52525b")
+        st.markdown(
+            f'<div class="job-status-badge" style="background:{status_color_hex};">{esc_html(job["status"])}</div>',
+            unsafe_allow_html=True,
+        )
 
-        # Map Link Logic
-        if loc:
-            map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
-            if map_url:
-                st.markdown(f"📍 **[{loc['name']}]({map_url})**")
-            else:
-                st.markdown(f"📍 **{loc['name']}**")
-
-            # Paint the address immediately; the weather network call is deferred to
-            # the end of the dialog so it doesn't block the tabs from rendering.
-            weather_ph = st.empty()
-            weather_ph.caption(loc.get('address', ''))
+    # Location + address
+    if loc:
+        map_url = loc.get('mapsUrl') or get_google_maps_url(loc['address'])
+        if map_url:
+            st.markdown(f'📍 <a href="{esc_html(map_url)}" target="_blank" style="color:#e4e4e7;font-weight:600;">{esc_html(loc["name"])}</a>', unsafe_allow_html=True)
         else:
-             st.caption(f"📍 Unknown | 👤 {tech['name'] if tech else 'Unassigned'}")
-        
-        # MAILTO LINK BUTTON: Provides manual alternative if SMTP is missing
-        if tech and loc:
-            mailto_url = create_mailto_link(job, tech, loc)
-            st.link_button("📧 Email Assignment to Tech", mailto_url)
-            
-        # Resolve Contact Info (Job override > Location default)
-        job_contacts = job.get('contacts', [])
-        
-        # Contact Info Logic
-        contact_name = None
-        contact_phone = None
+            st.markdown(f"📍 **{esc_html(loc['name'])}**")
+        weather_ph = st.empty()
+        weather_ph.caption(loc.get('address', ''))
+    else:
+        st.caption(f"📍 Unknown | 👤 {tech['name'] if tech else 'Unassigned'}")
 
-        # Contact Info Logic
-        contact_name = None
-        contact_phone = None
-        contact_email = None
+    # Resolve Contact Info (Job override > Location default)
+    job_contacts = job.get('contacts', [])
+    contact_name = contact_phone = contact_email = None
+    if job_contacts:
+        contact_name = job_contacts[0].get('name')
+        contact_phone = job_contacts[0].get('phone')
+        contact_email = job_contacts[0].get('email')
+    else:
+        contact_name = job.get('contact_name') or (loc.get('contact_name') if loc else None)
+        contact_phone = job.get('contact_phone') or (loc.get('contact_phone') if loc else None)
+        contact_email = job.get('contact_email') or (loc.get('contact_email') if loc else None)
 
-        if job_contacts:
-            st.write("###### 👥 Site Contacts")
-            for c in job_contacts:
-                col_c1, col_c2 = st.columns([2, 1])
-                col_c1.write(f"**{c['label']}:** {c['name']}")
-                if c.get('phone'):
-                    clean_phone = re.sub(r'\D', '', c['phone'])
-                    col_c2.link_button(f"📞 Call", f"tel:{clean_phone}", use_container_width=True)
-                elif c.get('email'):
-                    col_c2.link_button(f"📧 Email", f"mailto:{c['email']}", use_container_width=True)
-                else:
-                    col_c2.write("")
-                if c.get('email') and not c.get('phone'):
-                    st.caption(f"✉️ {c['email']}")
+    # Consolidated action bar
+    mailto_url = create_mailto_link(job, tech, loc) if (tech and loc) else None
+    ics_data = create_ics_file(job, loc)
+    relevant_report = None
+    if job['status'] == 'Completed':
+        relevant_report = next((r for r in reversed(job.get('reports', [])) if 'completion_checklist' in r), None)
+    if not relevant_report and job.get('reports'):
+        relevant_report = job['reports'][-1]
 
-            # For the copy block below, use the first contact as a default if available
-            contact_name = job_contacts[0].get('name')
-            contact_phone = job_contacts[0].get('phone')
-            contact_email = job_contacts[0].get('email')
-        else:
-            # Fallback to old single contact logic if no list exists
-            contact_name = job.get('contact_name') or (loc.get('contact_name') if loc else None)
-            contact_phone = job.get('contact_phone') or (loc.get('contact_phone') if loc else None)
-            contact_email = job.get('contact_email') or (loc.get('contact_email') if loc else None)
+    actions = []
+    if contact_phone:
+        actions.append(("📞 Call", "link", f"tel:{re.sub(r'[^0-9]', '', contact_phone)}"))
+    if mailto_url:
+        actions.append(("📧 Email Tech", "link", mailto_url))
+    if ics_data:
+        actions.append(("📅 Calendar", "calendar", None))
+    if relevant_report:
+        actions.append(("📄 PDF", "pdf", None))
 
-            # CONTACT CALL / EMAIL BUTTON
-            if contact_phone:
-                clean_phone = re.sub(r'\D', '', contact_phone)
-                st.link_button(f"📞 Call {contact_name or 'Contact'}", f"tel:{clean_phone}")
-            elif contact_email:
-                st.link_button(f"📧 Email {contact_name or 'Contact'}", f"mailto:{contact_email}")
-            elif contact_name:
-                st.write(f"👤 {contact_name}")
+    if actions:
+        cols = form_row([1] * len(actions))
+        for col, (label, kind, payload) in zip(cols, actions):
+            with col:
+                if kind == "link":
+                    st.link_button(label, payload, use_container_width=True)
+                elif kind == "calendar":
+                    st.download_button(
+                        label=label,
+                        data=ics_data,
+                        file_name=f"job_{job['id']}.ics",
+                        mime="text/calendar",
+                        use_container_width=True,
+                    )
+                elif kind == "pdf":
+                    if st.button(label, use_container_width=True):
+                        with st.spinner("Generating PDF..."):
+                            pdf_data = generate_job_pdf(job, tech, loc, relevant_report)
+                            if pdf_data:
+                                st.download_button(
+                                    label="⬇️ Download PDF Now",
+                                    data=pdf_data,
+                                    file_name=f"JobReport_{job['id']}.pdf",
+                                    mime="application/pdf",
+                                )
+                            else:
+                                st.error("Failed to generate PDF.")
 
-        # COPY JOB INFO BLOCK
-        copy_text = f"""Job: {job['title']}
+    # Contact details (display only; action bar handles call/email)
+    if job_contacts and len(job_contacts) > 1:
+        st.write("###### 👥 Site Contacts")
+        for c in job_contacts:
+            line = f"**{c['label']}:** {c['name']}"
+            if c.get('phone'):
+                line += f" · 📞 {c['phone']}"
+            if c.get('email'):
+                line += f" · ✉️ {c['email']}"
+            st.caption(line)
+    elif contact_name or contact_phone or contact_email:
+        bits = []
+        if contact_name:
+            bits.append(f"👤 {contact_name}")
+        if contact_phone:
+            bits.append(f"📞 {contact_phone}")
+        if contact_email:
+            bits.append(f"✉️ {contact_email}")
+        st.caption(" · ".join(bits))
+
+    # COPY JOB INFO BLOCK
+    copy_text = f"""Job: {job['title']}
 Address: {loc['address'] if loc else 'Unknown'}
 Contact: {contact_name or 'N/A'} ({contact_phone or 'N/A'})
 Email: {contact_email or 'N/A'}
 Desc: {job['description']}"""
+    with st.expander("📋 Copy job info"):
         st.code(copy_text, language="text")
-
-        # CALENDAR INVITE (.ics)
-        ics_data = create_ics_file(job, loc)
-        if ics_data:
-            st.download_button(
-                label="📅 Add to Calendar",
-                data=ics_data,
-                file_name=f"job_{job['id']}.ics",
-                mime="text/calendar",
-            )
-
-        # PDF DOWNLOAD
-        # Find the most relevant report (Completion > Latest Daily)
-        relevant_report = None
-        if job['status'] == 'Completed':
-            relevant_report = next((r for r in reversed(job.get('reports', [])) if 'completion_checklist' in r), None)
-        
-        if not relevant_report and job.get('reports'):
-            relevant_report = job['reports'][-1]
-
-        if relevant_report:
-            # Use a button to trigger PDF generation to avoid slow renders
-            if st.button("📄 Prepare Report PDF"):
-                with st.spinner("Generating PDF..."):
-                    pdf_data = generate_job_pdf(job, tech, loc, relevant_report)
-                    if pdf_data:
-                        st.download_button(
-                            label="⬇️ Download PDF Now",
-                            data=pdf_data,
-                            file_name=f"JobReport_{job['id']}.pdf",
-                            mime="application/pdf",
-                        )
-                    else:
-                        st.error("Failed to generate PDF.")
-
-    with c2:
-        st.markdown("**Current Status:**")
-        status_color = {
-            "Not Started": "gray",
-            "Pending": "gray",
-            "In Progress": "orange", 
-            "Customer on Hold": "red",
-            "Waiting on Parts": "blue",
-            "Parts not ordered": "red",
-            "Parts Staged": "violet",
-            "Completed": "green"
-        }.get(job['status'], "gray")
-        st.markdown(f":{status_color}-background[{job['status']}]")
 
     # Flag the credentials tab when nothing is recorded yet so it doesn't get forgotten
     has_sys_info = location_has_system_info(loc)
@@ -797,13 +794,15 @@ Desc: {job['description']}"""
     if _viewer_is_admin and job.get('status') == 'Completed':
         _sections.append("invoice")
     _section_labels = {
-        "history": "📋 Details & History", "photos": "🖼️ Photos",
-        "docs": "📄 Documents", "parts": parts_tab_label,
-        "progress": "📝 Updates", "daily": "📝 Daily Report",
-        "creds": creds_tab_label, "invoice": "💵 Invoicing",
+        "history": "📋 Details", "photos": "🖼️ Photos",
+        "docs": "📄 Docs", "parts": parts_tab_label,
+        "progress": "📝 Updates", "daily": "📝 Daily",
+        "creds": creds_tab_label, "invoice": "💵 Invoice",
         "assets": "🏷️ Equipment",
     }
     _fmt_section = lambda s: _section_labels.get(s, s)
+
+    st.markdown('<div class="job-details-sections"></div>', unsafe_allow_html=True)
     if hasattr(st, "segmented_control"):
         section = st.segmented_control(
             "Section", _sections, format_func=_fmt_section,

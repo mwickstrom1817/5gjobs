@@ -77,6 +77,29 @@ def inject_global_styles():
         }
 
         /* ------------------------------------------------------------------
+           Job Details dialog
+           ------------------------------------------------------------------ */
+        .job-status-badge {
+          display: inline-block;
+          color: white;
+          padding: 6px 16px;
+          border-radius: 999px;
+          font-weight: 600;
+          font-size: 0.95em;
+          text-align: center;
+        }
+        .job-details-sections + div [role="radiogroup"] {
+          display: flex !important;
+          flex-wrap: wrap !important;
+          gap: 8px !important;
+        }
+        .job-details-sections + div [role="radiogroup"] > * {
+          flex: 1 1 auto !important;
+          min-width: 100px !important;
+          justify-content: center !important;
+        }
+
+        /* ------------------------------------------------------------------
            Tab navigation
            ------------------------------------------------------------------ */
         button[data-baseweb="tab"] {
@@ -134,6 +157,27 @@ def inject_global_styles():
             min-width: 100% !important;
             width: 100% !important;
             max-width: 100% !important;
+          }
+
+          /* Job Details: full-width status badge and tile-like section nav */
+          .job-status-badge {
+            display: block !important;
+            width: 100% !important;
+            padding: 10px 16px !important;
+            font-size: 1.05em !important;
+          }
+          .job-details-sections + div [role="radiogroup"] {
+            gap: 10px !important;
+          }
+          .job-details-sections + div [role="radiogroup"] > * {
+            flex: 1 1 45% !important;
+            min-height: 56px !important;
+            font-size: 15px !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            justify-content: center !important;
+            text-align: center !important;
+            line-height: 1.2 !important;
           }
 
           /* Job cards: roomier, larger title, full-width action buttons */
