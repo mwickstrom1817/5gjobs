@@ -282,33 +282,6 @@ def edit_job_dialog(job_id):
         tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index)
         selected_tech_id = tech_display_map[tech_label]
         
-        # Site Contacts
-        st.write("---")
-        st.write("###### 👥 Site Contacts")
-        job_contacts = job.get('contacts', [])
-        c1, c2 = st.columns(2)
-        
-        # Extract existing contact values
-        c1_n = job_contacts[0].get('name', '') if len(job_contacts) > 0 else ""
-        c1_p = job_contacts[0].get('phone', '') if len(job_contacts) > 0 else ""
-        c1_e = job_contacts[0].get('email', '') if len(job_contacts) > 0 else ""
-        c2_n = job_contacts[1].get('name', '') if len(job_contacts) > 1 else ""
-        c2_p = job_contacts[1].get('phone', '') if len(job_contacts) > 1 else ""
-        c2_e = job_contacts[1].get('email', '') if len(job_contacts) > 1 else ""
-        c3_note = job_contacts[2].get('name', '') if len(job_contacts) > 2 else ""
-        c3_e = job_contacts[2].get('email', '') if len(job_contacts) > 2 else ""
-
-        contact1_name = c1.text_input("Primary Contact Name", value=c1_n)
-        contact1_phone = c1.text_input("Primary Contact Phone", value=c1_p)
-        contact1_email = c1.text_input("Primary Contact Email", value=c1_e)
-
-        contact2_name = c2.text_input("Secondary Contact Name", value=c2_n)
-        contact2_phone = c2.text_input("Secondary Contact Phone", value=c2_p)
-        contact2_email = c2.text_input("Secondary Contact Email", value=c2_e)
-
-        contact3_name = st.text_input("Additional Contact / Notes", value=c3_note)
-        contact3_email = st.text_input("Additional Contact Email", value=c3_e)
-
         # Only the uploader lives in the form — st.button is not allowed inside
         # st.form, so the delete controls sit above it (see the block before the form).
         st.write("---")
@@ -323,16 +296,6 @@ def edit_job_dialog(job_id):
                         dk = save_document_locally(up_doc)
                         if dk: doc_keys.append({'name': up_doc.name, 'key': dk})
 
-                # Update Contacts
-                new_contacts = []
-                if contact1_name or contact1_phone or contact1_email:
-                    new_contacts.append({'name': contact1_name, 'phone': contact1_phone, 'email': contact1_email, 'label': 'Primary'})
-                if contact2_name or contact2_phone or contact2_email:
-                    new_contacts.append({'name': contact2_name, 'phone': contact2_phone, 'email': contact2_email, 'label': 'Secondary'})
-                if contact3_name or contact3_email:
-                    new_contacts.append({'name': contact3_name, 'phone': '', 'email': contact3_email, 'label': 'Note'})
-                
-                st.session_state.jobs[job_index]['contacts'] = new_contacts
                 st.session_state.jobs[job_index]['title'] = title
                 st.session_state.jobs[job_index]['description'] = desc
                 st.session_state.jobs[job_index]['type'] = job_type
