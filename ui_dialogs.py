@@ -49,10 +49,6 @@ def add_job_dialog():
     default_index = 1 if not has_locations else 0
     location_mode = st.radio("Location source", mode_options, horizontal=True, index=default_index)
 
-    selected_loc = None
-    prefill_name = ""
-    prefill_phone = ""
-    prefill_email = ""
     final_loc_id = None  # set at submit time
 
     if location_mode == "Use existing location":
@@ -62,7 +58,6 @@ def add_job_dialog():
         loc_selection = st.selectbox("Select location", loc_options)
         if loc_selection != "— Select a location —":
             final_loc_id = loc_map[loc_selection]
-            selected_loc = get_location(final_loc_id)
     else:
         st.write("###### 🆕 New Location Details")
         nl_name = st.text_input("New Location Name")
@@ -71,15 +66,6 @@ def add_job_dialog():
         nl_contact_name = st.text_input("Site Contact Name")
         nl_contact_phone = st.text_input("Site Contact Phone")
         nl_contact_email = st.text_input("Site Contact Email")
-        prefill_name = nl_contact_name
-        prefill_phone = nl_contact_phone
-        prefill_email = nl_contact_email
-
-    if selected_loc:
-        prefill_name = selected_loc.get('contact_name', '') or ''
-        prefill_phone = selected_loc.get('contact_phone', '') or ''
-        prefill_email = selected_loc.get('contact_email', '') or ''
-        st.caption(f"📇 Loaded the saved contact for **{selected_loc['name']}** — edit below if needed.")
 
     with st.form("new_job_form"):
         title = st.text_input("Job Title")
@@ -91,21 +77,6 @@ def add_job_dialog():
 
         # Date Selection
         job_date = st.date_input("Scheduled Date", value=now_local())
-
-        # Multiple Site Contacts (Primary is prefilled from the selected/new location)
-        st.write("---")
-        st.write("###### 👥 Site Contacts")
-        c1, c2 = st.columns(2)
-        contact1_name = c1.text_input("Primary Contact Name", value=prefill_name, key="njc1_name")
-        contact1_phone = c1.text_input("Primary Contact Phone", value=prefill_phone, key="njc1_phone")
-        contact1_email = c1.text_input("Primary Contact Email", value=prefill_email, key="njc1_email")
-
-        contact2_name = c2.text_input("Secondary Contact Name")
-        contact2_phone = c2.text_input("Secondary Contact Phone")
-        contact2_email = c2.text_input("Secondary Contact Email")
-
-        contact3_name = st.text_input("Additional Contact / Notes")
-        contact3_email = st.text_input("Additional Contact Email")
 
         # Tech Selection
         company_crew = list(st.session_state.techs)
@@ -159,14 +130,9 @@ def add_job_dialog():
                     dk = save_document_locally(up_doc)
                     if dk: doc_keys.append({'name': up_doc.name, 'key': dk})
 
-            # Contacts List
+            # Job-level contacts are no longer collected at creation time; contact
+            # info comes from the saved location instead.
             contacts = []
-            if contact1_name or contact1_phone or contact1_email:
-                contacts.append({'name': contact1_name, 'phone': contact1_phone, 'email': contact1_email, 'label': 'Primary'})
-            if contact2_name or contact2_phone or contact2_email:
-                contacts.append({'name': contact2_name, 'phone': contact2_phone, 'email': contact2_email, 'label': 'Secondary'})
-            if contact3_name or contact3_email:
-                contacts.append({'name': contact3_name, 'phone': '', 'email': contact3_email, 'label': 'Note'})
 
             # Combine date with current time for ISO format
             full_date = datetime.datetime.combine(job_date, now_local().time())
