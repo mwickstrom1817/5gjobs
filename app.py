@@ -47,7 +47,7 @@ from ui_widgets import sub_nav
 from ui_dialogs import job_details_dialog, asset_dialog, add_job_dialog
 from ui_cards import render_job_card, render_job_grid, render_map_view
 from ui_tv import render_tv_display
-from ui_views import render_sops_view
+from ui_views import render_sops_view, render_invoicing_view
 from ui_admin import render_admin_panel
 
 
@@ -789,11 +789,11 @@ def main():
     # Determine if current user is a tech
     current_tech = next((t for t in st.session_state.techs if t['email'].lower() == user_email.lower()), None)
 
-    # Navigation: six tabs. Related views are grouped behind a sub-selector rather
-    # than each claiming a top-level tab — twelve competing labels made the app
-    # tiring to scan. Nothing was removed, only regrouped.
+    # Navigation tabs. Invoicing is top-level (not buried in Admin) so the
+    # office manager can reach it in one click.
     tabs_list = ["🌅 Today", "👷 Board", "🧰 Jobs", "📅 Schedule", "📚 SOPs"]
     if is_admin:
+        tabs_list.append("💵 Invoicing")
         tabs_list.append("🛡️ Admin")
 
     tabs = st.tabs(tabs_list)
@@ -1100,6 +1100,11 @@ def main():
         if not _rows:
             st.info(f"No {_empty_word} to show.")
         render_job_grid(_rows, key_suffix=f"jobs_{_slug}", allow_delete=is_admin)
+
+    # 6. Invoicing (admin / office manager)
+    if is_admin:
+        with tab_map["💵 Invoicing"]:
+            render_invoicing_view(user_email)
 
     # 7. Admin (Only if Admin)
     if is_admin:
