@@ -44,6 +44,7 @@ from core import (
 from services_ai import generate_morning_briefing
 from services_scheduler import keep_awake, start_background_scheduler
 from ui_widgets import sub_nav
+from ui_styles import inject_global_styles
 from ui_dialogs import job_details_dialog, asset_dialog, add_job_dialog
 from ui_cards import render_job_card, render_job_grid, render_map_view
 from ui_tv import render_tv_display
@@ -624,6 +625,11 @@ def live_update_watcher():
 # --- MAIN APP FLOW ---
 
 def main():
+    # Inject responsive CSS (touch targets, mobile stacking, tabs).
+    # Must run on every script execution because Streamlit discards
+    # injected styles between reruns.
+    inject_global_styles()
+
     # Start Keep Awake Thread
     keep_awake()
     start_background_scheduler()
@@ -747,6 +753,7 @@ def main():
             logout()
 
     # Top Bar (compact brand band: logo + wordmark | search | New Job)
+    st.markdown('<div class="top-bar"></div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([3, 5, 2], vertical_alignment="center")
     with c1:
         _logo_uri = get_logo_data_uri()

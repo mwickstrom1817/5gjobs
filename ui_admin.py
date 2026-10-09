@@ -19,6 +19,7 @@ from persistence_pg import (
 from services_ai import get_available_model, suggest_address_with_gemini, get_api_key
 from services_email import daily_summary_recipients, send_ops_summary_email
 from services_push import get_or_create_notify_topic, send_push
+from ui_styles import form_row
 from ui_dialogs import edit_location_dialog, job_details_dialog
 from ui_views import (
     render_service_agreements, render_hours_report, render_data_browser,
@@ -109,7 +110,7 @@ def _admin_techs():
     st.subheader("👷 Manage Technicians")
     with st.expander("Add / Remove Technicians", expanded=True):
         with st.form("add_tech_form"):
-            c1, c2, c3 = st.columns([2, 2, 1])
+            c1, c2, c3 = form_row([2, 2, 1])
             new_tech_name = c1.text_input("Name")
             new_tech_email = c2.text_input("Email")
             new_tech_initials = c3.text_input("Initials (2 chars)", max_chars=2)
@@ -185,7 +186,7 @@ def _admin_locations():
             l_addr = st.text_input("Address")
             l_maps = st.text_input("Google Maps Link (Optional)")
 
-            c_l1, c_l2 = st.columns(2)
+            c_l1, c_l2 = form_row([1, 1])
             l_contact_name = c_l1.text_input("Site Contact Name")
             l_contact_phone = c_l2.text_input("Site Contact Phone")
 
@@ -279,17 +280,15 @@ def _admin_warranty():
 
 def _admin_data():
     st.subheader("System Maintenance")
-    c_m1, c_m2 = st.columns(2)
-    with c_m1:
-        if st.button("🧹 Clear App Cache"):
-            st.cache_resource.clear()
-            st.cache_data.clear()
-            st.toast("Cache cleared!", icon="🧹")
-            st.rerun()
+    if st.button("🧹 Clear App Cache", use_container_width=True):
+        st.cache_resource.clear()
+        st.cache_data.clear()
+        st.toast("Cache cleared!", icon="🧹")
+        st.rerun()
 
     st.divider()
     st.subheader("Database Management")
-    c_db1, c_db2 = st.columns(2)
+    c_db1, c_db2 = form_row([1, 1])
     with c_db1:
         if st.button("🔄 Reload Data from DB"):
             state, ver = load_state()
@@ -314,7 +313,7 @@ def _admin_data():
 
     st.divider()
     st.subheader("Backup & Restore")
-    c_bk1, c_bk2 = st.columns(2)
+    c_bk1, c_bk2 = form_row([1, 1])
     with c_bk1:
         csv_data = download_data_as_csv()
         if csv_data:

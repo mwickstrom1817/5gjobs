@@ -9,6 +9,7 @@ from core import (
     save_state, update_job_status_callback, job_followup, get_google_maps_url,
 )
 from services_geo import get_lat_lon_from_address
+from ui_styles import form_row
 from ui_dialogs import job_details_dialog, edit_job_dialog
 
 
@@ -83,18 +84,19 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
     signal_stack = (f'<span style="display:flex; gap:4px;">{signal_chips}</span>'
                     if signal_chips else "")
 
+    st.markdown('<div class="job-card-wrapper"></div>', unsafe_allow_html=True)
     with st.container():
         st.markdown(f"""
         <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
-            <div style="position:absolute; top:0; right:0; padding:2px 8px; background:{status_bg}; color:white; font-size:0.65em; font-weight:bold; border-bottom-left-radius:8px;">
+            <div style="position:absolute; top:0; right:0; padding:3px 10px; background:{status_bg}; color:white; font-size:0.68em; font-weight:bold; border-bottom-left-radius:8px;">
                 {esc_html(job['status']).upper()}
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:6px; margin-top:10px;">
-                <span title="{esc_html(job['title'])}" style="font-weight:bold; font-size:1.1em; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.3; height:2.6em;">{esc_html(job['title'])}</span>
-                <span style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;"><span style="font-size:0.8em; background:#3f3f46; padding:2px 6px; border-radius:4px;">{esc_html(job['priority'])}</span>{signal_stack}</span>
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-top:10px;">
+                <span class="job-card-title" title="{esc_html(job['title'])}" style="font-weight:bold; font-size:1.08em; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.3; height:2.6em;">{esc_html(job['title'])}</span>
+                <span style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;"><span style="font-size:0.82em; background:#3f3f46; padding:3px 7px; border-radius:4px;">{esc_html(job['priority'])}</span>{signal_stack}</span>
             </div>
-            <div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:5px;"><span style="color:#a1a1aa; font-size:0.9em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{loc_html}</span>{quote_html}</div>
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:nowrap; margin-top:10px; font-size:0.8em; color:#71717a;">
+            <div class="job-card-meta" style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:6px;"><span style="color:#a1a1aa; font-size:0.92em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{loc_html}</span>{quote_html}</div>
+            <div class="job-card-meta" style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:nowrap; margin-top:10px; font-size:0.85em; color:#71717a;">
                  <span title="{esc_html(tech_name)}" style="min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">👤 {esc_html(tech_name)}</span>
                  <span style="white-space:nowrap; flex-shrink:0;">📅 {esc_html(str(job.get('date', ''))[:10])}</span>
             </div>
@@ -104,12 +106,12 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         status_options = ["Not Started", "In Progress", "Customer on Hold", "Waiting on Parts", "Parts not ordered", "Parts Staged", "Completed"]
         current_status = job['status']
         if current_status == "Pending": current_status = "Not Started"
-        
+
         try:
             status_idx = status_options.index(current_status)
         except ValueError:
             status_idx = 0
-            
+
         widget_key = f"status_change_{job['id']}_{key_suffix}"
 
         def _delete_job():
@@ -126,7 +128,7 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                 on_change=update_job_status_callback, args=(job['id'], widget_key),
                 label_visibility="collapsed")
             if allow_delete:
-                b1, b2, b3 = st.columns([3, 1, 1])
+                b1, b2, b3 = form_row([3, 1, 1])
                 with b1:
                     if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
                         job_details_dialog(job['id'])
@@ -142,9 +144,9 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         else:
             # Wide cards (3-col grid pages): everything in one inline row
             if allow_delete:
-                f1, f2, f3, f4 = st.columns([3, 2.2, 0.9, 0.9])
+                f1, f2, f3, f4 = form_row([3, 2.2, 0.9, 0.9])
             else:
-                f1, f2 = st.columns([3, 2.2])
+                f1, f2 = form_row([3, 2.2])
                 f3 = f4 = None
 
             with f1:

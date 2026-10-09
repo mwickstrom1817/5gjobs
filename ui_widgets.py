@@ -2,6 +2,9 @@ import datetime
 
 import streamlit as st
 
+from ui_styles import form_row
+
+
 def time_select(label, default, key, step_minutes=15):
     """Mobile-native time picker: number pad for hour, tap chips for minute/am-pm.
     No dropdowns, no popover, no keyboard-dismiss bugs inside dialogs."""
@@ -25,7 +28,7 @@ def time_select(label, default, key, step_minutes=15):
     minute_opts = list(range(0, 60, step_minutes))
     rounded_min = min(minute_opts, key=lambda x: abs(x - minute))
 
-    c1, c2, c3 = st.columns([1.2, 1.8, 1.2])
+    c1, c2, c3 = form_row([1.2, 1.8, 1.2])
     with c1:
         h = st.number_input(
             "Hr", min_value=1, max_value=12, value=hour12,

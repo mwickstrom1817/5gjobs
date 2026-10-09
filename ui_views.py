@@ -16,6 +16,7 @@ from core import (
 from services_ai import get_api_key, get_available_model
 from ui_dialogs import job_details_dialog
 from ui_widgets import sub_nav
+from ui_styles import form_row
 
 # --- SOPs (reference library: written procedures techs read in the field) -----
 # Seed categories only — the picker also offers whatever categories already exist
@@ -46,7 +47,7 @@ def _sop_form(sop, key_prefix, on_save, submit_label):
     with st.form(key=f"{key_prefix}_form"):
         title = st.text_input("Title", value=sop.get('title', ''),
                               placeholder="e.g. Commissioning a Hikvision NVR")
-        c1, c2 = st.columns(2)
+        c1, c2 = form_row([1, 1])
         cat_options = cats + ["➕ New category..."]
         cat_idx = cat_options.index(cur_cat) if cur_cat in cat_options else 0
         picked = c1.selectbox("Category", cat_options, index=cat_idx)
@@ -426,7 +427,7 @@ def render_data_browser():
     if not table:
         table = "Jobs"
 
-    f1, f2, f3, f4 = st.columns([3, 2, 2, 2])
+    f1, f2, f3, f4 = form_row([3, 2, 2, 2])
     q = f1.text_input("Search", key="browser_q", label_visibility="collapsed",
                       placeholder="🔍 Search anything (including report notes)...")
     range_label = f2.selectbox("Range", ["All time", "Last 30 days", "Last 90 days",
@@ -556,7 +557,7 @@ def render_invoicing_view(user_email):
             except (TypeError, ValueError):
                 pass
 
-        c1, c2, c3 = st.columns([5, 2, 2])
+        c1, c2, c3 = form_row([5, 2, 2])
         with c1:
             # Age of the bill: how long this job has been sitting in 'Ready to Invoice'
             _age = None
@@ -838,7 +839,7 @@ def render_hours_report():
     st.caption("Summed from daily report 'Hours Worked'. Hours are credited to every tech listed 'On Site' for a report (or the report author if none were listed).")
 
     today = now_local().date()
-    hc1, hc2 = st.columns(2)
+    hc1, hc2 = form_row([1, 1])
     start_date = hc1.date_input("From", value=today - datetime.timedelta(days=13), key="hours_from")
     end_date = hc2.date_input("To", value=today, key="hours_to")
 
@@ -909,13 +910,13 @@ def render_service_agreements():
             with st.form("add_agreement_form", clear_on_submit=True):
                 loc_names = {l['name']: l['id'] for l in st.session_state.locations}
                 a_loc = st.selectbox("Site", list(loc_names.keys()))
-                ac1, ac2 = st.columns(2)
+                ac1, ac2 = form_row([1, 1])
                 a_type = ac1.selectbox("Type", AGREEMENT_TYPES)
                 a_title = ac2.text_input("Title", placeholder="e.g. 24/7 Central Station Monitoring")
-                ac3, ac4 = st.columns(2)
+                ac3, ac4 = form_row([1, 1])
                 a_start = ac3.date_input("Start Date", value=now_local())
                 a_renew = ac4.date_input("Renewal / End Date", value=now_local() + datetime.timedelta(days=365))
-                ac5, ac6 = st.columns(2)
+                ac5, ac6 = form_row([1, 1])
                 a_value = ac5.number_input("Value ($)", min_value=0.0, step=10.0)
                 a_billing = ac6.selectbox("Billing", BILLING_CYCLES)
                 a_auto = st.checkbox("Auto-renews")
@@ -984,25 +985,25 @@ def render_service_agreements():
             with st.expander("✏️ Edit / Delete"):
                 with st.form(f"edit_agr_{a['id']}"):
                     e_title = st.text_input("Title", value=a.get('title', ''))
-                    ec1, ec2 = st.columns(2)
+                    ec1, ec2 = form_row([1, 1])
                     e_type = ec1.selectbox("Type", AGREEMENT_TYPES,
                                            index=AGREEMENT_TYPES.index(a['type']) if a.get('type') in AGREEMENT_TYPES else 0)
                     e_status = ec2.selectbox("Status", ["Active", "Cancelled"],
                                              index=0 if a.get('status') != 'Cancelled' else 1)
-                    ec3, ec4 = st.columns(2)
+                    ec3, ec4 = form_row([1, 1])
                     try:
                         _rv = datetime.datetime.strptime(str(a.get('renewal_date'))[:10], "%Y-%m-%d").date()
                     except (ValueError, TypeError):
                         _rv = now_local().date()
                     e_renew = ec3.date_input("Renewal / End Date", value=_rv, key=f"agr_renew_{a['id']}")
                     e_value = ec4.number_input("Value ($)", min_value=0.0, step=10.0, value=float(a.get('value') or 0))
-                    ec5, ec6 = st.columns(2)
+                    ec5, ec6 = form_row([1, 1])
                     e_billing = ec5.selectbox("Billing", BILLING_CYCLES,
                                               index=BILLING_CYCLES.index(a['billing']) if a.get('billing') in BILLING_CYCLES else 0)
                     e_auto = ec6.checkbox("Auto-renews", value=bool(a.get('auto_renew')))
                     e_notes = st.text_input("Notes", value=a.get('notes', ''))
 
-                    bc1, bc2 = st.columns(2)
+                    bc1, bc2 = form_row([1, 1])
                     if bc1.form_submit_button("💾 Update"):
                         a.update({'title': e_title, 'type': e_type, 'status': e_status,
                                   'renewal_date': str(e_renew), 'value': e_value,

@@ -28,6 +28,7 @@ from services_email import (
 )
 from services_push import push_assignment
 from ui_widgets import time_select
+from ui_styles import form_row
 
 try:
     from streamlit_drawable_canvas import st_canvas
@@ -71,7 +72,7 @@ def add_job_dialog():
         title = st.text_input("Job Title")
         desc = st.text_area("Description")
 
-        c1, c2 = st.columns(2)
+        c1, c2 = form_row([1, 1])
         job_type = c1.selectbox("Type", ["Service", "Project", "Leads"])
         priority = c2.selectbox("Priority", ["Medium", "Low", "High", "Critical"])
 
@@ -208,15 +209,15 @@ def edit_job_dialog(job_id):
         title = st.text_input("Job Title", value=job['title'])
         desc = st.text_area("Description", value=job['description'])
         
-        c1, c2 = st.columns(2)
-        
+        c1, c2 = form_row([1, 1])
+
         # Type
         type_opts = ["Service", "Project", "Leads"]
         curr_type_idx = 0
         if job['type'] in type_opts:
             curr_type_idx = type_opts.index(job['type'])
         job_type = c1.selectbox("Type", type_opts, index=curr_type_idx)
-        
+
         # Priority
         prio_opts = ["Medium", "Low", "High", "Critical"]
         curr_prio_idx = 0
@@ -341,7 +342,7 @@ def edit_location_dialog(loc_id):
         l_addr = st.text_input("Address", value=loc['address'])
         l_maps = st.text_input("Google Maps Link (Optional)", value=loc.get('mapsUrl', ''))
         
-        c_l1, c_l2 = st.columns(2)
+        c_l1, c_l2 = form_row([1, 1])
         l_contact_name = c_l1.text_input("Site Contact Name", value=loc.get('contact_name', ''))
         l_contact_phone = c_l2.text_input("Site Contact Phone", value=loc.get('contact_phone', ''))
         l_contact_email = st.text_input("Site Contact Email", value=loc.get('contact_email', ''))
@@ -506,7 +507,7 @@ def render_edit_report_view(job_id, report_id):
         st.write(f"### ✏️ Editing Daily Report")
         st.caption(f"Report from {report['timestamp'][:16]}")
         
-        r_col1, r_col2 = st.columns(2)
+        r_col1, r_col2 = form_row([1, 1])
         with r_col1:
             available_techs = [t['name'] for t in st.session_state.techs]
             current_techs_str = report.get('techsOnSite', '')
@@ -956,10 +957,10 @@ Desc: {job['description']}"""
         # Add a part
         with st.expander("➕ Add Part / Material", expanded=not parts):
             with st.form(key=f"add_part_form_{job_id}", clear_on_submit=True):
-                ap1, ap2 = st.columns([3, 1])
+                ap1, ap2 = form_row([3, 1])
                 new_name = ap1.text_input("Item", placeholder="e.g. 16ch NVR, Cat6 box, PoE switch")
                 new_qty = ap2.number_input("Qty", min_value=1, step=1, value=1)
-                ap3, ap4, ap5 = st.columns(3)
+                ap3, ap4, ap5 = form_row([1, 1, 1])
                 new_status = ap3.selectbox("Status", PART_STATUSES, index=0)
                 new_vendor = ap4.text_input("Vendor (optional)")
                 new_cost = ap5.text_input("Est. Cost (optional)", placeholder="$")
@@ -1064,7 +1065,7 @@ Desc: {job['description']}"""
                 with st.form(key=f"add_system_form_{job_id}", clear_on_submit=True):
                     sys_type = st.selectbox("System Type", SYSTEM_PRESETS)
                     custom_name = st.text_input("Custom Name (optional)", placeholder="e.g. Front Desk NVR")
-                    a1, a2 = st.columns(2)
+                    a1, a2 = form_row([1, 1])
                     with a1:
                         new_user = st.text_input("Username")
                         new_ip = st.text_input("IP Address(es)", placeholder="192.168.1.100")
@@ -1119,7 +1120,7 @@ Desc: {job['description']}"""
                     with st.expander("✏️ Edit / Delete"):
                         with st.form(key=f"edit_sys_form_{s['id']}"):
                             e_name = st.text_input("System Name", value=s.get('name', ''))
-                            e1, e2 = st.columns(2)
+                            e1, e2 = form_row([1, 1])
                             with e1:
                                 e_user = st.text_input("Username", value=s.get('username', ''))
                                 e_ip = st.text_input("IP Address(es)", value=s.get('ip', ''))
@@ -1127,7 +1128,7 @@ Desc: {job['description']}"""
                                 e_pass = st.text_input("Password", value=s.get('password', ''))
                                 e_notes = st.text_input("Notes", value=s.get('notes', ''))
 
-                            ec1, ec2 = st.columns(2)
+                            ec1, ec2 = form_row([1, 1])
                             if ec1.form_submit_button("💾 Update"):
                                 s.update({
                                     'name': e_name,
@@ -1160,15 +1161,15 @@ Desc: {job['description']}"""
 
             with st.expander("➕ Register equipment", expanded=not (loc.get('assets') or [])):
                 with st.form(key=f"asset_form_{job_id}"):
-                    ac1, ac2 = st.columns([1, 1])
+                    ac1, ac2 = form_row([1, 1])
                     a_type = ac1.selectbox("Type", ASSET_TYPES)
                     a_qty = ac2.number_input("How many", min_value=1, max_value=20, value=1,
                                              help="Registers this many, each with its own tag.")
                     a_model = st.text_input("Make / model", placeholder="e.g. Hikvision DS-7616NI-K2")
-                    ac3, ac4 = st.columns([1, 1])
+                    ac3, ac4 = form_row([1, 1])
                     a_serial = ac3.text_input("Serial", placeholder="one unit only")
                     a_pos = ac4.text_input("Where on site", placeholder="e.g. IDF 2")
-                    ac5, ac6 = st.columns([1, 1])
+                    ac5, ac6 = form_row([1, 1])
                     a_warr = ac5.number_input("Warranty (months)", min_value=0, max_value=120, value=36)
                     a_date = ac6.text_input("Installed", value=now_local().strftime('%Y-%m-%d'),
                                             placeholder="YYYY-MM-DD")
@@ -1295,7 +1296,7 @@ Desc: {job['description']}"""
         with st.form(key=f"invoice_form_{job_id}"):
             i_status = st.selectbox("Invoice Status", INVOICE_STATUSES,
                                     index=INVOICE_STATUSES.index(_cur) if _cur in INVOICE_STATUSES else 0)
-            ic1, ic2 = st.columns(2)
+            ic1, ic2 = form_row([1, 1])
             i_number = ic1.text_input("Invoice #", value=inv['number'])
             i_amount = ic2.text_input("Amount", value=_amount_seed, placeholder="e.g. 1450.00")
             if _from_quote:
@@ -1318,7 +1319,7 @@ Desc: {job['description']}"""
 
         # Quote value — what we quoted the customer for this job. Free text on
         # purpose so "TBD" or a note survives; format_money() prettifies numbers.
-        _qv_c1, _qv_c2 = st.columns([1, 1])
+        _qv_c1, _qv_c2 = form_row([1, 1])
         with _qv_c1:
             with st.form(key=f"quote_form_{job_id}"):
                 _qv_new = st.text_input("💲 Quote Value", value=job.get('quoteValue', ''),
@@ -1416,7 +1417,7 @@ Desc: {job['description']}"""
 
                     if st.session_state.get(del_confirm_key):
                         st.warning("Permanently delete this entry? Its notes and photos will be removed from the job history.")
-                        dc1, dc2 = st.columns(2)
+                        dc1, dc2 = form_row([1, 1])
                         if dc1.button("✅ Yes, Delete", key=f"del_yes_{r['id']}", type="primary", use_container_width=True):
                             st.session_state.jobs[job_index]['reports'] = [x for x in st.session_state.jobs[job_index]['reports'] if x['id'] != r['id']]
                             get_logger().log(f"{user_email} deleted report {r['id']} from job {job_id}")
@@ -1486,7 +1487,7 @@ Desc: {job['description']}"""
             prog_note = st.text_area("Note", value=default_note, placeholder="Quick update (e.g. 'Arrived on site', 'Found the issue')...")
             
             st.write("**Attach Photos & Docs**")
-            c_cam, c_upl = st.columns(2)
+            c_cam, c_upl = form_row([1, 1])
             with c_cam:
                 cam_pic = st.camera_input("Take Photo")
             with c_upl:
@@ -1547,7 +1548,7 @@ Desc: {job['description']}"""
                 if payload.get('photos'):
                     st.markdown(f"**Photos:** {len(payload['photos'])} attached")
 
-            c_yes, c_no = st.columns(2)
+            c_yes, c_no = form_row([1, 1])
             if c_yes.button("✅ Yes, Submit Report", key="conf_yes", type="primary"):
                 del st.session_state[confirm_key]
                 if new_status == "Completed":
@@ -1620,7 +1621,7 @@ Desc: {job['description']}"""
             # directly made this box forget every time. job_is_warranty() checks both.
             is_warranty = st.checkbox("Warranty Work?", value=job_is_warranty(job))
 
-            r_col1, r_col2 = st.columns(2)
+            r_col1, r_col2 = form_row([1, 1])
             with r_col1:
                 # Techs on Site: prefer whoever was on site last time (same crew
                 # usually returns), falling back to the assigned tech.
