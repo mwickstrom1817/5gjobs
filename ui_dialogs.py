@@ -310,19 +310,25 @@ def edit_job_dialog(job_id):
         c1, c2 = st.columns(2)
         
         # Extract existing contact values
-        c1_n = job_contacts[0]['name'] if len(job_contacts) > 0 else ""
-        c1_p = job_contacts[0]['phone'] if len(job_contacts) > 0 else ""
-        c2_n = job_contacts[1]['name'] if len(job_contacts) > 1 else ""
-        c2_p = job_contacts[1]['phone'] if len(job_contacts) > 1 else ""
-        c3_note = job_contacts[2]['name'] if len(job_contacts) > 2 else ""
+        c1_n = job_contacts[0].get('name', '') if len(job_contacts) > 0 else ""
+        c1_p = job_contacts[0].get('phone', '') if len(job_contacts) > 0 else ""
+        c1_e = job_contacts[0].get('email', '') if len(job_contacts) > 0 else ""
+        c2_n = job_contacts[1].get('name', '') if len(job_contacts) > 1 else ""
+        c2_p = job_contacts[1].get('phone', '') if len(job_contacts) > 1 else ""
+        c2_e = job_contacts[1].get('email', '') if len(job_contacts) > 1 else ""
+        c3_note = job_contacts[2].get('name', '') if len(job_contacts) > 2 else ""
+        c3_e = job_contacts[2].get('email', '') if len(job_contacts) > 2 else ""
 
         contact1_name = c1.text_input("Primary Contact Name", value=c1_n)
         contact1_phone = c1.text_input("Primary Contact Phone", value=c1_p)
-        
+        contact1_email = c1.text_input("Primary Contact Email", value=c1_e)
+
         contact2_name = c2.text_input("Secondary Contact Name", value=c2_n)
         contact2_phone = c2.text_input("Secondary Contact Phone", value=c2_p)
-        
+        contact2_email = c2.text_input("Secondary Contact Email", value=c2_e)
+
         contact3_name = st.text_input("Additional Contact / Notes", value=c3_note)
+        contact3_email = st.text_input("Additional Contact Email", value=c3_e)
 
         # Only the uploader lives in the form — st.button is not allowed inside
         # st.form, so the delete controls sit above it (see the block before the form).
@@ -340,12 +346,12 @@ def edit_job_dialog(job_id):
 
                 # Update Contacts
                 new_contacts = []
-                if contact1_name or contact1_phone: 
-                    new_contacts.append({'name': contact1_name, 'phone': contact1_phone, 'label': 'Primary'})
-                if contact2_name or contact2_phone: 
-                    new_contacts.append({'name': contact2_name, 'phone': contact2_phone, 'label': 'Secondary'})
-                if contact3_name: 
-                    new_contacts.append({'name': contact3_name, 'phone': '', 'label': 'Note'})
+                if contact1_name or contact1_phone or contact1_email:
+                    new_contacts.append({'name': contact1_name, 'phone': contact1_phone, 'email': contact1_email, 'label': 'Primary'})
+                if contact2_name or contact2_phone or contact2_email:
+                    new_contacts.append({'name': contact2_name, 'phone': contact2_phone, 'email': contact2_email, 'label': 'Secondary'})
+                if contact3_name or contact3_email:
+                    new_contacts.append({'name': contact3_name, 'phone': '', 'email': contact3_email, 'label': 'Note'})
                 
                 st.session_state.jobs[job_index]['contacts'] = new_contacts
                 st.session_state.jobs[job_index]['title'] = title
@@ -396,7 +402,8 @@ def edit_location_dialog(loc_id):
         c_l1, c_l2 = st.columns(2)
         l_contact_name = c_l1.text_input("Site Contact Name", value=loc.get('contact_name', ''))
         l_contact_phone = c_l2.text_input("Site Contact Phone", value=loc.get('contact_phone', ''))
-        
+        l_contact_email = st.text_input("Site Contact Email", value=loc.get('contact_email', ''))
+
         if st.form_submit_button("Update Location"):
             if l_name and l_addr:
                 # Update session state
@@ -405,6 +412,7 @@ def edit_location_dialog(loc_id):
                 st.session_state.locations[loc_index]['mapsUrl'] = l_maps
                 st.session_state.locations[loc_index]['contact_name'] = l_contact_name
                 st.session_state.locations[loc_index]['contact_phone'] = l_contact_phone
+                st.session_state.locations[loc_index]['contact_email'] = l_contact_email
                 
                 save_state(invalidate_briefing=False)
                 st.toast("Location updated!", icon="✅")
@@ -732,6 +740,11 @@ def job_details_dialog(job_id):
         contact_name = None
         contact_phone = None
 
+        # Contact Info Logic
+        contact_name = None
+        contact_phone = None
+        contact_email = None
+
         if job_contacts:
             st.write("###### 👥 Site Contacts")
             for c in job_contacts:
@@ -740,21 +753,29 @@ def job_details_dialog(job_id):
                 if c.get('phone'):
                     clean_phone = re.sub(r'\D', '', c['phone'])
                     col_c2.link_button(f"📞 Call", f"tel:{clean_phone}", use_container_width=True)
+                elif c.get('email'):
+                    col_c2.link_button(f"📧 Email", f"mailto:{c['email']}", use_container_width=True)
                 else:
                     col_c2.write("")
-            
+                if c.get('email') and not c.get('phone'):
+                    st.caption(f"✉️ {c['email']}")
+
             # For the copy block below, use the first contact as a default if available
             contact_name = job_contacts[0].get('name')
             contact_phone = job_contacts[0].get('phone')
+            contact_email = job_contacts[0].get('email')
         else:
             # Fallback to old single contact logic if no list exists
             contact_name = job.get('contact_name') or (loc.get('contact_name') if loc else None)
             contact_phone = job.get('contact_phone') or (loc.get('contact_phone') if loc else None)
+            contact_email = job.get('contact_email') or (loc.get('contact_email') if loc else None)
 
-            # CONTACT CALL BUTTON
+            # CONTACT CALL / EMAIL BUTTON
             if contact_phone:
                 clean_phone = re.sub(r'\D', '', contact_phone)
                 st.link_button(f"📞 Call {contact_name or 'Contact'}", f"tel:{clean_phone}")
+            elif contact_email:
+                st.link_button(f"📧 Email {contact_name or 'Contact'}", f"mailto:{contact_email}")
             elif contact_name:
                 st.write(f"👤 {contact_name}")
 
@@ -762,6 +783,7 @@ def job_details_dialog(job_id):
         copy_text = f"""Job: {job['title']}
 Address: {loc['address'] if loc else 'Unknown'}
 Contact: {contact_name or 'N/A'} ({contact_phone or 'N/A'})
+Email: {contact_email or 'N/A'}
 Desc: {job['description']}"""
         st.code(copy_text, language="text")
 
