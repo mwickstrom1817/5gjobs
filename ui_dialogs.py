@@ -38,25 +38,47 @@ except ImportError:
 
 # --- DIALOGS (MODALS) ---
 
+
 @st.dialog("Create New Job")
 def add_job_dialog():
-    if not st.session_state.locations:
-        st.error("Please create a Location in the Admin tab first.")
-        if st.button("Close"): st.rerun()
-        return
-
-    # Location picker lives OUTSIDE the form so choosing a site can immediately
-    # pull in that location's saved contact. (Widgets inside an st.form don't
-    # rerun on change, so this prefill can't happen from within the form.)
     loc_map = {l['name']: l['id'] for l in st.session_state.locations}
-    loc_options = list(loc_map.keys()) + ["➕ New Location"]
-    loc_selection = st.selectbox("Location", loc_options)
+    has_locations = bool(loc_map)
 
-    selected_loc = get_location(loc_map[loc_selection]) if loc_selection in loc_map else None
-    prefill_name = (selected_loc or {}).get('contact_name', '') or ''
-    prefill_phone = (selected_loc or {}).get('contact_phone', '') or ''
-    prefill_email = (selected_loc or {}).get('contact_email', '') or ''
-    if selected_loc and (prefill_name or prefill_phone or prefill_email):
+    # Default to "Create new location" if there are no saved locations yet.
+    mode_options = ["Use existing location", "Create new location"]
+    default_index = 1 if not has_locations else 0
+    location_mode = st.radio("Location source", mode_options, horizontal=True, index=default_index)
+
+    selected_loc = None
+    prefill_name = ""
+    prefill_phone = ""
+    prefill_email = ""
+    final_loc_id = None  # set at submit time
+
+    if location_mode == "Use existing location":
+        if not has_locations:
+            st.warning("No saved locations. Switch to Create new location.")
+        loc_options = ["— Select a location —"] + list(loc_map.keys())
+        loc_selection = st.selectbox("Select location", loc_options)
+        if loc_selection != "— Select a location —":
+            final_loc_id = loc_map[loc_selection]
+            selected_loc = get_location(final_loc_id)
+    else:
+        st.write("###### 🆕 New Location Details")
+        nl_name = st.text_input("New Location Name")
+        nl_address = st.text_input("New Location Address")
+        nl_maps = st.text_input("Google Maps Link (Optional)")
+        nl_contact_name = st.text_input("Site Contact Name")
+        nl_contact_phone = st.text_input("Site Contact Phone")
+        nl_contact_email = st.text_input("Site Contact Email")
+        prefill_name = nl_contact_name
+        prefill_phone = nl_contact_phone
+        prefill_email = nl_contact_email
+
+    if selected_loc:
+        prefill_name = selected_loc.get('contact_name', '') or ''
+        prefill_phone = selected_loc.get('contact_phone', '') or ''
+        prefill_email = selected_loc.get('contact_email', '') or ''
         st.caption(f"📇 Loaded the saved contact for **{selected_loc['name']}** — edit below if needed.")
 
     with st.form("new_job_form"):
@@ -70,20 +92,13 @@ def add_job_dialog():
         # Date Selection
         job_date = st.date_input("Scheduled Date", value=now_local())
 
-        # New Location Fields (used only if "➕ New Location" is selected above)
-        st.write("---")
-        with st.expander("New Location Details", expanded=(loc_selection == "➕ New Location")):
-            new_loc_name = st.text_input("New Location Name")
-            new_loc_address = st.text_input("New Location Address")
-            new_loc_maps = st.text_input("Google Maps Link (Optional)")
-
-        # Multiple Site Contacts (Primary is prefilled from the selected location)
+        # Multiple Site Contacts (Primary is prefilled from the selected/new location)
         st.write("---")
         st.write("###### 👥 Site Contacts")
         c1, c2 = st.columns(2)
-        contact1_name = c1.text_input("Primary Contact Name", value=prefill_name, key=f"njc1_name_{loc_selection}")
-        contact1_phone = c1.text_input("Primary Contact Phone", value=prefill_phone, key=f"njc1_phone_{loc_selection}")
-        contact1_email = c1.text_input("Primary Contact Email", value=prefill_email, key=f"njc1_email_{loc_selection}")
+        contact1_name = c1.text_input("Primary Contact Name", value=prefill_name, key="njc1_name")
+        contact1_phone = c1.text_input("Primary Contact Phone", value=prefill_phone, key="njc1_phone")
+        contact1_email = c1.text_input("Primary Contact Email", value=prefill_email, key="njc1_email")
 
         contact2_name = c2.text_input("Secondary Contact Name")
         contact2_phone = c2.text_input("Secondary Contact Phone")
@@ -96,7 +111,6 @@ def add_job_dialog():
         company_crew = list(st.session_state.techs)
         tech_map = {t['name']: t['id'] for t in company_crew}
 
-        # Create display labels with skills
         tech_display_map = {}
         for t in company_crew:
             skills_str = f" ({', '.join(t.get('skills', [])[:2])}..)" if t.get('skills') else ""
@@ -115,29 +129,28 @@ def add_job_dialog():
 
         submitted = st.form_submit_button("Save Job")
         if submitted and title:
-            # Handle Inline Location Creation
-            final_loc_id = None
-            if loc_selection == "➕ New Location":
-                if new_loc_name and new_loc_address:
-                    existing_ids = [int(l['id'][1:]) for l in st.session_state.locations if l['id'].startswith('l') and l['id'][1:].isdigit()]
-                    next_id = (max(existing_ids) if existing_ids else 0) + 1
-                    final_loc_id = f"l{next_id}"
-                    
-                    new_loc = {
-                        "id": final_loc_id,
-                        "name": new_loc_name,
-                        "address": new_loc_address,
-                        "mapsUrl": new_loc_maps,
-                        "contact_name": contact1_name,
-                        "contact_phone": contact1_phone,
-                        "contact_email": contact1_email,
-                    }
-                    st.session_state.locations.append(new_loc)
-                else:
+            # Resolve the location
+            if location_mode == "Create new location":
+                if not (nl_name and nl_address):
                     st.error("New Location Name and Address are required.")
                     return
-            else:
-                final_loc_id = loc_map[loc_selection]
+                existing_ids = [int(l['id'][1:]) for l in st.session_state.locations if l['id'].startswith('l') and l['id'][1:].isdigit()]
+                next_id = (max(existing_ids) if existing_ids else 0) + 1
+                final_loc_id = f"l{next_id}"
+
+                new_loc = {
+                    "id": final_loc_id,
+                    "name": nl_name,
+                    "address": nl_address,
+                    "mapsUrl": nl_maps,
+                    "contact_name": nl_contact_name,
+                    "contact_phone": nl_contact_phone,
+                    "contact_email": nl_contact_email,
+                }
+                st.session_state.locations.append(new_loc)
+            elif final_loc_id is None:
+                st.error("Please select a location.")
+                return
 
             # Save Documents
             doc_keys = []
