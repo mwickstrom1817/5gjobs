@@ -29,7 +29,9 @@ DEFAULT_DATA = {
     "sops": [],
     "settings": {},
     "smtp_settings": {},
-    "last_reminder_date": None
+    "last_reminder_date": None,
+    "last_hours_digest_date": None,
+    "last_warranty_report_month": None,
 }
 
 # Per-entity tables. Each row is (id TEXT PK, data JSONB).
@@ -41,6 +43,8 @@ SETTINGS_KEYS = [
     "adminEmails",
     "construction_emails",
     "last_reminder_date",
+    "last_hours_digest_date",
+    "last_warranty_report_month",
     "settings",
     "smtp_settings",
 ]

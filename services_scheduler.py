@@ -78,8 +78,10 @@ def start_background_scheduler():
         while True:
             try:
                 now = now_local()
-                # Run at 7 AM Mon-Fri
-                if now.weekday() <= 4 and now.hour == 7:
+                # Run at 7 AM Mon-Fri (first 10 minutes of the hour only).
+                # The minute guard is a backstop so a failed persistence write
+                # can't cause a re-send every 10 minutes for the whole hour.
+                if now.weekday() <= 4 and now.hour == 7 and now.minute < 10:
                     today_str = now.strftime("%Y-%m-%d")
                     
                     from persistence_pg import load_state, save_state_to_db
@@ -148,8 +150,9 @@ def start_background_scheduler():
                         save_state_to_db(state, expected_version=version)
                         get_logger().log(f"Sent 7 AM background reminders for {today_str}")
 
-                # Friday 4 PM: weekly hours digest to admins (CSV attached)
-                if now.weekday() == 4 and now.hour == 16:
+                # Friday 4 PM: weekly hours digest to admins (CSV attached).
+                # Pin to the first 10 minutes of the hour as a backstop.
+                if now.weekday() == 4 and now.hour == 16 and now.minute < 10:
                     from persistence_pg import load_state, save_state_to_db
                     state, version = load_state()
                     today_str = now.strftime("%Y-%m-%d")
@@ -189,8 +192,8 @@ def start_background_scheduler():
 
                 # 1st of the month, 7 AM: warranty-expiration report to admins.
                 # Every expiring asset is a renewal/upsell conversation the
-                # office wouldn't otherwise know to start.
-                if now.day == 1 and now.hour == 7:
+                # office wouldn't otherwise know to start. Pin to first 10 min.
+                if now.day == 1 and now.hour == 7 and now.minute < 10:
                     from persistence_pg import load_state, save_state_to_db
                     state, version = load_state()
                     month_key = now.strftime("%Y-%m")
@@ -244,8 +247,8 @@ def start_background_scheduler():
                 # 1 AM daily: snapshot the whole DB state to object storage.
                 # The snapshot file is date-keyed, so re-running the same day
                 # just overwrites it - an in-memory flag is enough to skip
-                # duplicate work without another DB write.
-                if now.hour == 1:
+                # duplicate work without another DB write. Pin to first 10 min.
+                if now.hour == 1 and now.minute < 10:
                     from services_backup import run_daily_backup
                     today_str = now.strftime("%Y-%m-%d")
                     if backup_done_for != today_str:
