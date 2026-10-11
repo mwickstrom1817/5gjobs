@@ -41,7 +41,7 @@ from core import (
     get_tech, get_location, agreement_days_left, AGREEMENT_RENEWAL_DAYS,
     PRIORITY_COLORS, get_status_color,
 )
-from services_ai import generate_morning_briefing
+
 from services_scheduler import keep_awake, start_background_scheduler
 from ui_widgets import sub_nav
 from ui_styles import inject_global_styles
@@ -836,8 +836,6 @@ def main():
 
         col_main, col_feed = st.columns([2, 1])
         with col_main:
-            st.subheader("Daily Operational Briefing")
-
             # Stats + stale list computed up front so the tiles show live counts
             sec_jobs = list(st.session_state.jobs)
             active = len([j for j in sec_jobs if j['status'] != 'Completed'])
@@ -859,17 +857,6 @@ def main():
                 f'<div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;letter-spacing:1px;">{lbl}</div></div>'
                 for lbl, v, c in _tiles)
             st.markdown(f'<div style="display:flex;gap:10px;margin-bottom:12px;">{_tiles_html}</div>', unsafe_allow_html=True)
-
-            # Briefing display box
-            st.container(border=True).markdown(st.session_state.briefing)
-
-            # Controls for briefing
-            c1, c2 = st.columns([1, 2])
-            if c1.button("🔄 Refresh Briefing", use_container_width=True):
-                with st.spinner("🤖 AI is updating your briefing..."):
-                    st.session_state.briefing = generate_morning_briefing()
-                    save_state(invalidate_briefing=False)
-                    st.rerun()
 
             # Stale job alerts: badged rows (red = ancient, amber = recent)
             if stale_list:
