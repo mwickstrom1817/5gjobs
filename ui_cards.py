@@ -238,7 +238,9 @@ def render_map_view(jobs):
     # jammed into a single cluster). Users can still pan/zoom freely from there.
     avg_lat = sum(p[2] for p in points) / len(points)
     avg_lon = sum(p[3] for p in points) / len(points)
-    fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=6, tiles="CartoDB positron")
+    # CartoDB tiles now require an API key, so use OpenStreetMap's free
+    # tiles. The map is reference-only, so the lighter OSM style is fine.
+    fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=6, tiles="OpenStreetMap")
 
     # Nudge markers that share exact coordinates so they don't fully overlap
     coord_seen = {}
