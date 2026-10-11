@@ -834,84 +834,66 @@ def main():
             render_job_grid(my_jobs, key_suffix="my_assign")
             st.divider()
 
-        col_main, col_feed = st.columns([2, 1])
-        with col_main:
-            # Stats + stale list computed up front so the tiles show live counts
-            sec_jobs = list(st.session_state.jobs)
-            active = len([j for j in sec_jobs if j['status'] != 'Completed'])
-            crit = len([j for j in sec_jobs if j['priority'] == 'Critical'])
+        # Stats + stale list computed up front so the tiles show live counts
+        sec_jobs = list(st.session_state.jobs)
+        active = len([j for j in sec_jobs if j['status'] != 'Completed'])
+        crit = len([j for j in sec_jobs if j['priority'] == 'Critical'])
 
-            stale_list = []
-            for sj in sec_jobs:
-                sd = get_job_stale_days(sj)
-                if sd is not None and sd >= STALE_JOB_DAYS:
-                    stale_list.append((sj, sd))
-            stale_list.sort(key=lambda x: -x[1])
+        stale_list = []
+        for sj in sec_jobs:
+            sd = get_job_stale_days(sj)
+            if sd is not None and sd >= STALE_JOB_DAYS:
+                stale_list.append((sj, sd))
+        stale_list.sort(key=lambda x: -x[1])
 
-            # Stat tiles (matches the TV board design language)
-            _tiles = [("ACTIVE", active, "#e4e4e7"), ("CRITICAL", crit, "#ef4444"),
-                      ("TECHS", len(st.session_state.techs), "#e4e4e7"), ("STALE", len(stale_list), "#f87171")]
-            _tiles_html = "".join(
-                f'<div style="flex:1;background:#18181b;border:1px solid #27272a;border-radius:10px;padding:12px;text-align:center;">'
-                f'<div style="font-size:30px;font-weight:bold;color:{c};line-height:1;">{v}</div>'
-                f'<div style="font-size:10.5px;color:#a1a1aa;margin-top:5px;letter-spacing:1px;">{lbl}</div></div>'
-                for lbl, v, c in _tiles)
-            st.markdown(f'<div style="display:flex;gap:10px;margin-bottom:12px;">{_tiles_html}</div>', unsafe_allow_html=True)
+        # Stat tiles: 2x2 grid now that the feed column is gone.
+        _tiles = [("ACTIVE", active, "#e4e4e7"), ("CRITICAL", crit, "#ef4444"),
+                  ("TECHS", len(st.session_state.techs), "#e4e4e7"), ("STALE", len(stale_list), "#f87171")]
+        _tiles_html = "".join(
+            f'<div style="flex:1 1 calc(50% - 5px);min-width:120px;background:#18181b;border:1px solid #27272a;'
+            f'border-radius:10px;padding:14px;text-align:center;">'
+            f'<div style="font-size:32px;font-weight:bold;color:{c};line-height:1;">{v}</div>'
+            f'<div style="font-size:11px;color:#a1a1aa;margin-top:6px;letter-spacing:1px;">{lbl}</div></div>'
+            for lbl, v, c in _tiles)
+        st.markdown(f'<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">{_tiles_html}</div>', unsafe_allow_html=True)
 
-            # Stale job alerts: badged rows (red = ancient, amber = recent)
-            if stale_list:
-                def _b_esc(s):
-                    return (str(s if s is not None else "").replace('&', '&amp;')
-                            .replace('<', '&lt;').replace('>', '&gt;'))
-                _rows = ""
-                for sj, sd in stale_list:
-                    s_tech = get_tech(sj['techId'])
-                    _bg, _fg = ("#7f1d1d", "#fecaca") if sd >= 30 else ("#b45309", "#fde68a")
-                    _rows += (f'<div style="display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid #27272a;">'
-                              f'<span style="background:{_bg};color:{_fg};font-size:11px;font-weight:bold;padding:2px 8px;'
-                              f'border-radius:10px;min-width:46px;text-align:center;flex-shrink:0;">{sd}d</span>'
-                              f'<span style="color:#e4e4e7;font-size:13.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{_b_esc(sj["title"])}</span>'
-                              f'<span style="color:#71717a;font-size:12px;white-space:nowrap;">{_b_esc(sj["status"])} · {_b_esc(s_tech["name"] if s_tech else "Unassigned")}</span>'
-                              f'</div>')
-                st.markdown(
-                    f'<div style="background:#18181b;border:1px solid #27272a;border-radius:8px;padding:10px 14px;margin-top:12px;">'
-                    f'<div style="color:#f87171;font-size:13px;font-weight:bold;margin-bottom:6px;">🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days</div>'
-                    f'{_rows}</div>',
-                    unsafe_allow_html=True)
+        # Stale job alerts: badged rows (red = ancient, amber = recent)
+        if stale_list:
+            def _b_esc(s):
+                return (str(s if s is not None else "").replace('&', '&amp;')
+                        .replace('<', '&lt;').replace('>', '&gt;'))
+            _rows = ""
+            for sj, sd in stale_list:
+                s_tech = get_tech(sj['techId'])
+                _bg, _fg = ("#7f1d1d", "#fecaca") if sd >= 30 else ("#b45309", "#fde68a")
+                _rows += (f'<div style="display:flex;align-items:center;gap:9px;padding:5px 0;border-bottom:1px solid #27272a;">'
+                          f'<span style="background:{_bg};color:{_fg};font-size:11px;font-weight:bold;padding:2px 8px;'
+                          f'border-radius:10px;min-width:46px;text-align:center;flex-shrink:0;">{sd}d</span>'
+                          f'<span style="color:#e4e4e7;font-size:13.5px;font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{_b_esc(sj["title"])}</span>'
+                          f'<span style="color:#71717a;font-size:12px;white-space:nowrap;">{_b_esc(sj["status"])} · {_b_esc(s_tech["name"] if s_tech else "Unassigned")}</span>'
+                          f'</div>')
+            st.markdown(
+                f'<div style="background:#18181b;border:1px solid #27272a;border-radius:8px;padding:10px 14px;margin-top:12px;">'
+                f'<div style="color:#f87171;font-size:13px;font-weight:bold;margin-bottom:6px;">🚨 Stale Jobs — no updates in {STALE_JOB_DAYS}+ days</div>'
+                f'{_rows}</div>',
+                unsafe_allow_html=True)
 
-            # Upcoming contract renewals — admins only (contract values are sensitive)
-            if is_admin:
-                loc_by_id = {l['id']: l for l in st.session_state.locations}
-                renewals = []
-                for a in st.session_state.get('agreements', []):
-                    d = agreement_days_left(a)
-                    if d is not None and d <= AGREEMENT_RENEWAL_DAYS:
-                        renewals.append((a, d))
-                if renewals:
-                    renewals.sort(key=lambda x: x[1])
-                    st.markdown(f"##### 🔔 Upcoming Renewals — within {AGREEMENT_RENEWAL_DAYS} days")
-                    with st.container(border=True):
-                        for a, d in renewals:
-                            loc = loc_by_id.get(a.get('locationId'))
-                            when = f"in {d} days" if d >= 0 else f"**{abs(d)} days ago**"
-                            st.markdown(f"- **{a.get('title', 'Agreement')}** ({a.get('type', '')}) — renews {when} · 📍 {loc['name'] if loc else 'Unknown'}")
-
-        with col_feed:
-            st.subheader("Priority Feed")
-            crit_jobs = [j for j in filtered_jobs if j['priority'] in ['Critical', 'High'] and j['status'] != 'Completed']
-            if not crit_jobs:
-                st.caption("No critical jobs.")
-            for job in crit_jobs:
-                render_job_card(job, compact=True, key_suffix="feed_crit")
-
-            st.divider()
-
-            st.subheader("Standard Feed")
-            std_jobs = [j for j in filtered_jobs if j['priority'] in ['Medium', 'Low'] and j['status'] != 'Completed']
-            if not std_jobs:
-                st.caption("No standard jobs.")
-            for job in std_jobs:
-                render_job_card(job, compact=True, key_suffix="feed_std")
+        # Upcoming contract renewals — admins only (contract values are sensitive)
+        if is_admin:
+            loc_by_id = {l['id']: l for l in st.session_state.locations}
+            renewals = []
+            for a in st.session_state.get('agreements', []):
+                d = agreement_days_left(a)
+                if d is not None and d <= AGREEMENT_RENEWAL_DAYS:
+                    renewals.append((a, d))
+            if renewals:
+                renewals.sort(key=lambda x: x[1])
+                st.markdown(f"##### 🔔 Upcoming Renewals — within {AGREEMENT_RENEWAL_DAYS} days")
+                with st.container(border=True):
+                    for a, d in renewals:
+                        loc = loc_by_id.get(a.get('locationId'))
+                        when = f"in {d} days" if d >= 0 else f"**{abs(d)} days ago**"
+                        st.markdown(f"- **{a.get('title', 'Agreement')}** ({a.get('type', '')}) — renews {when} · 📍 {loc['name'] if loc else 'Unknown'}")
 
     # 2. Board
     with tab_map["👷 Board"]:
