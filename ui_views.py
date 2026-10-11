@@ -30,11 +30,12 @@ def sop_categories():
     return sorted({c for c in (set(SOP_SEED_CATEGORIES) | used) if c})
 
 def sop_matches(sop, q):
-    """Case-insensitive match across title, category, steps, notes, attachment names."""
+    """Case-insensitive match across title, category, content, steps, notes, attachment names."""
     if not q:
         return True
     hay = " ".join([
         sop.get('title', ''), sop.get('category', ''), sop.get('notes', ''),
+        sop.get('content', ''),
         " ".join(sop.get('steps') or []),
         " ".join(a.get('name', '') for a in (sop.get('attachments') or [])),
     ]).lower()
@@ -53,9 +54,15 @@ def _sop_form(sop, key_prefix, on_save, submit_label):
         picked = c1.selectbox("Category", cat_options, index=cat_idx)
         new_cat = c2.text_input("New category name", value="" if picked != "➕ New category..." else cur_cat,
                                 placeholder="Only if adding a new one")
-        steps_txt = st.text_area(
-            "Steps (one per line)", value="\n".join(sop.get('steps') or []), height=220,
-            placeholder="Confirm the model matches the quote\nSet a static IP outside the DHCP pool\n...")
+        # Free-form procedure text. Old SOPs stored an array of steps; we keep
+        # that working but new/edited ones save as a single content string so
+        # line breaks and paragraphs are preserved exactly as typed.
+        _existing_content = sop.get('content')
+        if _existing_content is None and sop.get('steps'):
+            _existing_content = "\n".join(str(s) for s in sop['steps'])
+        content_txt = st.text_area(
+            "Procedure", value=_existing_content or '', height=260,
+            placeholder="Describe the procedure here. Line breaks and paragraphs are preserved.")
         notes = st.text_area("Notes / cautions (optional)", value=sop.get('notes', ''), height=90)
         files = st.file_uploader("Attachments (datasheets, diagrams)", accept_multiple_files=True,
                                  type=['pdf', 'jpg', 'jpeg', 'png'], key=f"{key_prefix}_files")
@@ -72,7 +79,7 @@ def _sop_form(sop, key_prefix, on_save, submit_label):
             on_save({
                 "title": title.strip(),
                 "category": final_cat,
-                "steps": [ln.strip() for ln in steps_txt.splitlines() if ln.strip()],
+                "content": content_txt.strip(),
                 "notes": notes.strip(),
                 "attachments": atts,
             })
@@ -122,8 +129,9 @@ def render_sops_view(is_admin):
 
     for s in shown:
         steps = s.get('steps') or []
+        content = s.get('content', '')
         atts = s.get('attachments') or []
-        meta = f"{len(steps)} step(s) · {len(atts)} attachment(s)"
+        meta = f"{len(atts)} attachment(s)"
         if s.get('updated_at'):
             meta += f" · updated {str(s['updated_at'])[:10]}"
             if s.get('updated_by'):
@@ -134,11 +142,13 @@ def render_sops_view(is_admin):
             label += f"  ·  {s['category']}"
         with st.expander(label, expanded=bool(q) and len(shown) <= 3):
             st.caption(meta)
-            if steps:
+            if content:
+                st.markdown(content)
+            elif steps:
                 for i, stp in enumerate(steps, 1):
                     st.markdown(f"**{i}.** {stp}")
             else:
-                st.caption("No steps recorded.")
+                st.caption("No procedure recorded.")
 
             if s.get('notes'):
                 st.info(s['notes'])
