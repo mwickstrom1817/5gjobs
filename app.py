@@ -39,7 +39,7 @@ from core import (
     _square_icon, get_logo_data_uri, LOGO_PATH, ICON_PATH,
     get_job_stale_days, STALE_JOB_DAYS,
     get_tech, get_location, agreement_days_left, AGREEMENT_RENEWAL_DAYS,
-    PRIORITY_COLORS, find_asset, get_status_color,
+    PRIORITY_COLORS, get_status_color,
 )
 from services_ai import generate_morning_briefing
 from services_scheduler import keep_awake, start_background_scheduler
@@ -928,19 +928,6 @@ def main():
 
     # 2. Board
     with tab_map["👷 Board"]:
-        # Manual tag lookup — the fallback for a scuffed label, or for desktop
-        with st.expander("🏷️ Look up an equipment tag", expanded=False):
-            _lc1, _lc2 = st.columns([3, 1])
-            _tag_q = _lc1.text_input("Tag", key="asset_lookup", label_visibility="collapsed",
-                                     placeholder="e.g. 5GS-000042")
-            if _lc2.button("Find", use_container_width=True, key="asset_lookup_btn") and _tag_q.strip():
-                _l, _a = find_asset(_tag_q)
-                if _a:
-                    st.session_state["_open_asset_after_rerun"] = _a['tag']
-                    st.rerun()
-                else:
-                    st.warning(f"No equipment tagged '{_tag_q.strip()}'.")
-
         if not st.session_state.techs:
             st.info("No technicians added. Go to Admin tab.")
         else:
