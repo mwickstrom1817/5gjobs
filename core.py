@@ -909,7 +909,7 @@ def compute_hours_rows(jobs, techs, locations, start_date, end_date):
 def resolve_image_source(photo_source: str):
     """
     Supports:
-    - R2 object keys like 'photos/...', 'signatures/...', 'jobs/...'
+    - R2 object keys like 'photos/...', 'signatures/...', 'jobs/...', 'locations/...'
     - legacy local paths (if any remain)
     """
     if not photo_source or not isinstance(photo_source, str):
@@ -919,7 +919,7 @@ def resolve_image_source(photo_source: str):
     clean_path = photo_source.lstrip("/")
 
     # If it looks like an R2 key, turn into a signed URL
-    prefixes = ("photos/", "signatures/", "docs/", "jobs/")
+    prefixes = ("photos/", "signatures/", "docs/", "jobs/", "locations/")
     if clean_path.startswith(prefixes):
         return get_view_url(clean_path)
 

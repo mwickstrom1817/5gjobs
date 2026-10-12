@@ -604,4 +604,4 @@ def render_admin_panel():
 def _admin_invoicing():
     """Admin tile wrapper — the tile registry calls its functions with no args."""
     _email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
-    render_invoicing_view(_email)
+    render_invoicing_view(_email, key_suffix="admin")

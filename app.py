@@ -1067,7 +1067,7 @@ def main():
     # 6. Invoicing (admin / office manager)
     if is_admin:
         with tab_map["💵 Invoicing"]:
-            render_invoicing_view(user_email)
+            render_invoicing_view(user_email, key_suffix="tab")
 
     # 7. Admin (Only if Admin)
     if is_admin:

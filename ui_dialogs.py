@@ -859,7 +859,10 @@ Desc: {job['description']}"""
                 # If it's an image, we can show a small preview
                 ext = d['name'].lower().split('.')[-1]
                 if ext in ['jpg', 'jpeg', 'png']:
-                    st.image(url, width=200)
+                    try:
+                        st.image(url, width=200)
+                    except Exception:
+                        d_col1.caption("⚠️ Preview unavailable — use View / Download")
 
                 d_col2.link_button("👁️ View / Download", url, use_container_width=True)
                 if allow_move_to_site and loc:

@@ -510,7 +510,7 @@ def render_data_browser():
         job_details_dialog(selected_row['_job_id'])
 
 
-def render_invoicing_view(user_email):
+def render_invoicing_view(user_email, key_suffix=""):
     """Office-manager worklist: every Completed job grouped by invoice status, so
     'what still needs billing' is answerable at a glance. Admins only."""
     st.subheader("💵 Invoicing")
@@ -543,7 +543,8 @@ def render_invoicing_view(user_email):
     st.write("")
 
     view = st.radio("Show", INVOICE_STATUSES + ["All"], horizontal=True,
-                    key="invoicing_filter", label_visibility="collapsed")
+                    key=f"invoicing_filter_{key_suffix}" if key_suffix else "invoicing_filter",
+                    label_visibility="collapsed")
 
     rows = completed if view == "All" else buckets.get(view, [])
     # Most recently worked first
