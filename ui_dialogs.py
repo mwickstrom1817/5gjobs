@@ -889,7 +889,7 @@ Desc: {job['description']}"""
             if not site_docs:
                 st.caption("No site documents yet. Floorplans and as-builts belong here.")
             for i, d in enumerate(site_docs):
-                render_doc_row(d, f"site_{i}", allow_delete=is_admin, is_site_doc=True)
+                render_doc_row(d, f"site_{i}", allow_delete=_viewer_is_admin, is_site_doc=True)
             st.divider()
 
         st.write("##### 📋 This Job's Documents")
