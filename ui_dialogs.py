@@ -850,7 +850,7 @@ Desc: {job['description']}"""
                 else:
                     st.warning("Please select files first.")
 
-        def render_doc_row(d, key_suffix, allow_move_to_site=False):
+        def render_doc_row(d, key_suffix, allow_move_to_site=False, allow_delete=False, is_site_doc=False):
             with st.container(border=True):
                 d_col1, d_col2 = st.columns([3, 1])
                 d_col1.write(f"**{d['name']}**")
@@ -873,13 +873,23 @@ Desc: {job['description']}"""
                         st.toast(f"'{d['name']}' moved to site documents", icon="🏢")
                         st.rerun(scope="fragment")
 
+                if allow_delete:
+                    if d_col2.button("🗑️ Delete", key=f"del_doc_{key_suffix}", use_container_width=True, help="Remove this document from the job"):
+                        if is_site_doc and loc:
+                            loc['documents'] = [x for x in loc.get('documents', []) if x['key'] != d['key']]
+                        else:
+                            job['documents'] = [x for x in job.get('documents', []) if x['key'] != d['key']]
+                        save_state(invalidate_briefing=False)
+                        st.toast(f"Deleted '{d['name']}'", icon="🗑️")
+                        st.rerun(scope="fragment")
+
         if loc:
             st.write(f"##### 🏢 Site Documents — {loc['name']}")
             site_docs = loc.get('documents', [])
             if not site_docs:
                 st.caption("No site documents yet. Floorplans and as-builts belong here.")
             for i, d in enumerate(site_docs):
-                render_doc_row(d, f"site_{i}")
+                render_doc_row(d, f"site_{i}", allow_delete=is_admin, is_site_doc=True)
             st.divider()
 
         st.write("##### 📋 This Job's Documents")
@@ -887,7 +897,7 @@ Desc: {job['description']}"""
         if not docs:
             st.caption("No documents on this job.")
         for i, d in enumerate(docs):
-            render_doc_row(d, f"job_{i}", allow_move_to_site=True)
+            render_doc_row(d, f"job_{i}", allow_move_to_site=True, allow_delete=True)
 
     if section == "photos":
         st.write("#### 🖼️ All Job Photos")
