@@ -14,6 +14,7 @@ from core import (
     save_document_locally, resolve_image_source, esc_html, job_status_since,
 )
 from services_ai import get_api_key, get_available_model
+from services_pdf import generate_sop_pdf
 from ui_dialogs import job_details_dialog
 from ui_widgets import sub_nav
 from ui_styles import form_row
@@ -172,6 +173,21 @@ def render_sops_view(is_admin):
                     ext = str(a.get('name', '')).lower().split('.')[-1]
                     if url and ext in ('jpg', 'jpeg', 'png'):
                         st.image(url, width=320)
+
+            # Export a polished PDF of this SOP
+            safe_filename = s.get('title', 'SOP').replace(' ', '_').replace('/', '-')[:60]
+            pdf_bytes = generate_sop_pdf(s)
+            if pdf_bytes:
+                st.download_button(
+                    label="📄 Export PDF",
+                    data=pdf_bytes,
+                    file_name=f"{safe_filename}.pdf",
+                    mime="application/pdf",
+                    key=f"sop_pdf_{s['id']}",
+                    use_container_width=True,
+                )
+            else:
+                st.caption("PDF export unavailable (reportlab not installed).")
 
             if is_admin:
                 st.divider()
