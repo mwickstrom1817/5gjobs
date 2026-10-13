@@ -556,7 +556,6 @@ def render_admin_panel():
 
     # Tile-based navigation: a grid of cards instead of one long scroll
     tiles = [
-        ("invoicing", "💵", "Invoicing", _admin_invoicing),
         ("warranty", "🛡️", "Warranty Radar", _admin_warranty),
         ("techs", "👷", "Technicians", _admin_techs),
         ("locations", "📍", "Locations", _admin_locations),
@@ -601,7 +600,3 @@ def render_admin_panel():
         sel[3]()
 
 
-def _admin_invoicing():
-    """Admin tile wrapper — the tile registry calls its functions with no args."""
-    _email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
-    render_invoicing_view(_email, key_suffix="admin")
