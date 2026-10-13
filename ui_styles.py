@@ -110,6 +110,17 @@ def inject_global_styles():
         }
 
         /* ------------------------------------------------------------------
+           SOP library: never clip long procedure text inside expanders
+           ------------------------------------------------------------------ */
+        .sop-content-spacer {
+          height: 4px;
+        }
+        [data-testid="stExpander"] > details > div {
+          max-height: none !important;
+          overflow: visible !important;
+        }
+
+        /* ------------------------------------------------------------------
            Mobile overrides (max-width: 768px)
            ------------------------------------------------------------------ */
         @media (max-width: 768px) {

@@ -142,13 +142,21 @@ def render_sops_view(is_admin):
             label += f"  ·  {s['category']}"
         with st.expander(label, expanded=bool(q) and len(shown) <= 3):
             st.caption(meta)
-            if content:
-                st.markdown(content)
-            elif steps:
-                for i, stp in enumerate(steps, 1):
-                    st.markdown(f"**{i}.** {stp}")
-            else:
-                st.caption("No procedure recorded.")
+            # Wrap the procedure in a container so long markdown doesn't get
+            # clipped by the expander's layout calculations.
+            sop_body = st.container()
+            with sop_body:
+                if content:
+                    st.markdown(content)
+                elif steps:
+                    for i, stp in enumerate(steps, 1):
+                        st.markdown(f"**{i}.** {stp}")
+                else:
+                    st.caption("No procedure recorded.")
+
+                # Force the expander to reserve the full content height; without
+                # this, the last line of long procedures can be cut off.
+                st.markdown('<div class="sop-content-spacer"></div>', unsafe_allow_html=True)
 
             if s.get('notes'):
                 st.info(s['notes'])
