@@ -752,10 +752,18 @@ def agreement_days_left(agr):
 # Jobs with no history entry for this many days get flagged as stale
 STALE_JOB_DAYS = 5
 
+# Jobs intentionally parked waiting on an outside party should never clutter
+# the stale list — the follow-up chip already tracks them.
+STALE_EXCLUDED_STATUSES = {"Customer on Hold", "Waiting on Parts"}
+
+
 def get_job_stale_days(job):
     """Days since the last history entry on an active job.
-    Returns None for completed jobs, future-scheduled jobs, or unparseable dates."""
+    Returns None for completed jobs, future-scheduled jobs, unparseable dates,
+    or jobs parked waiting on an outside party (follow-up statuses)."""
     if job.get('status') == 'Completed':
+        return None
+    if job.get('status') in STALE_EXCLUDED_STATUSES:
         return None
     last_ts = None
     for r in job.get('reports', []):
