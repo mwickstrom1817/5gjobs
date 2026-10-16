@@ -1060,6 +1060,34 @@ def main():
         _labels = [f"{label} ({len(rows)})" for _, label, _, rows in _buckets]
         _by_label = {lbl: b for lbl, b in zip(_labels, _buckets)}
         _slug, _, _empty_word, _rows = _by_label.get(sub_nav(_labels, "jobs_view"), _buckets[0])
+
+        # Archive gets its own scoped search so techs can find past jobs quickly
+        # without scrolling through every completed job.
+        if _slug == "archive":
+            _archive_q = st.text_input(
+                "Search archived jobs...",
+                label_visibility="collapsed",
+                placeholder="🔍 Search archived jobs by title, site, or tech...",
+                key="archive_search",
+            )
+            if _archive_q:
+                _q = _archive_q.lower()
+
+                def _archive_matches(j):
+                    if _q in j.get('title', '').lower() or _q in j.get('description', '').lower():
+                        return True
+                    _loc = get_location(j.get('locationId'))
+                    if _loc and (_q in _loc.get('name', '').lower() or _q in _loc.get('address', '').lower()):
+                        return True
+                    _tech = get_tech(j.get('techId'))
+                    if _tech and _q in _tech.get('name', '').lower():
+                        return True
+                    return False
+
+                _rows = [j for j in _rows if _archive_matches(j)]
+                if not _rows:
+                    _empty_word = "matching archived jobs"
+
         if not _rows:
             st.info(f"No {_empty_word} to show.")
         render_job_grid(_rows, key_suffix=f"jobs_{_slug}", allow_delete=is_admin)
