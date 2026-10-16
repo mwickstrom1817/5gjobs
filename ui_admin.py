@@ -143,7 +143,7 @@ def _admin_techs():
         if st.session_state.techs:
             st.write("###### Current Technicians")
             for t in st.session_state.techs:
-                c1, c2, c3, c4 = st.columns([1, 3, 4, 1])
+                c1, c2, c3, c4, c5 = st.columns([1, 3, 4, 1, 1])
                 c1.markdown(f"**{t['initials']}**")
 
                 skills_display = ""
@@ -152,10 +152,35 @@ def _admin_techs():
 
                 c2.write(f"{t['name']}{skills_display}")
                 c3.write(t['email'])
-                if c4.button(":material/delete:", key=f"del_tech_{t['id']}"):
+
+                edit_key = f"editing_tech_{t['id']}"
+                if c4.button("✏️", key=f"edit_tech_{t['id']}", help="Edit technician"):
+                    st.session_state[edit_key] = not st.session_state.get(edit_key, False)
+                    st.rerun()
+                if c5.button(":material/delete:", key=f"del_tech_{t['id']}", help="Delete technician"):
                     st.session_state.techs.remove(t)
                     save_state(invalidate_briefing=False)
                     st.rerun()
+
+                if st.session_state.get(edit_key):
+                    with st.form(key=f"edit_tech_form_{t['id']}"):
+                        ec1, ec2, ec3 = form_row([2, 2, 1])
+                        edit_name = ec1.text_input("Name", value=t.get('name', ''), key=f"edit_name_{t['id']}")
+                        edit_email = ec2.text_input("Email", value=t.get('email', ''), key=f"edit_email_{t['id']}")
+                        edit_initials = ec3.text_input("Initials", value=t.get('initials', ''), max_chars=2,
+                                                       key=f"edit_initials_{t['id']}")
+                        edit_skills = st.multiselect("Skills", options=SKILL_OPTIONS,
+                                                     default=t.get('skills') or [],
+                                                     key=f"edit_skills_{t['id']}")
+                        if st.form_submit_button("Save Changes"):
+                            t['name'] = edit_name.strip()
+                            t['email'] = edit_email.strip()
+                            t['initials'] = edit_initials.strip().upper()
+                            t['skills'] = edit_skills
+                            save_state(invalidate_briefing=False)
+                            st.session_state[edit_key] = False
+                            st.toast(f"Updated {t['name']}", icon="✅")
+                            st.rerun()
 
     st.subheader("📳 Push Notifications (ntfy)")
     with st.expander("Phone Push Setup & Testing", expanded=False):
