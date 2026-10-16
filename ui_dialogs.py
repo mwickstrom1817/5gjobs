@@ -149,14 +149,21 @@ def add_job_dialog():
     # Display suggestions if any.
     if st.session_state.get("_add_job_suggestions"):
         st.caption("Top picks for this job:")
+        labels = {}
         for rank, (t, score, reasons) in enumerate(st.session_state._add_job_suggestions, 1):
-            sc1, sc2 = st.columns([3, 1])
             reason_text = " · ".join(reasons) if reasons else ""
-            sc1.write(f"**{rank}. {t['name']}** — {reason_text}")
-            if sc2.button("Assign", key=f"assign_suggest_add_{t['id']}", use_container_width=True):
-                st.session_state.preselect_tech_add = t['id']
-                st.session_state._add_job_suggestions = None
-                st.toast(f"Selected {t['name']} — save the job to apply.", icon="🤖")
+            label = f"{rank}. {t['name']} — {reason_text}"
+            labels[label] = t['id']
+
+        picked = st.radio(
+            "Pick a recommendation to pre-select it",
+            options=list(labels.keys()),
+            key="radio_add_suggest",
+            label_visibility="collapsed",
+        )
+        if picked:
+            st.session_state.preselect_tech_add = labels[picked]
+            st.toast(f"Pre-selected {picked.split('.')[1].split('—')[0].strip()} — save the job to apply.", icon="🤖")
         if st.button("Hide suggestions", key="hide_suggest_add"):
             st.session_state._add_job_suggestions = None
 
@@ -275,25 +282,36 @@ def edit_job_dialog(job_id):
 
     # --- AI Dispatch Assistant -----------------------------------------------
     suggest_key = f"suggest_tech_{job_id}"
-    if st.button("🤖 Suggest Tech", key=f"btn_{suggest_key}", help="Get a recommendation based on skills, workload, and site history"):
-        st.session_state[suggest_key] = True
+    preselect_key = f"preselect_tech_{job_id}"
+    show_suggest = st.toggle(
+        "🤖 Suggest Tech",
+        value=st.session_state.get(suggest_key, False),
+        key=f"toggle_{suggest_key}",
+        help="Get a recommendation based on skills, workload, and site history",
+    )
+    st.session_state[suggest_key] = show_suggest
 
-    if st.session_state.get(suggest_key):
+    if show_suggest:
         suggestions = suggest_technicians(job, n=3)
         if not suggestions:
             st.info("No technicians available to suggest.")
         else:
             st.caption("Top picks for this job:")
+            labels = {}
             for rank, (t, score, reasons) in enumerate(suggestions, 1):
-                sc1, sc2 = st.columns([3, 1])
                 reason_text = " · ".join(reasons) if reasons else ""
-                sc1.write(f"**{rank}. {t['name']}** — {reason_text}")
-                if sc2.button("Assign", key=f"assign_suggest_{job_id}_{t['id']}", use_container_width=True):
-                    st.session_state[f"preselect_tech_{job_id}"] = t['id']
-                    st.session_state[suggest_key] = False
-                    st.toast(f"Selected {t['name']} — update the job to apply.", icon="🤖")
-        if st.button("Hide suggestions", key=f"hide_{suggest_key}"):
-            st.session_state[suggest_key] = False
+                label = f"{rank}. {t['name']} — {reason_text}"
+                labels[label] = t['id']
+
+            picked = st.radio(
+                "Pick a recommendation to pre-select it",
+                options=list(labels.keys()),
+                key=f"radio_{suggest_key}",
+                label_visibility="collapsed",
+            )
+            if picked:
+                st.session_state[preselect_key] = labels[picked]
+                st.toast(f"Pre-selected {picked.split('.')[1].split('—')[0].strip()} — update the job to apply.", icon="🤖")
 
     with st.form(key=f"edit_job_form_{job_id}"):
         title = st.text_input("Job Title", value=job['title'])
