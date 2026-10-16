@@ -754,7 +754,7 @@ STALE_JOB_DAYS = 5
 
 # Jobs intentionally parked waiting on an outside party should never clutter
 # the stale list — the follow-up chip already tracks them.
-STALE_EXCLUDED_STATUSES = {"Customer on Hold", "Waiting on Parts"}
+STALE_EXCLUDED_STATUSES = {"Not Started", "Customer on Hold", "Waiting on Parts"}
 
 
 def get_job_stale_days(job):

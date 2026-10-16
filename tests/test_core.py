@@ -140,6 +140,7 @@ def test_get_job_stale_days():
     old = (now_local() - datetime.timedelta(days=10)).isoformat()
     assert get_job_stale_days(_active_job(date=old)) == 10
     # Jobs parked waiting on an outside party should not be marked stale
+    assert get_job_stale_days(_active_job(status="Not Started", date=old)) is None
     assert get_job_stale_days(_active_job(status="Customer on Hold", date=old)) is None
     assert get_job_stale_days(_active_job(status="Waiting on Parts", date=old)) is None
 
