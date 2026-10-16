@@ -69,6 +69,9 @@ def add_job_dialog():
         nl_contact_phone = st.text_input("Site Contact Phone")
         nl_contact_email = st.text_input("Site Contact Email")
 
+    # A suggestion may have pre-selected a tech for this new job.
+    preselect_tech = st.session_state.pop("preselect_tech_add", None)
+
     with st.form("new_job_form"):
         title = st.text_input("Job Title")
         desc = st.text_area("Description")
@@ -91,8 +94,16 @@ def add_job_dialog():
             tech_display_map[label] = t['id']
 
         tech_display_map["Unassigned"] = None
+        tech_options = list(tech_display_map.keys())
 
-        tech_label = st.selectbox("Assign Tech", list(tech_display_map.keys()))
+        # Default tech select index: unassigned, or a pre-selected suggestion.
+        tech_index = 0
+        if preselect_tech:
+            preselect_label = next((k for k, v in tech_display_map.items() if v == preselect_tech), None)
+            if preselect_label and preselect_label in tech_options:
+                tech_index = tech_options.index(preselect_label)
+
+        tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index)
         selected_tech_id = tech_display_map[tech_label]
 
         # Document Upload
@@ -100,8 +111,64 @@ def add_job_dialog():
         st.write("###### 📄 Job Documents")
         uploaded_docs = st.file_uploader("Upload Floorplans, Maps, or Docs (PDF, JPG, PNG)", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'])
 
-        submitted = st.form_submit_button("Save Job")
-        if submitted and title:
+        # Two submit buttons: suggestion or save. Callbacks distinguish them.
+        def _flag_suggest(): st.session_state._add_job_suggest = True
+        def _flag_save(): st.session_state._add_job_save = True
+
+        c_s1, c_s2 = st.columns([1, 1])
+        with c_s1:
+            st.form_submit_button("🤖 Suggest Tech", on_click=_flag_suggest)
+        with c_s2:
+            st.form_submit_button("Save Job", on_click=_flag_save)
+
+    # Handle suggestion request (form values are available here).
+    if st.session_state.get("_add_job_suggest"):
+        if not title:
+            st.error("Enter a job title before getting suggestions.")
+            st.session_state._add_job_suggest = False
+        elif location_mode == "Create new location" and not (nl_name and nl_address):
+            st.error("Enter the new location name and address before getting suggestions.")
+            st.session_state._add_job_suggest = False
+        elif location_mode == "Use existing location" and final_loc_id is None:
+            st.error("Select a location before getting suggestions.")
+            st.session_state._add_job_suggest = False
+        else:
+            temp_loc_id = final_loc_id
+            if location_mode == "Create new location":
+                # Suggestions only need a location id placeholder for site-history scoring.
+                temp_loc_id = f"__new__{nl_name.lower().replace(' ', '_')}"
+            temp_job = {
+                'title': title,
+                'description': desc,
+                'type': job_type,
+                'locationId': temp_loc_id,
+            }
+            st.session_state._add_job_suggestions = suggest_technicians(temp_job, n=3)
+            st.session_state._add_job_suggest = False
+            st.rerun()
+
+    # Display suggestions if any.
+    if st.session_state.get("_add_job_suggestions"):
+        st.caption("Top picks for this job:")
+        for rank, (t, score, reasons) in enumerate(st.session_state._add_job_suggestions, 1):
+            sc1, sc2 = st.columns([3, 1])
+            reason_text = " · ".join(reasons) if reasons else ""
+            sc1.write(f"**{rank}. {t['name']}** — {reason_text}")
+            if sc2.button("Assign", key=f"assign_suggest_add_{t['id']}", use_container_width=True):
+                st.session_state.preselect_tech_add = t['id']
+                st.session_state._add_job_suggestions = None
+                st.toast(f"Selected {t['name']} — save the job to apply.", icon="🤖")
+                st.rerun()
+        if st.button("Hide suggestions", key="hide_suggest_add"):
+            st.session_state._add_job_suggestions = None
+            st.rerun()
+
+    # Handle save request.
+    if st.session_state.get("_add_job_save"):
+        st.session_state._add_job_save = False
+        if not title:
+            st.error("Title is required.")
+        else:
             # Resolve the location
             if location_mode == "Create new location":
                 if not (nl_name and nl_address):
@@ -172,6 +239,10 @@ def add_job_dialog():
             # job added a multi-second AI call to the save path; users can refresh
             # the briefing manually from the Today tab when they want an update.
             save_state()  # Save changes
+
+            # Close the dialog for good.
+            st.session_state.pop("_open_add_job", None)
+            st.session_state.pop("_add_job_suggestions", None)
             
             if email_status_msg:
                 st.toast(email_status_msg, icon="ℹ️")
@@ -354,6 +425,8 @@ def edit_job_dialog(job_id):
                 st.session_state.briefing = "Data required to generate briefing."
                 save_state()  # Save changes
 
+                # Close the dialog for good.
+                st.session_state.pop("_open_edit_job_id", None)
                 st.toast("Job updated successfully!", icon="✅")
                 st.rerun()
             else:

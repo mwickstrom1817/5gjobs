@@ -45,7 +45,7 @@ from core import (
 from services_scheduler import keep_awake, start_background_scheduler
 from ui_widgets import sub_nav
 from ui_styles import inject_global_styles
-from ui_dialogs import job_details_dialog, asset_dialog, add_job_dialog
+from ui_dialogs import job_details_dialog, asset_dialog, add_job_dialog, edit_job_dialog
 from ui_cards import render_job_card, render_job_grid, render_map_view
 from ui_tv import render_tv_display
 from ui_views import render_sops_view, render_invoicing_view
@@ -772,7 +772,8 @@ def main():
         # Restricted Access: Only Admins can create jobs
         if is_admin:
             if st.button("➕ New Job", use_container_width=True):
-                add_job_dialog()
+                st.session_state._open_add_job = True
+                st.rerun()
     st.markdown('<div style="border-bottom:3px solid #b91c1c;margin:2px 0 8px 0;"></div>', unsafe_allow_html=True)
 
     # Filter Jobs based on search (matches title, description, location name/address, tech name)
@@ -1101,6 +1102,18 @@ def main():
     if is_admin:
         with tab_map["🛡️ Admin"]:
             render_admin_panel()
+
+    # Re-open dialogs that were triggered from a button that no longer exists
+    # after an internal rerun (e.g. Suggest Tech inside Edit Job).
+    _edit_job_id = st.session_state.get("_open_edit_job_id")
+    if _edit_job_id:
+        edit_job_dialog(_edit_job_id)
+        # Reached here = dialog closed normally; clear the flag.
+        st.session_state.pop("_open_edit_job_id", None)
+
+    if st.session_state.get("_open_add_job"):
+        add_job_dialog()
+        st.session_state.pop("_open_add_job", None)
 
 if __name__ == "__main__":
     main()

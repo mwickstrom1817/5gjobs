@@ -10,7 +10,7 @@ from core import (
 )
 from services_geo import get_lat_lon_from_address
 from ui_styles import form_row
-from ui_dialogs import job_details_dialog, edit_job_dialog
+from ui_dialogs import job_details_dialog
 
 
 def _load_map_libs():
@@ -134,7 +134,8 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                         job_details_dialog(job['id'])
                 with b2:
                     if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
-                        edit_job_dialog(job['id'])
+                        st.session_state._open_edit_job_id = job['id']
+                        st.rerun()
                 with b3:
                     if st.button(":material/delete:", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
                         _delete_job()
@@ -160,7 +161,8 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
             if f3 is not None:
                 with f3:
                     if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
-                        edit_job_dialog(job['id'])
+                        st.session_state._open_edit_job_id = job['id']
+                        st.rerun()
                 with f4:
                     if st.button(":material/delete:", key=f"del_{job['id']}_{key_suffix}", help="Delete Job", use_container_width=True):
                         _delete_job()
