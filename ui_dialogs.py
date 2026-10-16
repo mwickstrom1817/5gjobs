@@ -145,7 +145,6 @@ def add_job_dialog():
             }
             st.session_state._add_job_suggestions = suggest_technicians(temp_job, n=3)
             st.session_state._add_job_suggest = False
-            st.rerun()
 
     # Display suggestions if any.
     if st.session_state.get("_add_job_suggestions"):
@@ -158,10 +157,8 @@ def add_job_dialog():
                 st.session_state.preselect_tech_add = t['id']
                 st.session_state._add_job_suggestions = None
                 st.toast(f"Selected {t['name']} — save the job to apply.", icon="🤖")
-                st.rerun()
         if st.button("Hide suggestions", key="hide_suggest_add"):
             st.session_state._add_job_suggestions = None
-            st.rerun()
 
     # Handle save request.
     if st.session_state.get("_add_job_save"):
@@ -275,13 +272,11 @@ def edit_job_dialog(job_id):
                 st.session_state.jobs[job_index]['documents'] = existing_docs
                 save_state(invalidate_briefing=False)
                 st.toast(f"Removed {d['name']}", icon="🗑️")
-                st.rerun()
 
     # --- AI Dispatch Assistant -----------------------------------------------
     suggest_key = f"suggest_tech_{job_id}"
     if st.button("🤖 Suggest Tech", key=f"btn_{suggest_key}", help="Get a recommendation based on skills, workload, and site history"):
         st.session_state[suggest_key] = True
-        st.rerun()
 
     if st.session_state.get(suggest_key):
         suggestions = suggest_technicians(job, n=3)
@@ -297,10 +292,8 @@ def edit_job_dialog(job_id):
                     st.session_state[f"preselect_tech_{job_id}"] = t['id']
                     st.session_state[suggest_key] = False
                     st.toast(f"Selected {t['name']} — update the job to apply.", icon="🤖")
-                    st.rerun()
         if st.button("Hide suggestions", key=f"hide_{suggest_key}"):
             st.session_state[suggest_key] = False
-            st.rerun()
 
     with st.form(key=f"edit_job_form_{job_id}"):
         title = st.text_input("Job Title", value=job['title'])
