@@ -7,6 +7,7 @@ from core import (
     job_value_summary, asset_warranty_left, expiring_assets, _parse_report_time,
     get_job_stale_days, agreement_days_left, apply_job_status, days_in_status,
     job_followup, followup_jobs, compute_hours_rows, now_local,
+    suggest_technicians,
 )
 from services_email import daily_summary_recipients
 
@@ -143,6 +144,32 @@ def test_get_job_stale_days():
     assert get_job_stale_days(_active_job(status="Not Started", date=old)) is None
     assert get_job_stale_days(_active_job(status="Customer on Hold", date=old)) is None
     assert get_job_stale_days(_active_job(status="Waiting on Parts", date=old)) is None
+
+
+def test_suggest_technicians_scores_skills_and_workload():
+    techs = [
+        {"id": "t1", "name": "Alice", "skills": ["Access Control"]},
+        {"id": "t2", "name": "Bob", "skills": ["Access Control"]},
+        {"id": "t3", "name": "Carol", "skills": []},
+    ]
+    jobs = [
+        # Alice has 1 active job matching skill area
+        {"id": "j1", "title": "Access control install", "status": "In Progress", "locationId": "l1", "techId": "t1"},
+        # Bob has 3 active jobs (heavier load)
+        {"id": "j2", "title": "Camera swap", "status": "In Progress", "locationId": "l2", "techId": "t2"},
+        {"id": "j3", "title": "Camera repair", "status": "In Progress", "locationId": "l2", "techId": "t2"},
+        {"id": "j5", "title": "Camera install", "status": "In Progress", "locationId": "l2", "techId": "t2"},
+        # Past job at target location for Alice
+        {"id": "j4", "title": "Old access job", "status": "Completed", "locationId": "l1", "techId": "t1"},
+    ]
+    job = {"id": "j5", "title": "HID access controller", "description": "Access control", "type": "Service", "locationId": "l1"}
+    results = suggest_technicians(job, n=3, techs=techs, jobs=jobs)
+    assert len(results) == 3
+    # Alice should win: skill match + past location + lighter load
+    assert results[0][0]["id"] == "t1"
+    # Bob has skill match but heavier load, so Carol (no load) beats him
+    assert results[1][0]["id"] == "t3"
+    assert results[2][0]["id"] == "t2"
 
 
 def test_apply_job_status_stamps_and_days_in_status():

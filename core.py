@@ -779,6 +779,78 @@ def get_job_stale_days(job):
         return None
     return (now_local() - base_dt).days
 
+
+def suggest_technicians(job, n=3, techs=None, jobs=None):
+    """Score technicians for a job and return the top N as (tech, score, reasons).
+
+    Scoring factors:
+      - Skill keywords from the job title/description matching the tech's skills
+      - Past jobs at the same location
+      - Current active workload (lighter load is preferred)
+
+    `techs` and `jobs` default to session state but can be passed explicitly for
+    testing or offline use.
+    """
+    if not job:
+        return []
+
+    techs = techs or st.session_state.get('techs', [])
+    jobs = jobs or st.session_state.get('jobs', [])
+
+    job_text = " ".join([
+        str(job.get('title', '')),
+        str(job.get('description', '')),
+        str(job.get('type', '')),
+    ]).lower()
+
+    location_id = job.get('locationId')
+    active_jobs = [j for j in jobs if j.get('status') != 'Completed']
+    workload_by_tech = {}
+    for j in active_jobs:
+        tid = j.get('techId')
+        if tid:
+            workload_by_tech[tid] = workload_by_tech.get(tid, 0) + 1
+
+    past_at_location = {}
+    for j in jobs:
+        if j.get('locationId') == location_id:
+            tid = j.get('techId')
+            if tid:
+                past_at_location[tid] = past_at_location.get(tid, 0) + 1
+
+    avg_workload = sum(workload_by_tech.values()) / max(len(techs), 1)
+
+    scored = []
+    for t in techs:
+        tid = t.get('id')
+        score = 0
+        reasons = []
+
+        skills = t.get('skills') or []
+        matched = [s for s in skills if s.lower() in job_text]
+        if matched:
+            score += 20 * len(matched)
+            reasons.append(f"skills: {', '.join(matched)}")
+
+        past = past_at_location.get(tid, 0)
+        if past:
+            score += 15 * past
+            reasons.append(f"worked here {past} time{'s' if past > 1 else ''}")
+
+        workload = workload_by_tech.get(tid, 0)
+        score -= 5 * workload
+        if workload <= avg_workload:
+            score += 10
+            reasons.append("lighter load")
+        else:
+            reasons.append(f"{workload} active jobs")
+
+        scored.append((t, score, reasons))
+
+    scored.sort(key=lambda x: -x[1])
+    return scored[:n]
+
+
 # --- FOLLOW-UPS (jobs parked waiting on someone else) -------------------------
 # Statuses that mean "we're blocked on an outside party". Each maps to how many
 # days it may sit before it needs chasing, and who to chase.

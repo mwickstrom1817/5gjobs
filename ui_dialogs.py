@@ -17,7 +17,7 @@ from core import (
     next_asset_tag, asset_warranty_left, find_asset, build_asset_labels_pdf,
     save_image_locally, save_document_locally, resolve_image_source,
     last_daily_report, _parse_report_time,
-    get_google_maps_url, create_ics_file,
+    get_google_maps_url, create_ics_file, suggest_technicians,
 )
 from object_store import upload_bytes, get_view_url, upload_streamlit_file
 from services_ai import generate_technician_summary, transcribe_audio
@@ -206,6 +206,31 @@ def edit_job_dialog(job_id):
                 st.toast(f"Removed {d['name']}", icon="🗑️")
                 st.rerun()
 
+    # --- AI Dispatch Assistant -----------------------------------------------
+    suggest_key = f"suggest_tech_{job_id}"
+    if st.button("🤖 Suggest Tech", key=f"btn_{suggest_key}", help="Get a recommendation based on skills, workload, and site history"):
+        st.session_state[suggest_key] = True
+        st.rerun()
+
+    if st.session_state.get(suggest_key):
+        suggestions = suggest_technicians(job, n=3)
+        if not suggestions:
+            st.info("No technicians available to suggest.")
+        else:
+            st.caption("Top picks for this job:")
+            for rank, (t, score, reasons) in enumerate(suggestions, 1):
+                sc1, sc2 = st.columns([3, 1])
+                reason_text = " · ".join(reasons) if reasons else ""
+                sc1.write(f"**{rank}. {t['name']}** — {reason_text}")
+                if sc2.button("Assign", key=f"assign_suggest_{job_id}_{t['id']}", use_container_width=True):
+                    st.session_state[f"preselect_tech_{job_id}"] = t['id']
+                    st.session_state[suggest_key] = False
+                    st.toast(f"Selected {t['name']} — update the job to apply.", icon="🤖")
+                    st.rerun()
+        if st.button("Hide suggestions", key=f"hide_{suggest_key}"):
+            st.session_state[suggest_key] = False
+            st.rerun()
+
     with st.form(key=f"edit_job_form_{job_id}"):
         title = st.text_input("Job Title", value=job['title'])
         desc = st.text_area("Description", value=job['description'])
@@ -274,6 +299,12 @@ def edit_job_dialog(job_id):
         tech_options = list(tech_display_map.keys())
         
         current_tech_id = job.get('techId')
+        # A suggestion may have pre-selected a different tech; apply it once.
+        preselect_key = f"preselect_tech_{job_id}"
+        if preselect_key in st.session_state:
+            current_tech_id = st.session_state[preselect_key]
+            del st.session_state[preselect_key]
+
         # Find label for current ID
         current_tech_label = next((k for k, v in tech_display_map.items() if v == current_tech_id), "Unassigned")
         
