@@ -58,7 +58,10 @@ VERSION_KEY = "_version"
 # one-connection-per-query behavior so the app keeps working either way.
 _POOL = None
 _POOL_FAILED = False
+_POOL_FAILED_AT = 0.0
+_POOL_RETRY_SECONDS = 30.0
 _POOL_LOCK = threading.Lock()
+_DIRECT_CONNECTION_SLOTS = threading.BoundedSemaphore(20)
 _DSN = None
 _DSN_LOCK = threading.Lock()
 
@@ -84,17 +87,20 @@ def _resolve_dsn():
 
 
 def _get_pool():
-    global _POOL, _POOL_FAILED
-    if _POOL is not None or _POOL_FAILED or not HAS_PSYCOPG2:
+    global _POOL, _POOL_FAILED, _POOL_FAILED_AT
+    if not HAS_PSYCOPG2:
+        return None
+    if _POOL_FAILED and time.monotonic() - _POOL_FAILED_AT >= _POOL_RETRY_SECONDS:
+        _POOL_FAILED = False
+    if _POOL is not None or _POOL_FAILED:
         return _POOL
     with _POOL_LOCK:
         if _POOL is None and not _POOL_FAILED:
             try:
-                # A few more connections than before; the real backstop is the
-                # fallback in _db_conn() when the pool is exhausted.
                 _POOL = _pg_pool.ThreadedConnectionPool(minconn=1, maxconn=20, dsn=_resolve_dsn())
             except Exception:
                 _POOL_FAILED = True
+                _POOL_FAILED_AT = time.monotonic()
                 _POOL = None
     return _POOL
 
@@ -106,10 +112,15 @@ def _db_conn():
     connections). Business errors (e.g. StaleStateError) are never retried."""
     pool = _get_pool()
     if pool is None:
-        # Either psycopg2 is missing or pool creation failed: original behavior.
         if not HAS_PSYCOPG2:
             raise ImportError("psycopg2 module not found. Please install it.")
-        conn = psycopg2.connect(_resolve_dsn())
+        if not _DIRECT_CONNECTION_SLOTS.acquire(timeout=5):
+            raise RuntimeError("Database connection limit reached; please retry shortly.")
+        try:
+            conn = psycopg2.connect(_resolve_dsn())
+        except Exception:
+            _DIRECT_CONNECTION_SLOTS.release()
+            raise
         try:
             yield conn
             conn.commit()
@@ -118,24 +129,21 @@ def _db_conn():
             raise
         finally:
             conn.close()
+            _DIRECT_CONNECTION_SLOTS.release()
         return
 
     for attempt in range(2):
-        try:
-            conn = pool.getconn()
-        except _pg_pool.PoolError:
-            # Pool exhausted: create a one-off connection so the user action still
-            # works. We close it ourselves because it is not from the pool.
-            conn = psycopg2.connect(_resolve_dsn())
+        # Wait briefly for a pooled connection instead of creating an unbounded
+        # overflow connection whenever the pool is busy.
+        deadline = time.monotonic() + 5
+        while True:
             try:
-                yield conn
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
-            return
+                conn = pool.getconn()
+                break
+            except _pg_pool.PoolError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
 
         close_conn = False
         try:
@@ -152,8 +160,9 @@ def _db_conn():
             if attempt == 1:
                 raise
         except Exception:
-            # Any other error (including StaleStateError) rolls back and releases.
-            close_conn = True
+            # Business errors do not damage a healthy connection; return it after
+            # rollback instead of discarding it and shrinking the usable pool.
+            close_conn = False
             try:
                 conn.rollback()
             except Exception:
@@ -181,6 +190,9 @@ def _migrate_legacy_state(cur):
     Existing data is copied, not moved or deleted. The legacy row is left
     untouched so it remains a complete fallback backup.
     """
+    # Serialize first-time initialization across workers before checking the
+    # version, so two migrators cannot overwrite each other with stale legacy data.
+    cur.execute("SELECT pg_advisory_xact_lock(%s)", (731905,))
     # If the version row exists, migration already happened.
     cur.execute("SELECT 1 FROM app_settings WHERE key = %s LIMIT 1", (VERSION_KEY,))
     if cur.fetchone():
@@ -258,13 +270,6 @@ def init_db():
         print(f"DB Init Error: {e}")
 
 
-# Initialize on module load
-try:
-    init_db()
-except Exception as e:
-    pass
-
-
 def _load_legacy_state():
     """Fallback load from the old monolithic row."""
     with _db_conn() as conn:
@@ -286,6 +291,9 @@ def _load_from_tables():
     data = DEFAULT_DATA.copy()
     with _db_conn() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            # Every statement in this load must see the same committed snapshot;
+            # otherwise a concurrent save can produce mixed-generation backups.
+            cur.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
             cur.execute("SELECT version FROM app_settings WHERE key = %s", (VERSION_KEY,))
             row = cur.fetchone()
             # RealDictCursor returns a dict-like row, but tests/mock may return a tuple.
@@ -422,19 +430,20 @@ def save_state_to_db(data, expected_version=None, dirty_tables=None, entity_chan
     single multi-row statement per table to minimize round-trips. The legacy
     app_state.global_state row is no longer dual-written on every save.
     """
-    use_row_changes = bool(entity_changes)
-    tables_to_write = set(dirty_tables) if dirty_tables else set(ENTITY_TABLES)
+    use_row_changes = entity_changes is not None
+    tables_to_write = set(dirty_tables) if dirty_tables is not None else set(ENTITY_TABLES)
 
     with _db_conn() as conn:
         with conn.cursor() as cur:
-            if expected_version is not None:
-                cur.execute("SELECT version FROM app_settings WHERE key = %s FOR UPDATE", (VERSION_KEY,))
-                row = cur.fetchone()
-                current_version = row[0] if row and row[0] is not None else None
-                if current_version is not None and current_version != expected_version:
-                    raise StaleStateError(
-                        f"DB is at version {current_version}, but this session loaded version {expected_version}."
-                    )
+            # Serialize every writer, including force restores, before any rows
+            # are changed. Only the version comparison is conditional.
+            cur.execute("SELECT version FROM app_settings WHERE key = %s FOR UPDATE", (VERSION_KEY,))
+            row = cur.fetchone()
+            current_version = row[0] if row and row[0] is not None else None
+            if expected_version is not None and current_version is not None and current_version != expected_version:
+                raise StaleStateError(
+                    f"DB is at version {current_version}, but this session loaded version {expected_version}."
+                )
 
             if use_row_changes:
                 # Row-level incremental write: only changed/new/deleted rows.
@@ -605,32 +614,27 @@ def commit_from_session(invalidate_briefing=True, dirty_tables=None, entity_chan
     if invalidate_briefing:
         st.session_state.db['briefing'] = "Data required to generate briefing."
 
-    try:
-        new_ver = save_state_to_db(
-            st.session_state.db,
-            expected_version=st.session_state.get('_db_version'),
-            dirty_tables=dirty_tables,
-            entity_changes=entity_changes
-        )
-        st.session_state._db_version = new_ver
-        store_db_hashes(st.session_state.db)
-    except StaleStateError:
-        raise
-    except Exception as e:
-        st.error(f"Failed to save to DB: {e}")
+    new_ver = save_state_to_db(
+        st.session_state.db,
+        expected_version=st.session_state.get('_db_version'),
+        dirty_tables=dirty_tables,
+        entity_changes=entity_changes
+    )
+    st.session_state._db_version = new_ver
+    store_db_hashes(st.session_state.db)
+    return new_ver
 
 
 def force_overwrite_from_session(invalidate_briefing=False):
-    """Same as commit but skips the version check - for explicit restore operations."""
+    """Overwrite with the current session, raising on any persistence failure."""
     if 'db' not in st.session_state:
-        return
+        raise RuntimeError("No database state is loaded in this session.")
 
     if invalidate_briefing:
         st.session_state.db['briefing'] = "Data required to generate briefing."
 
-    try:
-        new_ver = save_state_to_db(st.session_state.db)
-        st.session_state._db_version = new_ver
-        store_db_hashes(st.session_state.db)
-    except Exception as e:
-        st.error(f"Failed to save to DB: {e}")
+    new_ver = save_state_to_db(st.session_state.db)
+    st.session_state._db_version = new_ver
+    store_db_hashes(st.session_state.db)
+    clear_db_version_cache()
+    return new_ver

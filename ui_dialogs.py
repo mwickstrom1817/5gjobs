@@ -1,6 +1,7 @@
 import os
 import io
 import datetime
+import hashlib
 import re
 
 import streamlit as st
@@ -18,6 +19,7 @@ from core import (
     save_image_locally, save_document_locally, resolve_image_source,
     last_daily_report, _parse_report_time,
     get_google_maps_url, create_ics_file, suggest_technicians,
+    _calculate_shift_hours, _has_signature_strokes,
 )
 from object_store import upload_bytes, get_view_url, upload_streamlit_file
 from services_ai import generate_technician_summary, transcribe_audio
@@ -36,6 +38,86 @@ try:
     HAS_CANVAS = True
 except ImportError:
     HAS_CANVAS = False
+
+
+def _safe_resolve_image_source(source):
+    try:
+        url = resolve_image_source(source)
+        return url or None
+    except Exception:
+        return None
+
+
+def _viewer_tech_profile(viewer_email):
+    if not viewer_email:
+        return None
+    return next(
+        (t for t in st.session_state.techs
+         if (t.get('email') or '').lower() == viewer_email.lower()),
+        None,
+    )
+
+
+def _report_authorship(viewer_email):
+    viewer_tech = _viewer_tech_profile(viewer_email)
+    author_tech_id = viewer_tech['id'] if viewer_tech else None
+    return {
+        'techId': author_tech_id or 'unknown',
+        'authorTechId': author_tech_id,
+        'authorEmail': viewer_email or '',
+    }
+
+
+def _report_author_tech_id(report):
+    if report.get('authorTechId'):
+        return report['authorTechId']
+    if 'authorEmail' in report or 'authorTechId' in report:
+        return None
+    return report.get('techId')
+
+
+def _report_author_name(report):
+    author_tech = get_tech(_report_author_tech_id(report))
+    if author_tech:
+        return author_tech['name']
+    return report.get('authorEmail') or 'Unknown'
+
+
+def _report_owned_by(report, viewer_email, viewer_tech):
+    author_email = report.get('authorEmail')
+    if author_email and viewer_email and author_email.lower() == viewer_email.lower():
+        return True
+    author_tech_id = _report_author_tech_id(report)
+    return bool(viewer_tech and author_tech_id == viewer_tech['id'])
+
+
+def _transcribe_audio_cached(audio_file, cache_key):
+    try:
+        audio_bytes = audio_file.getvalue()
+    except (AttributeError, TypeError, ValueError):
+        return transcribe_audio(audio_file)
+    if not audio_bytes:
+        return ""
+    audio_hash = hashlib.sha256(audio_bytes).hexdigest()
+    cache = st.session_state.setdefault('_voice_transcription_cache', {})
+    cached = cache.get(cache_key)
+    if cached and cached.get('hash') == audio_hash:
+        return cached.get('text', '')
+    text = transcribe_audio(audio_file)
+    cache[cache_key] = {'hash': audio_hash, 'text': text or ''}
+    return text
+
+
+def _reset_edit_job_dialog_state(job_id):
+    for key in (
+        f"assign_tech_edit_{job_id}",
+        f"suggest_tech_{job_id}",
+        f"toggle_suggest_tech_{job_id}",
+        f"radio_suggest_tech_{job_id}",
+        f"preselect_tech_{job_id}",
+        f"_edit_dialog_initialized_{job_id}",
+    ):
+        st.session_state.pop(key, None)
 
 
 # --- DIALOGS (MODALS) ---
@@ -87,23 +169,22 @@ def add_job_dialog():
         company_crew = list(st.session_state.techs)
         tech_map = {t['name']: t['id'] for t in company_crew}
 
-        tech_display_map = {}
+        tech_display_map = {"Unassigned": None}
         for t in company_crew:
             skills_str = f" ({', '.join(t.get('skills', [])[:2])}..)" if t.get('skills') else ""
             label = f"{t['name']}{skills_str}"
             tech_display_map[label] = t['id']
 
-        tech_display_map["Unassigned"] = None
         tech_options = list(tech_display_map.keys())
-
-        # Default tech select index: unassigned, or a pre-selected suggestion.
+        tech_widget_key = "assign_tech_add"
         tech_index = 0
         if preselect_tech:
             preselect_label = next((k for k, v in tech_display_map.items() if v == preselect_tech), None)
             if preselect_label and preselect_label in tech_options:
                 tech_index = tech_options.index(preselect_label)
+                st.session_state[tech_widget_key] = preselect_label
 
-        tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index)
+        tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index, key=tech_widget_key)
         selected_tech_id = tech_display_map[tech_label]
 
         # Document Upload
@@ -120,6 +201,11 @@ def add_job_dialog():
             st.form_submit_button("🤖 Suggest Tech", on_click=_flag_suggest)
         with c_s2:
             st.form_submit_button("Save Job", on_click=_flag_save)
+
+    if st.button("Cancel", key="cancel_add_job"):
+        st.session_state.pop("_open_add_job", None)
+        st.session_state.pop("_add_job_suggestions", None)
+        st.rerun()
 
     # Handle suggestion request (form values are available here).
     if st.session_state.get("_add_job_suggest"):
@@ -158,12 +244,13 @@ def add_job_dialog():
         picked = st.radio(
             "Pick a recommendation to pre-select it",
             options=list(labels.keys()),
+            index=None,
             key="radio_add_suggest",
             label_visibility="collapsed",
         )
         if picked:
             st.session_state.preselect_tech_add = labels[picked]
-            st.toast(f"Pre-selected {picked.split('.')[1].split('—')[0].strip()} — save the job to apply.", icon="🤖")
+            st.caption(f"Selected {picked.split('.')[1].split('—')[0].strip()} — save the job to apply.")
         if st.button("Hide suggestions", key="hide_suggest_add"):
             st.session_state._add_job_suggestions = None
 
@@ -225,10 +312,13 @@ def add_job_dialog():
                 'documents': doc_keys,
             }
             st.session_state.jobs.insert(0, new_job)
-            
-            # Send Email Notification
+
+            # Persist before notifying. A failed save must not produce a success
+            # toast or assignment messages for a job that does not exist.
+            if not save_state():
+                return
+
             email_status_msg = ""
-            
             if selected_tech_id:
                 tech = get_tech(selected_tech_id)
                 loc = get_location(final_loc_id)
@@ -236,27 +326,22 @@ def add_job_dialog():
                     success = send_assignment_email(new_job, tech, loc)
                     if not success:
                         email_status_msg = "SMTP not configured. Use the 'Email' button in Job Details to notify manually."
-                    # Push notification to the tech's phone (ntfy)
                     push_assignment(new_job, tech)
 
-            # Briefing is no longer invalidated here. Generating it on every new
-            # job added a multi-second AI call to the save path; users can refresh
-            # the briefing manually from the Today tab when they want an update.
-            save_state()  # Save changes
-
-            # Close the dialog for good.
             st.session_state.pop("_open_add_job", None)
             st.session_state.pop("_add_job_suggestions", None)
-            
+            st.toast("Job created successfully!", icon="✅")
             if email_status_msg:
                 st.toast(email_status_msg, icon="ℹ️")
-            else:
-                st.toast("Job created successfully!", icon="✅")
-                
             st.rerun()
 
 @st.dialog("Edit Job Details")
 def edit_job_dialog(job_id):
+    init_key = f"_edit_dialog_initialized_{job_id}"
+    if not st.session_state.get(init_key):
+        _reset_edit_job_dialog_state(job_id)
+        st.session_state[init_key] = True
+
     # Find job directly from session state
     job_index = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
     if job_index == -1:
@@ -277,7 +362,8 @@ def edit_job_dialog(job_id):
             if c_d2.button(":material/delete:", key=f"del_doc_{job_id}_{i}"):
                 existing_docs.pop(i)
                 st.session_state.jobs[job_index]['documents'] = existing_docs
-                save_state(invalidate_briefing=False)
+                if not save_state(invalidate_briefing=False):
+                    return
                 st.toast(f"Removed {d['name']}", icon="🗑️")
 
     # --- AI Dispatch Assistant -----------------------------------------------
@@ -306,12 +392,18 @@ def edit_job_dialog(job_id):
             picked = st.radio(
                 "Pick a recommendation to pre-select it",
                 options=list(labels.keys()),
+                index=None,
                 key=f"radio_{suggest_key}",
                 label_visibility="collapsed",
             )
             if picked:
                 st.session_state[preselect_key] = labels[picked]
-                st.toast(f"Pre-selected {picked.split('.')[1].split('—')[0].strip()} — update the job to apply.", icon="🤖")
+                st.caption(f"Selected {picked.split('.')[1].split('—')[0].strip()} — update the job to apply.")
+
+    if st.button("Cancel", key=f"cancel_edit_job_{job_id}"):
+        _reset_edit_job_dialog_state(job_id)
+        st.session_state.pop("_open_edit_job_id", None)
+        st.rerun()
 
     with st.form(key=f"edit_job_form_{job_id}"):
         title = st.text_input("Job Title", value=job['title'])
@@ -356,11 +448,14 @@ def edit_job_dialog(job_id):
         
         current_loc_id = job.get('locationId')
         current_loc_name = next((k for k, v in loc_map.items() if v == current_loc_id), None)
-        
+        missing_loc_label = f"⚠️ Missing location ({current_loc_id})" if current_loc_id and not current_loc_name else None
+        if missing_loc_label:
+            loc_options.insert(0, missing_loc_label)
+
         loc_index = 0
         if current_loc_name and current_loc_name in loc_options:
             loc_index = loc_options.index(current_loc_name)
-            
+
         if loc_options:
             loc_name = st.selectbox("Location", loc_options, index=loc_index)
         else:
@@ -381,20 +476,18 @@ def edit_job_dialog(job_id):
         tech_options = list(tech_display_map.keys())
         
         current_tech_id = job.get('techId')
-        # A suggestion may have pre-selected a different tech; apply it once.
         preselect_key = f"preselect_tech_{job_id}"
-        if preselect_key in st.session_state:
-            current_tech_id = st.session_state[preselect_key]
-            del st.session_state[preselect_key]
+        tech_widget_key = f"assign_tech_edit_{job_id}"
+        preselected = preselect_key in st.session_state
+        if preselected:
+            current_tech_id = st.session_state.pop(preselect_key)
 
-        # Find label for current ID
         current_tech_label = next((k for k, v in tech_display_map.items() if v == current_tech_id), "Unassigned")
-        
-        tech_index = 0
-        if current_tech_label in tech_options:
-            tech_index = tech_options.index(current_tech_label)
-            
-        tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index)
+        tech_index = tech_options.index(current_tech_label) if current_tech_label in tech_options else 0
+        if preselected and current_tech_label in tech_options:
+            st.session_state[tech_widget_key] = current_tech_label
+
+        tech_label = st.selectbox("Assign Tech", tech_options, index=tech_index, key=tech_widget_key)
         selected_tech_id = tech_display_map[tech_label]
         
         # Only the uploader lives in the form — st.button is not allowed inside
@@ -421,22 +514,23 @@ def edit_job_dialog(job_id):
                 full_date = datetime.datetime.combine(job_date, existing_time)
                 st.session_state.jobs[job_index]['date'] = full_date.isoformat()
                 
-                if loc_name:
+                if loc_name in loc_map:
                     st.session_state.jobs[job_index]['locationId'] = loc_map[loc_name]
                 
                 # Push-notify the new tech if the job changed hands
                 _prev_tech_id = st.session_state.jobs[job_index].get('techId')
                 st.session_state.jobs[job_index]['techId'] = selected_tech_id
+
+                st.session_state.briefing = "Data required to generate briefing."
+                if not save_state():
+                    return
+
                 if selected_tech_id and selected_tech_id != _prev_tech_id:
                     _new_tech = get_tech(selected_tech_id)
                     if _new_tech:
                         push_assignment(st.session_state.jobs[job_index], _new_tech)
 
-                # Invalidate briefing so it regenerates with new data
-                st.session_state.briefing = "Data required to generate briefing."
-                save_state()  # Save changes
-
-                # Close the dialog for good.
+                _reset_edit_job_dialog_state(job_id)
                 st.session_state.pop("_open_edit_job_id", None)
                 st.toast("Job updated successfully!", icon="✅")
                 st.rerun()
@@ -473,7 +567,8 @@ def edit_location_dialog(loc_id):
                 st.session_state.locations[loc_index]['contact_phone'] = l_contact_phone
                 st.session_state.locations[loc_index]['contact_email'] = l_contact_email
                 
-                save_state(invalidate_briefing=False)
+                if not save_state(invalidate_briefing=False):
+                    return
                 st.toast("Location updated!", icon="✅")
                 st.rerun()
             else:
@@ -538,6 +633,7 @@ def render_completion_confirmation(job_index, report_payload):
     c_confirm, c_cancel = st.columns(2)
 
     if c_confirm.button("Confirm & Close Job", type="primary"):
+        completed_report = dict(report_payload)
         checklist = []
         if c1:
             checklist.append("Messes Cleaned")
@@ -549,7 +645,7 @@ def render_completion_confirmation(job_index, report_payload):
         # Handle Signature (R2)
         if signature_data is not None:
             try:
-                if signature_data.sum() > 0:
+                if _has_signature_strokes(signature_data):
                     img = Image.fromarray(signature_data.astype("uint8"), "RGBA")
                     buf = io.BytesIO()
                     img.save(buf, format="PNG")
@@ -558,40 +654,41 @@ def render_completion_confirmation(job_index, report_payload):
                     sig_key = f"signatures/{job['id']}_{datetime.datetime.utcnow().timestamp()}.png"
                     upload_bytes(buf.getvalue(), sig_key, content_type="image/png")
 
-                    report_payload["signature_key"] = sig_key
+                    completed_report["signature_key"] = sig_key
                     checklist.append("Customer Signed (Digital)")
             except Exception as e:
                 st.error(f"Error uploading signature: {e}")
         elif signed_name.strip():
             checklist.append(f"Customer Signed: {signed_name.strip()}")
 
-        report_payload["completion_checklist"] = checklist
+        completed_report["completion_checklist"] = checklist
 
         if final_note:
-            report_payload["content"] += f"\n\n[Closing Note]: {final_note}"
+            completed_report["content"] = completed_report.get("content", "") + f"\n\n[Closing Note]: {final_note}"
 
         _t = StepTimer("job completion")
-        if report_payload.get("content"):
+        if completed_report.get("content"):
             with st.spinner("Generating AI Summary..."):
-                summary = generate_technician_summary(report_payload["content"], job["title"])
+                summary = generate_technician_summary(completed_report["content"], job["title"])
                 if summary:
-                    report_payload["ai_summary"] = summary
+                    completed_report["ai_summary"] = summary
         _t.mark("gemini")
 
-        st.session_state.jobs[job_index]["reports"].append(report_payload)
+        st.session_state.jobs[job_index]["reports"].append(completed_report)
         _actor = st.session_state.user_info.get('email') if "user_info" in st.session_state else None
         apply_job_status(st.session_state.jobs[job_index], "Completed", _actor)
         st.session_state.briefing = "Data required to generate briefing."
 
         # Persist before emailing — a slow or failing SMTP server must never be
         # the reason a completed job wasn't recorded.
-        save_state()
+        if not save_state():
+            return
         _t.mark("save")
 
         tech = get_tech(job["techId"])
         loc = get_location(job["locationId"])
-        send_completion_email(job, tech, loc, report_payload, timer=_t)
-        _t.finish(job=job.get('id'), photos=len(report_payload.get('photos') or []))
+        send_completion_email(job, tech, loc, completed_report, timer=_t)
+        _t.finish(job=job.get('id'), photos=len(completed_report.get('photos') or []))
 
         if f"completion_pending_{job['id']}" in st.session_state:
             del st.session_state[f"completion_pending_{job['id']}"]
@@ -664,10 +761,11 @@ def render_edit_report_view(job_id, report_id):
         if st.form_submit_button("Update Report"):
             # Auto-calculate hours from arrival/finish times when left at 0
             if not hours_worked:
-                arr_dt = datetime.datetime.combine(datetime.date.today(), time_arrived)
-                dep_dt = datetime.datetime.combine(datetime.date.today(), time_departed)
-                if dep_dt > arr_dt:
-                    hours_worked = round((dep_dt - arr_dt).total_seconds() / 3600 * 4) / 4
+                calculated_hours = _calculate_shift_hours(time_arrived, time_departed)
+                if calculated_hours is None:
+                    st.error("Arrival and finish times are the same. Enter Hours Worked manually to confirm the shift length.")
+                    return
+                hours_worked = calculated_hours
 
             # Update report in session state
             user_email = st.session_state.user_info.get("email", "Unknown") if "user_info" in st.session_state else "Unknown"
@@ -685,10 +783,9 @@ def render_edit_report_view(job_id, report_id):
                 'updated_at': now_local().isoformat()
             })
 
-            # Log the action
+            if not save_state(invalidate_briefing=False):
+                return
             get_logger().log(f"{user_email} updated daily report {report_id} for job {job_id}")
-            
-            save_state(invalidate_briefing=False)
             if f"editing_report_{job_id}" in st.session_state:
                 del st.session_state[f"editing_report_{job_id}"]
             st.toast("Report updated!", icon="✅")
@@ -905,7 +1002,7 @@ Desc: {job['description']}"""
     _sections = ["history", "photos", "docs", "parts", "progress", "daily", "assets", "creds"]
     # Invoicing is admin/office-manager only, and only once the work is done.
     _viewer_email = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
-    _viewer_is_admin = _viewer_email in st.session_state.adminEmails if _viewer_email else False
+    _viewer_is_admin = _viewer_email.strip().casefold() in {str(e).strip().casefold() for e in st.session_state.adminEmails} if _viewer_email else False
     if _viewer_is_admin and job.get('status') == 'Completed':
         _sections.append("invoice")
     _section_labels = {
@@ -959,7 +1056,8 @@ Desc: {job['description']}"""
                                 loc.setdefault('documents', []).extend(new_keys)
                             else:
                                 job.setdefault('documents', []).extend(new_keys)
-                            save_state(invalidate_briefing=False)
+                            if not save_state(invalidate_briefing=False):
+                                return
                             st.toast(f"Uploaded {len(new_keys)} document(s)!", icon="✅")
                             st.rerun(scope="fragment")
                 else:
@@ -969,22 +1067,29 @@ Desc: {job['description']}"""
             with st.container(border=True):
                 d_col1, d_col2 = st.columns([3, 1])
                 d_col1.write(f"**{d['name']}**")
-                url = resolve_image_source(d['key'])
+                url = _safe_resolve_image_source(d.get('key'))
 
                 # If it's an image, we can show a small preview
                 ext = d['name'].lower().split('.')[-1]
                 if ext in ['jpg', 'jpeg', 'png']:
-                    try:
-                        st.image(url, width=200)
-                    except Exception:
-                        d_col1.caption("⚠️ Preview unavailable — use View / Download")
+                    if url:
+                        try:
+                            st.image(url, width=200)
+                        except Exception:
+                            d_col1.caption("⚠️ Preview unavailable — use View / Download")
+                    else:
+                        d_col1.caption("⚠️ Preview unavailable")
 
-                d_col2.link_button("👁️ View / Download", url, use_container_width=True)
+                if url:
+                    d_col2.link_button("👁️ View / Download", url, use_container_width=True)
+                else:
+                    d_col2.caption("⚠️ File link unavailable")
                 if allow_move_to_site and loc:
                     if d_col2.button("🏢 Move to Site", key=f"mv_doc_{key_suffix}", use_container_width=True, help="Share this document across every job at this location"):
                         loc.setdefault('documents', []).append(d)
                         job['documents'] = [x for x in job.get('documents', []) if x['key'] != d['key']]
-                        save_state(invalidate_briefing=False)
+                        if not save_state(invalidate_briefing=False):
+                            return
                         st.toast(f"'{d['name']}' moved to site documents", icon="🏢")
                         st.rerun(scope="fragment")
 
@@ -994,7 +1099,8 @@ Desc: {job['description']}"""
                             loc['documents'] = [x for x in loc.get('documents', []) if x['key'] != d['key']]
                         else:
                             job['documents'] = [x for x in job.get('documents', []) if x['key'] != d['key']]
-                        save_state(invalidate_briefing=False)
+                        if not save_state(invalidate_briefing=False):
+                            return
                         st.toast(f"Deleted '{d['name']}'", icon="🗑️")
                         st.rerun(scope="fragment")
 
@@ -1024,7 +1130,7 @@ Desc: {job['description']}"""
                 if p_key in seen_photo_keys:
                     continue
                 seen_photo_keys.add(p_key)
-                photo_entries.append({'key': p_key, 'timestamp': r.get('timestamp', ''), 'techId': r.get('techId')})
+                photo_entries.append({'key': p_key, 'timestamp': r.get('timestamp', ''), 'report': r})
         photo_entries.sort(key=lambda x: x['timestamp'], reverse=True)
 
         if not photo_entries:
@@ -1041,13 +1147,17 @@ Desc: {job['description']}"""
             p_cols = st.columns(3)
             for i, pe in enumerate(visible_entries):
                 with p_cols[i % 3]:
-                    url = resolve_image_source(pe['key'])
-                    p_tech = get_tech(pe['techId'])
-                    cap = f"{pe['timestamp'][:10]} · {p_tech['name'] if p_tech else 'Unknown'}"
-                    if isinstance(pe['key'], str) and pe['key'].lower().endswith('.pdf'):
+                    url = _safe_resolve_image_source(pe['key'])
+                    cap = f"{pe['timestamp'][:10]} · {_report_author_name(pe['report'])}"
+                    if not url:
+                        st.caption(f"⚠️ File unavailable — {cap}")
+                    elif isinstance(pe['key'], str) and pe['key'].lower().endswith('.pdf'):
                         st.link_button(f"📄 PDF — {cap}", url, use_container_width=True)
                     else:
-                        st.image(url, caption=cap, use_container_width=True)
+                        try:
+                            st.image(url, caption=cap, use_container_width=True)
+                        except Exception:
+                            st.caption(f"⚠️ Preview unavailable — {cap}")
 
     if section == "parts":
         st.write("#### 🔩 Parts & Materials")
@@ -1071,14 +1181,16 @@ Desc: {job['description']}"""
             if total and staged == total and job['status'] != 'Parts Staged':
                 if st.button("✅ All parts staged — mark job 'Parts Staged'", key=f"sync_staged_{job_id}", use_container_width=True):
                     apply_job_status(st.session_state.jobs[job_index], 'Parts Staged', _viewer_email)
-                    save_state()
+                    if not save_state():
+                        return
                     st.rerun(scope="fragment")
             elif any(p.get('status') in ('Needed', 'Ordered') for p in parts) and job['status'] not in ('Waiting on Parts', 'Parts not ordered'):
                 only_needed = all(p.get('status') == 'Needed' for p in parts)
                 suggested = 'Parts not ordered' if only_needed else 'Waiting on Parts'
                 if st.button(f"📦 Mark job '{suggested}'", key=f"sync_waiting_{job_id}", use_container_width=True):
                     apply_job_status(st.session_state.jobs[job_index], suggested, _viewer_email)
-                    save_state()
+                    if not save_state():
+                        return
                     st.rerun(scope="fragment")
 
         # Add a part
@@ -1108,7 +1220,8 @@ Desc: {job['description']}"""
                             'added_by': current_user_email,
                             'updated_at': now_local().isoformat(),
                         })
-                        save_state(invalidate_briefing=False)
+                        if not save_state(invalidate_briefing=False):
+                            return
                         st.toast(f"Added {new_name.strip()}.", icon="✅")
                         st.rerun(scope="fragment")
 
@@ -1139,7 +1252,8 @@ Desc: {job['description']}"""
                 )
                 if pc3.button(":material/delete:", key=f"del_part_{p['id']}", help="Remove this part", use_container_width=True):
                     st.session_state.jobs[job_index]['parts'] = [x for x in st.session_state.jobs[job_index].get('parts', []) if x['id'] != p['id']]
-                    save_state(invalidate_briefing=False)
+                    if not save_state(invalidate_briefing=False):
+                        return
                     st.rerun(scope="fragment")
 
                 if p.get('updated_at'):
@@ -1182,8 +1296,8 @@ Desc: {job['description']}"""
                         'notes': legacy['ips']
                     })
                 loc['systems'] = migrated
-                if migrated:
-                    save_state(invalidate_briefing=False)
+                if migrated and not save_state(invalidate_briefing=False):
+                    return
 
             systems = loc.get('systems', [])
             current_user_email = st.session_state.user_info.get('email', 'unknown') if "user_info" in st.session_state else 'unknown'
@@ -1215,7 +1329,8 @@ Desc: {job['description']}"""
                                 'updated_by': current_user_email,
                                 'updated_at': now_local().isoformat()
                             })
-                            save_state(invalidate_briefing=False)
+                            if not save_state(invalidate_briefing=False):
+                                return
                             st.toast(f"'{sys_name}' saved!", icon="✅")
                             st.rerun(scope="fragment")
 
@@ -1266,14 +1381,16 @@ Desc: {job['description']}"""
                                     'updated_by': current_user_email,
                                     'updated_at': now_local().isoformat()
                                 })
-                                save_state(invalidate_briefing=False)
+                                if not save_state(invalidate_briefing=False):
+                                    return
                                 st.toast("System updated!", icon="✅")
                                 st.rerun(scope="fragment")
 
                             if ec2.form_submit_button("🗑️ Delete System"):
                                 loc['systems'] = [x for x in loc['systems'] if x['id'] != s['id']]
+                                if not save_state(invalidate_briefing=False):
+                                    return
                                 get_logger().log(f"{current_user_email} deleted system '{s.get('name')}' from location {loc['id']}")
-                                save_state(invalidate_briefing=False)
                                 st.toast(f"'{s.get('name')}' deleted", icon="🗑️")
                                 st.rerun(scope="fragment")
 
@@ -1323,7 +1440,8 @@ Desc: {job['description']}"""
                             }
                             loc.setdefault('assets', []).append(rec)
                             made.append(tag)
-                        save_state(invalidate_briefing=False)
+                        if not save_state(invalidate_briefing=False):
+                            return
                         get_logger().log(f"{_viewer_email} registered {len(made)} asset(s) at {loc['id']}: {', '.join(made)}")
                         st.toast(f"Registered {', '.join(made)}. Print labels below.", icon="✅")
                         st.rerun(scope="fragment")
@@ -1379,7 +1497,8 @@ Desc: {job['description']}"""
                         if _viewer_is_admin:
                             if st.button("🗑️ Remove", key=f"del_asset_{a['id']}"):
                                 loc['assets'] = [x for x in loc['assets'] if x['id'] != a['id']]
-                                save_state(invalidate_briefing=False)
+                                if not save_state(invalidate_briefing=False):
+                                    return
                                 st.toast(f"Removed {a.get('tag', '')}", icon="🗑️")
                                 st.rerun(scope="fragment")
 
@@ -1435,8 +1554,16 @@ Desc: {job['description']}"""
             if st.form_submit_button("💾 Save Invoicing"):
                 if i_status in ("Invoiced", "Paid") and not i_date.strip():
                     i_date = now_local().strftime('%Y-%m-%d')
-                set_job_invoice(job_id, status=i_status, number=i_number,
-                                amount=i_amount, date=i_date, notes=i_notes)
+                updated_invoice = dict(job.get('invoice') or {})
+                updated_invoice.update({
+                    'status': i_status, 'number': i_number, 'amount': i_amount,
+                    'date': i_date, 'notes': i_notes,
+                    'updated_by': _viewer_email or 'Unknown',
+                    'updated_at': now_local().isoformat(),
+                })
+                job['invoice'] = updated_invoice
+                if not save_state(invalidate_briefing=False):
+                    return
                 get_logger().log(f"{_viewer_email} set invoice status '{i_status}' on job {job_id}")
                 st.toast("Invoicing updated.", icon="✅")
                 st.rerun(scope="fragment")
@@ -1448,14 +1575,22 @@ Desc: {job['description']}"""
         # purpose so "TBD" or a note survives; format_money() prettifies numbers.
         _qv_c1, _qv_c2 = form_row([1, 1])
         with _qv_c1:
-            with st.form(key=f"quote_form_{job_id}"):
-                _qv_new = st.text_input("💲 Quote Value", value=job.get('quoteValue', ''),
-                                        placeholder="e.g. 1450.00")
-                if st.form_submit_button("Save Quote Value"):
-                    st.session_state.jobs[job_index]['quoteValue'] = _qv_new.strip()
-                    save_state(invalidate_briefing=False)
-                    st.toast("Quote value saved", icon="💲")
-                    st.rerun(scope="fragment")
+            if _viewer_is_admin:
+                with st.form(key=f"quote_form_{job_id}"):
+                    _qv_new = st.text_input("💲 Quote Value", value=job.get('quoteValue', ''),
+                                            placeholder="e.g. 1450.00")
+                    if st.form_submit_button("Save Quote Value"):
+                        if not _viewer_is_admin:
+                            st.error("Only admins can change the quote value.")
+                            return
+                        st.session_state.jobs[job_index]['quoteValue'] = _qv_new.strip()
+                        if not save_state(invalidate_briefing=False):
+                            return
+                        st.toast("Quote value saved", icon="💲")
+                        st.rerun(scope="fragment")
+            else:
+                st.text_input("💲 Quote Value", value=job.get('quoteValue', ''),
+                              key=f"quote_value_readonly_{job_id}", disabled=True)
 
         # Site History: what else have we done at this location?
         if loc:
@@ -1495,23 +1630,21 @@ Desc: {job['description']}"""
 
         # Admin check
         user_email = st.session_state.user_info.get("email") if "user_info" in st.session_state else None
-        is_admin = user_email in st.session_state.adminEmails if user_email else False
+        is_admin = user_email.strip().casefold() in {str(e).strip().casefold() for e in st.session_state.adminEmails} if user_email else False
         # Current user's tech profile (techs may manage their own entries)
-        viewer_tech = next((t for t in st.session_state.techs if user_email and t['email'].lower() == user_email.lower()), None)
+        viewer_tech = _viewer_tech_profile(user_email)
 
         for r in reports_to_show:
-            r_tech = get_tech(r.get('techId'))
-
             # Check if it's a "Daily Report" (has hours/techs) or "In-Progress" (just content/photos)
             is_daily_report = r.get('hoursWorked') or r.get('techsOnSite')
             is_completion = 'completion_checklist' in r
 
             # Admins can manage any entry; techs can manage their own (except completion reports)
-            can_manage = is_admin or (viewer_tech and r.get('techId') == viewer_tech['id'] and not is_completion)
+            can_manage = is_admin or (_report_owned_by(r, user_email, viewer_tech) and not is_completion)
 
             with st.container(border=True):
                 hdr_main, hdr_move, hdr_del = st.columns([4, 1, 1])
-                hdr_main.markdown(f"**{r_tech['name'] if r_tech else 'Unknown'}** - {r['timestamp'][:16]}")
+                hdr_main.markdown(f"**{_report_author_name(r)}** - {r['timestamp'][:16]}")
 
                 if can_manage:
                     with hdr_move.popover("↪️ Move"):
@@ -1532,8 +1665,9 @@ Desc: {job['description']}"""
                                 if target_idx != -1:
                                     st.session_state.jobs[target_idx].setdefault('reports', []).append(r)
                                     st.session_state.jobs[job_index]['reports'] = [x for x in st.session_state.jobs[job_index]['reports'] if x['id'] != r['id']]
+                                    if not save_state(invalidate_briefing=False):
+                                        return
                                     get_logger().log(f"{user_email} moved report {r['id']} from job {job_id} to job {target_id}")
-                                    save_state(invalidate_briefing=False)
                                     st.toast(f"Entry moved to '{other_jobs[target_id]['title']}'", icon="↪️")
                                     st.rerun(scope="fragment")
 
@@ -1547,9 +1681,10 @@ Desc: {job['description']}"""
                         dc1, dc2 = form_row([1, 1])
                         if dc1.button("✅ Yes, Delete", key=f"del_yes_{r['id']}", type="primary", use_container_width=True):
                             st.session_state.jobs[job_index]['reports'] = [x for x in st.session_state.jobs[job_index]['reports'] if x['id'] != r['id']]
+                            if not save_state(invalidate_briefing=False):
+                                return
                             get_logger().log(f"{user_email} deleted report {r['id']} from job {job_id}")
                             del st.session_state[del_confirm_key]
-                            save_state(invalidate_briefing=False)
                             st.toast("Entry deleted", icon="🗑️")
                             st.rerun(scope="fragment")
                         if dc2.button("❌ Cancel", key=f"del_no_{r['id']}", use_container_width=True):
@@ -1583,16 +1718,17 @@ Desc: {job['description']}"""
                     cols = st.columns(4)
                     for i, photo_source in enumerate(r['photos']):
                         with cols[i % 4]:
-                            url = resolve_image_source(photo_source)
-                            # Check if it's an image or a PDF
-                            is_pdf = False
-                            if isinstance(photo_source, str) and photo_source.lower().endswith('.pdf'):
-                                is_pdf = True
-                            
-                            if is_pdf:
+                            url = _safe_resolve_image_source(photo_source)
+                            is_pdf = isinstance(photo_source, str) and photo_source.lower().endswith('.pdf')
+                            if not url:
+                                st.caption("⚠️ File unavailable")
+                            elif is_pdf:
                                 st.link_button("📄 View PDF", url, use_container_width=True)
                             else:
-                                st.image(url, use_container_width=True)
+                                try:
+                                    st.image(url, use_container_width=True)
+                                except Exception:
+                                    st.caption("⚠️ Preview unavailable")
 
     if section == "progress":
         st.write("#### 📝 Post an Update")
@@ -1604,7 +1740,7 @@ Desc: {job['description']}"""
         transcribed_text = ""
         if audio_val:
             with st.spinner("Transcribing..."):
-                transcribed_text = transcribe_audio(audio_val)
+                transcribed_text = _transcribe_audio_cached(audio_val, f"{job_id}:progress")
                 if transcribed_text:
                     st.success("Audio Transcribed!")
         
@@ -1634,22 +1770,23 @@ Desc: {job['description']}"""
                     # Construct Simple Report Data
                     report_payload = {
                         'id': f"r{now_local().timestamp()}",
-                        'techId': job['techId'] or 'unknown',
+                        **_report_authorship(_viewer_email),
                         'timestamp': now_local().isoformat(),
                         'content': prog_note,
                         'photos': photos_list,
                         # Empty structured fields
-                        'techsOnSite': "", 'timeArrived': "", 'timeDeparted': "", 
+                        'techsOnSite': "", 'timeArrived': "", 'timeDeparted': "",
                         'hoursWorked': "", 'partsUsed': "", 'billableItems': ""
                     }
                     st.session_state.jobs[job_index]['reports'].append(report_payload)
-                    
+
                     # Auto-set status to In Progress if Pending
                     if job['status'] in ['Pending', 'Not Started']:
                         apply_job_status(st.session_state.jobs[job_index], 'In Progress', _viewer_email)
                         st.session_state.briefing = "Data required to generate briefing."
-                    
-                    save_state()
+
+                    if not save_state():
+                        return
                     st.toast("Update Posted!", icon="✅")
                     st.rerun(scope="fragment")
                 else:
@@ -1677,8 +1814,8 @@ Desc: {job['description']}"""
 
             c_yes, c_no = form_row([1, 1])
             if c_yes.button("✅ Yes, Submit Report", key="conf_yes", type="primary"):
-                del st.session_state[confirm_key]
                 if new_status == "Completed":
+                    del st.session_state[confirm_key]
                     # Completion goes through the sign-off flow (checklist,
                     # customer signature, completion email) - never just an email.
                     st.session_state[f"completion_pending_{job['id']}"] = payload
@@ -1690,7 +1827,9 @@ Desc: {job['description']}"""
                     if new_status != job['status']:
                         apply_job_status(st.session_state.jobs[job_index], new_status, _viewer_email)
                         st.session_state.briefing = "Data required to generate briefing."
-                    save_state()
+                    if not save_state():
+                        return
+                    del st.session_state[confirm_key]
                     with st.spinner("Sending Daily Report to Admins..."):
                         send_daily_report_email(job, tech, loc, payload)
                     st.toast("Daily Report Submitted & Emailed to Admins!", icon="✅")
@@ -1713,7 +1852,7 @@ Desc: {job['description']}"""
         daily_transcribed = ""
         if audio_daily:
             with st.spinner("Transcribing..."):
-                daily_transcribed = transcribe_audio(audio_daily)
+                daily_transcribed = _transcribe_audio_cached(audio_daily, f"{job_id}:daily")
                 if daily_transcribed:
                     st.success("Audio Transcribed!")
 
@@ -1806,15 +1945,16 @@ Desc: {job['description']}"""
 
                 # Auto-calculate hours from arrival/finish times when left at 0
                 if not hours_worked:
-                    arr_dt = datetime.datetime.combine(datetime.date.today(), time_arrived)
-                    dep_dt = datetime.datetime.combine(datetime.date.today(), time_departed)
-                    if dep_dt > arr_dt:
-                        hours_worked = round((dep_dt - arr_dt).total_seconds() / 3600 * 4) / 4
+                    calculated_hours = _calculate_shift_hours(time_arrived, time_departed)
+                    if calculated_hours is None:
+                        st.error("Arrival and finish times are the same. Enter Hours Worked manually to confirm the shift length.")
+                        return
+                    hours_worked = calculated_hours
 
                 # Construct Report Data
                 report_payload = {
                     'id': f"r{now_local().timestamp()}",
-                    'techId': job['techId'] or 'unknown',
+                    **_report_authorship(_viewer_email),
                     'timestamp': now_local().isoformat(),
                     'content': content,
                     'techsOnSite': ", ".join(techs_on_site_list),

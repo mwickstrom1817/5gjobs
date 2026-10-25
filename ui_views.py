@@ -102,9 +102,10 @@ def render_sops_view(is_admin):
                     "updated_at": now_local().isoformat(),
                 })
                 st.session_state.sops.append(vals)
-                save_state(invalidate_briefing=False)
-                st.toast(f"Added '{vals['title']}'", icon="✅")
-                st.rerun()
+                if save_state(invalidate_briefing=False):
+                    st.toast(f"Added '{vals['title']}'", icon="✅")
+                    st.rerun()
+                st.error("Procedure could not be saved. Please try again.")
             _sop_form({}, "new_sop", _create, "Add Procedure")
 
     if not sops:
@@ -174,20 +175,26 @@ def render_sops_view(is_admin):
                     if url and ext in ('jpg', 'jpeg', 'png'):
                         st.image(url, width=320)
 
-            # Export a polished PDF of this SOP
+            # Export on demand so generation cost and failures stay scoped to
+            # the requested SOP rather than breaking the whole library view.
             safe_filename = s.get('title', 'SOP').replace(' ', '_').replace('/', '-')[:60]
-            pdf_bytes = generate_sop_pdf(s)
-            if pdf_bytes:
+            pdf_state_key = f"sop_pdf_data_{s['id']}"
+            if st.button("📄 Export PDF", key=f"sop_pdf_prepare_{s['id']}", use_container_width=True):
+                pdf_bytes = generate_sop_pdf(s)
+                if pdf_bytes:
+                    st.session_state[pdf_state_key] = pdf_bytes
+                else:
+                    st.session_state.pop(pdf_state_key, None)
+                    st.error("PDF export failed for this SOP. Check its text for formatting issues.")
+            if st.session_state.get(pdf_state_key):
                 st.download_button(
-                    label="📄 Export PDF",
-                    data=pdf_bytes,
+                    label="⬇️ Download PDF",
+                    data=st.session_state[pdf_state_key],
                     file_name=f"{safe_filename}.pdf",
                     mime="application/pdf",
                     key=f"sop_pdf_{s['id']}",
                     use_container_width=True,
                 )
-            else:
-                st.caption("PDF export unavailable (reportlab not installed).")
 
             if is_admin:
                 st.divider()
@@ -198,9 +205,11 @@ def render_sops_view(is_admin):
                     st.rerun()
                 if ec2.button("🗑️ Delete", key=f"sop_del_{s['id']}", use_container_width=True):
                     st.session_state.sops = [x for x in st.session_state.sops if x['id'] != s['id']]
-                    save_state(invalidate_briefing=False)
-                    st.toast(f"Deleted '{s.get('title', '')}'", icon="🗑️")
-                    st.rerun()
+                    if save_state(invalidate_briefing=False):
+                        st.session_state.pop(f"sop_pdf_data_{s['id']}", None)
+                        st.toast(f"Deleted '{s.get('title', '')}'", icon="🗑️")
+                        st.rerun()
+                    st.error("Procedure could not be deleted. Please try again.")
 
                 if st.session_state.get(edit_key):
                     def _update(vals, _sid=s['id'], _ek=edit_key):
@@ -210,10 +219,12 @@ def render_sops_view(is_admin):
                                 x['updated_by'] = st.session_state.user_info.get('email', '') if "user_info" in st.session_state else ''
                                 x['updated_at'] = now_local().isoformat()
                                 break
-                        save_state(invalidate_briefing=False)
-                        st.session_state[_ek] = False
-                        st.toast("Procedure updated.", icon="✅")
-                        st.rerun()
+                        if save_state(invalidate_briefing=False):
+                            st.session_state.pop(f"sop_pdf_data_{_sid}", None)
+                            st.session_state[_ek] = False
+                            st.toast("Procedure updated.", icon="✅")
+                            st.rerun()
+                        st.error("Procedure changes could not be saved. Please try again.")
                     _sop_form(s, f"edit_sop_{s['id']}", _update, "Save Changes")
 
 
@@ -405,7 +416,7 @@ def browser_rows(table):
                 "Steps": len(s.get('steps') or []),
                 "Attachments": len(s.get('attachments') or []),
                 "Notes": (s.get('notes') or '').replace("\n", " "),
-                "Procedure": " | ".join(s.get('steps') or []),
+                "Procedure": (s.get('content') or " | ".join(s.get('steps') or [])).replace("\n", " "),
                 "Updated": str(s.get('updated_at', ''))[:10],
                 "Updated By": s.get('updated_by', '') or '',
                 "_date": _bdate(s.get('updated_at')), "_tech": '',
@@ -630,10 +641,10 @@ def render_invoicing_view(user_email, key_suffix=""):
                     new_date = None
                     if nxt == "Invoiced" and not inv['date']:
                         new_date = now_local().strftime('%Y-%m-%d')
-                    set_job_invoice(j['id'], status=nxt, date=new_date)
-                    get_logger().log(f"{user_email} marked job {j['id']} '{nxt}'")
-                    st.toast(f"Marked {nxt}", icon="💵")
-                    st.rerun()
+                    if set_job_invoice(j['id'], status=nxt, date=new_date):
+                        get_logger().log(f"{user_email} marked job {j['id']} '{nxt}'")
+                        st.toast(f"Marked {nxt}", icon="💵")
+                        st.rerun()
             if st.button("Open", key=f"inv_open_{j['id']}", use_container_width=True):
                 job_details_dialog(j['id'])
         st.divider()
@@ -961,7 +972,7 @@ def render_service_agreements():
                     if not a_title.strip():
                         st.warning("Please enter a title.")
                     else:
-                        st.session_state.agreements.append({
+                        new_agreement = {
                             'id': f"a{now_local().timestamp()}",
                             'locationId': loc_names[a_loc],
                             'type': a_type,
@@ -973,10 +984,11 @@ def render_service_agreements():
                             'auto_renew': a_auto,
                             'notes': a_notes.strip(),
                             'status': 'Active',
-                        })
-                        save_state(invalidate_briefing=False)
-                        st.toast(f"Added '{a_title.strip()}'", icon="✅")
-                        st.rerun()
+                        }
+                        st.session_state.agreements.append(new_agreement)
+                        if save_state(invalidate_briefing=False):
+                            st.toast(f"Added '{a_title.strip()}'", icon="✅")
+                            st.rerun()
 
     if not agreements:
         st.info("No service agreements recorded yet.")
@@ -1043,14 +1055,14 @@ def render_service_agreements():
                         a.update({'title': e_title, 'type': e_type, 'status': e_status,
                                   'renewal_date': str(e_renew), 'value': e_value,
                                   'billing': e_billing, 'auto_renew': e_auto, 'notes': e_notes})
-                        save_state(invalidate_briefing=False)
-                        st.toast("Updated.", icon="✅")
-                        st.rerun()
+                        if save_state(invalidate_briefing=False):
+                            st.toast("Updated.", icon="✅")
+                            st.rerun()
                     if bc2.form_submit_button("🗑️ Delete"):
                         st.session_state.agreements = [x for x in st.session_state.agreements if x['id'] != a['id']]
-                        save_state(invalidate_briefing=False)
-                        st.toast("Agreement deleted", icon="🗑️")
-                        st.rerun()
+                        if save_state(invalidate_briefing=False):
+                            st.toast("Agreement deleted", icon="🗑️")
+                            st.rerun()
 
 
 def render_chatbot():

@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import os, json, datetime, urllib.parse, requests, smtplib, threading, uuid
+from functools import lru_cache
 from io import BytesIO
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -16,6 +17,7 @@ from email.mime.application import MIMEApplication
 
 from persistence_pg import load_state, save_state_to_db, init_db, StaleStateError, get_db_version
 from object_store import upload_bytes, get_view_url
+from core import apply_job_status
 
 # Cloud hosts run on UTC — stamp timestamps in the company timezone instead.
 # Override with the APP_TIMEZONE env var (IANA name, e.g. "America/Chicago").
@@ -110,6 +112,11 @@ def save_state(invalidate_briefing: bool = True):
             _state_cache = {}
             _state_version = 0
             raise HTTPException(status_code=409, detail="Data changed on the server. Please retry the request.")
+        except Exception:
+            # Never leave an uncommitted mutation cached for a later request to save.
+            _state_cache = {}
+            _state_version = 0
+            raise
 
 def reload_state():
     global _state_cache
@@ -202,6 +209,72 @@ def _tech(tid): return next((t for t in get_state()["techs"] if t["id"] == tid),
 def _loc(lid): return next((l for l in get_state()["locations"] if l["id"] == lid), None)
 def _job(jid): return next((j for j in get_state()["jobs"] if j["id"] == jid), None)
 
+TECH_PUBLIC_FIELDS = ("id", "name", "email", "initials", "color", "skills")
+MAX_UPLOAD_BYTES = 15 * 1024 * 1024
+
+
+def _safe_tech(tech):
+    return {field: tech.get(field) for field in TECH_PUBLIC_FIELDS}
+
+
+def _referenced_file_keys(state):
+    keys = set()
+
+    def add_references(record):
+        if not isinstance(record, dict):
+            return
+        for field in ("documents", "attachments"):
+            for item in record.get(field) or []:
+                key = item.get("key") if isinstance(item, dict) else item
+                if isinstance(key, str) and key:
+                    keys.add(key)
+        for key in record.get("photos") or []:
+            if isinstance(key, str) and key:
+                keys.add(key)
+        signature = record.get("signature_key")
+        if isinstance(signature, str) and signature:
+            keys.add(signature)
+
+    for collection in ("jobs", "locations", "sops"):
+        for record in state.get(collection) or []:
+            add_references(record)
+            if collection == "jobs" and isinstance(record, dict):
+                for report in record.get("reports") or []:
+                    add_references(report)
+    return keys
+
+
+def _valid_object_key(key):
+    return (
+        isinstance(key, str) and bool(key) and len(key) <= 1024
+        and not key.startswith("/") and "\\" not in key and "\x00" not in key
+        and all(part not in ("", ".", "..") for part in key.split("/"))
+    )
+
+
+def _file_key_allowed(state, key, is_admin=False):
+    if not _valid_object_key(key):
+        return False
+    if key.lower().startswith("backups/"):
+        return is_admin
+    return key in _referenced_file_keys(state)
+
+
+def _ensure_admin_removal_allowed(admin_emails, email):
+    normalized = [str(item).lower() for item in admin_emails]
+    target = email.lower()
+    if target in normalized and set(normalized) == {target}:
+        raise HTTPException(status_code=400, detail="Cannot remove the final admin.")
+
+
+async def _read_upload_limited(file, max_bytes=MAX_UPLOAD_BYTES):
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise HTTPException(status_code=413, detail="Upload exceeds the 15 MiB limit.")
+    return data
+
+
+@lru_cache(maxsize=4)
 def get_model(api_key):
     if not HAS_GENAI: return None, "gemini-flash-latest"
     client = genai.Client(api_key=api_key)
@@ -253,7 +326,7 @@ def smtp_cfg(): return (os.environ.get("SMTP_SERVER"), os.environ.get("SMTP_PORT
 
 def smtp_connect(srv, port, email, pwd):
     port = int(port)
-    s = smtplib.SMTP_SSL(srv, port) if port == 465 else smtplib.SMTP(srv, port)
+    s = smtplib.SMTP_SSL(srv, port, timeout=20) if port == 465 else smtplib.SMTP(srv, port, timeout=20)
     if port != 465: s.starttls()
     s.login(email, pwd); return s
 
@@ -328,9 +401,7 @@ def get_me(user: dict = Depends(verify_google_token)):
     state = get_state(); email = user.get("email","").lower()
     is_admin = email in [e.lower() for e in state.get("adminEmails",[])]
     tech = next((t for t in state["techs"] if t["email"].lower() == email), None)
-    if not state["adminEmails"]:
-        state["adminEmails"].append(user["email"]); save_state(invalidate_briefing=False); is_admin = True
-    return {"user": user, "is_admin": is_admin, "tech": tech}
+    return {"user": user, "is_admin": is_admin, "tech": _safe_tech(tech) if tech else None}
 
 @app.get("/jobs")
 def list_jobs(search: Optional[str] = None, user: dict = Depends(verify_google_token)):
@@ -345,7 +416,7 @@ def create_job(job: JobIn, user: dict = Depends(require_admin)):
     state = get_state()
     nj = {"id": f"j{len(state['jobs'])+100}_{now_local().timestamp()}",
           "title": job.title, "description": job.description, "type": job.type,
-          "priority": job.priority, "status": "Pending", "locationId": job.locationId,
+          "priority": job.priority, "status": "Not Started", "locationId": job.locationId,
           "techId": job.techId, "date": job.date, "reports": []}
     state["jobs"].insert(0, nj); save_state()
     if job.techId and job.locationId:
@@ -363,11 +434,15 @@ def get_job_detail(job_id: str, user: dict = Depends(verify_google_token)):
     return j
 
 @app.patch("/jobs/{job_id}")
-def update_job(job_id: str, updates: JobUpdate, user: dict = Depends(verify_google_token)):
+def update_job(job_id: str, updates: JobUpdate, user: dict = Depends(require_admin)):
     state = get_state()
     idx = next((i for i,j in enumerate(state["jobs"]) if j["id"]==job_id), -1)
     if idx == -1: raise HTTPException(404, "Job not found")
-    for f,v in updates.dict(exclude_none=True).items(): state["jobs"][idx][f] = v
+    changes = updates.model_dump(exclude_none=True)
+    new_status = changes.pop("status", None)
+    for f,v in changes.items(): state["jobs"][idx][f] = v
+    if new_status:
+        apply_job_status(state["jobs"][idx], new_status, user.get("email"))
     save_state(); return state["jobs"][idx]
 
 @app.delete("/jobs/{job_id}", status_code=204)
@@ -425,28 +500,48 @@ def download_ics(job_id: str, user: dict = Depends(verify_google_token)):
     except Exception as e: raise HTTPException(500, str(e))
 
 @app.get("/techs")
-def list_techs(user: dict = Depends(verify_google_token)): return {"techs": get_state()["techs"]}
+def list_techs(user: dict = Depends(verify_google_token)):
+    return {"techs": [_safe_tech(t) for t in get_state()["techs"]]}
 
 @app.post("/techs", status_code=201)
 def create_tech(tech: TechIn, user: dict = Depends(require_admin)):
     state = get_state()
+    name, email, initials = tech.name.strip(), tech.email.strip().casefold(), tech.initials.strip().upper()
+    if not name or "@" not in email or len(initials) != 2:
+        raise HTTPException(400, "A name, valid email, and two-character initials are required.")
+    if any((t.get("email") or "").casefold() == email for t in state["techs"]):
+        raise HTTPException(409, "A technician with that email already exists.")
     colors = ['#7f1d1d','#3f3f46','#b91c1c','#52525b','#991b1b','#7c2d12','#292524']
     nt = {"id": f"t{len(state['techs'])+1}_{now_local().timestamp()}",
-          "name": tech.name, "email": tech.email, "initials": tech.initials,
+          "name": name, "email": email, "initials": initials,
           "color": tech.color or colors[len(state["techs"]) % len(colors)], "skills": tech.skills or []}
-    state["techs"].append(nt); save_state(invalidate_briefing=False); return nt
+    state["techs"].append(nt); save_state(invalidate_briefing=False); return _safe_tech(nt)
 
 @app.patch("/techs/{tech_id}")
 def update_tech(tech_id: str, updates: TechUpdate, user: dict = Depends(require_admin)):
     state = get_state()
     idx = next((i for i,t in enumerate(state["techs"]) if t["id"]==tech_id), -1)
     if idx == -1: raise HTTPException(404, "Tech not found")
-    for f,v in updates.dict(exclude_none=True).items(): state["techs"][idx][f] = v
-    save_state(invalidate_briefing=False); return state["techs"][idx]
+    changes = updates.model_dump(exclude_none=True)
+    if "name" in changes:
+        changes["name"] = changes["name"].strip()
+        if not changes["name"]: raise HTTPException(400, "Name cannot be blank.")
+    if "initials" in changes:
+        changes["initials"] = changes["initials"].strip().upper()
+        if len(changes["initials"]) != 2: raise HTTPException(400, "Initials must be two characters.")
+    if "email" in changes:
+        changes["email"] = changes["email"].strip().casefold()
+        if "@" not in changes["email"]: raise HTTPException(400, "Invalid email.")
+        if any(t["id"] != tech_id and (t.get("email") or "").casefold() == changes["email"] for t in state["techs"]):
+            raise HTTPException(409, "Another technician already uses that email.")
+    for f,v in changes.items(): state["techs"][idx][f] = v
+    save_state(invalidate_briefing=False); return _safe_tech(state["techs"][idx])
 
 @app.delete("/techs/{tech_id}", status_code=204)
 def delete_tech(tech_id: str, user: dict = Depends(require_admin)):
     state = get_state(); before = len(state["techs"])
+    if any(j.get("techId") == tech_id for j in state["jobs"]):
+        raise HTTPException(409, "Reassign this technician's jobs before deleting them.")
     state["techs"] = [t for t in state["techs"] if t["id"] != tech_id]
     if len(state["techs"]) == before: raise HTTPException(404, "Tech not found")
     save_state(invalidate_briefing=False)
@@ -469,12 +564,14 @@ def update_location(loc_id: str, updates: LocationUpdate, user: dict = Depends(r
     state = get_state()
     idx = next((i for i,l in enumerate(state["locations"]) if l["id"]==loc_id), -1)
     if idx == -1: raise HTTPException(404, "Location not found")
-    for f,v in updates.dict(exclude_none=True).items(): state["locations"][idx][f] = v
+    for f,v in updates.model_dump(exclude_none=True).items(): state["locations"][idx][f] = v
     save_state(invalidate_briefing=False); return state["locations"][idx]
 
 @app.delete("/locations/{loc_id}", status_code=204)
 def delete_location(loc_id: str, user: dict = Depends(require_admin)):
     state = get_state(); before = len(state["locations"])
+    if any(j.get("locationId") == loc_id for j in state["jobs"]):
+        raise HTTPException(409, "Reassign this location's jobs before deleting it.")
     state["locations"] = [l for l in state["locations"] if l["id"] != loc_id]
     if len(state["locations"]) == before: raise HTTPException(404, "Location not found")
     save_state(invalidate_briefing=False)
@@ -497,7 +594,6 @@ def regen_briefing(user: dict = Depends(verify_google_token)):
     state = get_state(); b = gen_briefing(state)
     state["briefing"] = b; save_state(invalidate_briefing=False); return {"briefing": b}
 
-@app.post("/chat")
 def _safe_locations_for_ai(locations: list) -> list:
     """Strip site credentials/systems (logins, passwords, IPs) before sending
     location data to the external LLM API."""
@@ -510,10 +606,11 @@ def chat(msg: ChatIn, user: dict = Depends(verify_google_token)):
     if not api_key or not HAS_GENAI: raise HTTPException(503, "AI not available")
     state = get_state(); client, model = get_model(api_key)
     safe_locations = _safe_locations_for_ai(state.get('locations', []))
+    safe_techs = [_safe_tech(t) for t in state.get("techs", [])]
     ctx = (
         f"You are an AI assistant for the 5G Security Job Board.\n"
         f"Jobs: {json.dumps(state['jobs'], default=str)}\n"
-        f"Techs: {json.dumps(state['techs'])}\n"
+        f"Techs: {json.dumps(safe_techs)}\n"
         f"Locations: {json.dumps(safe_locations)}"
     )
     contents = [{"role":"user","parts":[ctx]}] + (msg.history or []) + [{"role":"user","parts":[msg.message]}]
@@ -522,22 +619,32 @@ def chat(msg: ChatIn, user: dict = Depends(verify_google_token)):
 
 @app.post("/upload/photo")
 async def upload_photo(file: UploadFile = File(...), folder: str = "photos", user: dict = Depends(verify_google_token)):
-    data = await file.read()
-    key = f"{folder}/{now_local().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
+    if folder != "photos":
+        raise HTTPException(status_code=400, detail="Invalid upload folder.")
+    data = await _read_upload_limited(file)
+    extension = os.path.splitext(file.filename or "")[1].lower()
+    if len(extension) > 10 or not extension[1:].isalnum():
+        extension = ""
+    key = f"photos/{uuid.uuid4().hex}{extension}"
     result = upload_bytes(data, key, file.content_type or "image/jpeg")
     if not result: raise HTTPException(500, "Upload failed")
     return {"key": result}
 
 @app.post("/upload/signature")
 async def upload_signature(file: UploadFile = File(...), user: dict = Depends(verify_google_token)):
-    data = await file.read()
-    key = f"signatures/{now_local().strftime('%Y%m%d_%H%M%S')}_sig.png"
+    data = await _read_upload_limited(file)
+    key = f"signatures/{uuid.uuid4().hex}.png"
     result = upload_bytes(data, key, "image/png")
     if not result: raise HTTPException(500, "Upload failed")
     return {"key": result}
 
 @app.get("/files/url")
 def get_file_url(key: str, user: dict = Depends(verify_google_token)):
+    state = get_state()
+    email = user.get("email", "").lower()
+    is_admin = email in [e.lower() for e in state.get("adminEmails", [])]
+    if not _file_key_allowed(state, key, is_admin):
+        raise HTTPException(status_code=403, detail="File access denied.")
     url = get_view_url(key)
     if not url: raise HTTPException(404, "File not found")
     return {"url": url}
@@ -549,12 +656,19 @@ def get_admin_emails(user: dict = Depends(require_admin)):
 @app.post("/admin/emails")
 def add_admin_email(body: AdminEmailIn, user: dict = Depends(require_admin)):
     state = get_state()
-    if body.email not in state["adminEmails"]: state["adminEmails"].append(body.email); save_state(invalidate_briefing=False)
+    email = body.email.strip().casefold()
+    if "@" not in email:
+        raise HTTPException(400, "Invalid email.")
+    if email not in [e.casefold() for e in state["adminEmails"]]:
+        state["adminEmails"].append(email)
+        save_state(invalidate_briefing=False)
     return {"adminEmails": state["adminEmails"]}
 
 @app.delete("/admin/emails/{email}")
 def remove_admin_email(email: str, user: dict = Depends(require_admin)):
-    state = get_state(); state["adminEmails"] = [e for e in state["adminEmails"] if e != email]
+    state = get_state()
+    _ensure_admin_removal_allowed(state["adminEmails"], email)
+    state["adminEmails"] = [e for e in state["adminEmails"] if e.lower() != email.lower()]
     save_state(invalidate_briefing=False); return {"adminEmails": state["adminEmails"]}
 
 @app.get("/admin/export/json")
@@ -563,9 +677,10 @@ def export_json(user: dict = Depends(require_admin)): return JSONResponse(conten
 @app.get("/admin/export/csv")
 def export_csv(user: dict = Depends(require_admin)):
     import csv, io
-    jobs = get_state().get("jobs", [])
+    jobs = [j for j in get_state().get("jobs", []) if isinstance(j, dict)]
     if not jobs: return StreamingResponse(BytesIO(b"No jobs"), media_type="text/csv")
-    out = io.StringIO(); w = csv.DictWriter(out, fieldnames=jobs[0].keys()); w.writeheader(); w.writerows(jobs)
+    fieldnames = list(dict.fromkeys(key for job in jobs for key in job))
+    out = io.StringIO(); w = csv.DictWriter(out, fieldnames=fieldnames); w.writeheader(); w.writerows(jobs)
     return StreamingResponse(BytesIO(out.getvalue().encode()), media_type="text/csv",
                              headers={"Content-Disposition": "attachment; filename=jobs_export.csv"})
 

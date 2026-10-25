@@ -102,8 +102,8 @@ def upload_streamlit_file(uploaded_file, folder="photos"):
         return None
     import datetime
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = uploaded_file.name
-    key = f"{folder}/{timestamp}_{filename}"
+    filename = os.path.basename(uploaded_file.name)
+    key = f"{folder}/{timestamp}_{os.urandom(16).hex()}_{filename}"
     _boto3, ClientError, _Config = _boto()
     try:
         s3.upload_fileobj(uploaded_file, bucket, key, ExtraArgs={'ContentType': uploaded_file.type})

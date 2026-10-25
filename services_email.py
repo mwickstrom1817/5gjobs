@@ -335,10 +335,10 @@ def send_assignment_email(job, tech, location):
 
     try:
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
         else:
-            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
             server.starttls()
             server.ehlo()
@@ -398,10 +398,10 @@ def send_completion_email(job, tech, location, report_data, timer=None):
 
     try:
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
         else:
-            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
             server.starttls()
             server.ehlo()
@@ -498,10 +498,10 @@ def send_daily_report_email(job, tech, location, report_data, timer=None):
 
     try:
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
         else:
-            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
             server.starttls()
             server.ehlo()
@@ -571,10 +571,10 @@ def send_ops_summary_email(recipients, subject_prefix=""):
     sent = 0
     try:
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
         else:
-            server = smtplib.SMTP(smtp_server, int(smtp_port))
+            server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=20)
             server.ehlo()
             server.starttls()
             server.ehlo()
@@ -635,9 +635,9 @@ def _send_hours_digest_email(label, recipients, smtp_server, smtp_port,
     csv_str = pd.DataFrame(rows).sort_values(["Date", "Tech"]).to_csv(index=False)
     try:
         if int(smtp_port) == 465:
-            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port)); server.ehlo()
+            server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=20); server.ehlo()
         else:
-            server = smtplib.SMTP(smtp_server, int(smtp_port)); server.ehlo(); server.starttls(); server.ehlo()
+            server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=20); server.ehlo(); server.starttls(); server.ehlo()
         server.login(sender_email, sender_password)
         for recipient in recipients:
             try:

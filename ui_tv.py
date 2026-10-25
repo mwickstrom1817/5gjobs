@@ -5,7 +5,7 @@ import streamlit as st
 
 from core import (
     now_local, get_status_color, PRIORITY_COLORS, get_tech, get_location,
-    get_logo_data_uri, refresh_session_from_db,
+    get_logo_data_uri, refresh_session_from_db, get_db_version,
 )
 
 
@@ -58,7 +58,9 @@ def _tv_board():
     """Auto-refreshing, rotating wall display. Each ~20s refresh re-reads the DB
     and advances to the next screen (board -> schedule -> attention)."""
     try:
-        refresh_session_from_db()
+        db_ver = get_db_version()
+        if db_ver is not None and db_ver != st.session_state.get('_db_version'):
+            refresh_session_from_db()
     except Exception:
         pass
 

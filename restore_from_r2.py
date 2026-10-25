@@ -1,4 +1,4 @@
-"""Emergency restore of the Neon app_state row from the newest R2 backup.
+"""Emergency restore of the active Neon schema from an R2 backup.
 
 Usage:
     .venv/Scripts/python restore_from_r2.py
@@ -15,12 +15,14 @@ import os
 import sys
 import json
 import argparse
-from datetime import date
 
-import psycopg2
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
+
+from core import validate_state_dict
+from crypto import decrypt_state_systems
+from persistence_pg import init_db, save_state_to_db
 
 try:
     from dotenv import load_dotenv
@@ -53,9 +55,17 @@ def get_bucket():
 
 
 def list_backups(s3, bucket):
-    resp = s3.list_objects_v2(Bucket=bucket, Prefix=BACKUP_PREFIX)
-    keys = [o["Key"] for o in resp.get("Contents", [])]
-    # Keys look like backups/app_state_2026-10-03.json
+    keys = []
+    kwargs = {"Bucket": bucket, "Prefix": BACKUP_PREFIX}
+    while True:
+        resp = s3.list_objects_v2(**kwargs)
+        keys.extend(o["Key"] for o in resp.get("Contents", []))
+        if not resp.get("IsTruncated"):
+            break
+        token = resp.get("NextContinuationToken")
+        if not token:
+            break
+        kwargs["ContinuationToken"] = token
     return sorted(keys)
 
 
@@ -73,31 +83,12 @@ def restore_to_db(data):
     dsn = os.environ.get("DATABASE_URL") or os.environ.get("NEON_DB_URL")
     if not dsn:
         raise ValueError("DATABASE_URL or NEON_DB_URL is required")
-    conn = psycopg2.connect(dsn)
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO app_state (key, value)
-                VALUES ('global_state', %s)
-                ON CONFLICT (key)
-                DO UPDATE SET value = EXCLUDED.value, version = app_state.version + 1, updated_at = CURRENT_TIMESTAMP
-                RETURNING version;
-                """,
-                (json.dumps(data),),
-            )
-            new_version = cur.fetchone()[0]
-        conn.commit()
-        return new_version
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+    init_db()
+    return save_state_to_db(data)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Restore app_state from R2 backup to Neon DB")
+    parser = argparse.ArgumentParser(description="Restore active app state from R2 backup to Neon DB")
     parser.add_argument("date", nargs="?", help="Backup date to restore (YYYY-MM-DD). Defaults to newest.")
     args = parser.parse_args()
 
@@ -129,14 +120,15 @@ def main():
         print(f"Failed to download backup: {e}")
         sys.exit(1)
 
-    required = ["jobs", "techs", "locations"]
-    if not all(k in data for k in required):
-        print("Backup file is missing required keys:", required)
+    valid, message = validate_state_dict(data)
+    if not valid:
+        print(f"Backup validation failed: {message}")
         sys.exit(1)
 
+    data = decrypt_state_systems(data)
     print("Backup summary:", json.dumps(summary(data), indent=2))
 
-    ans = input("Overwrite the Neon DB global_state row with this backup? [yes/no]: ")
+    ans = input("Overwrite the active Neon DB state with this backup? [yes/no]: ")
     if ans.strip().lower() != "yes":
         print("Aborted. DB was not changed.")
         sys.exit(0)

@@ -9,13 +9,12 @@ import streamlit as st
 
 from core import (
     now_local, save_state, get_logger, _sync_session_to_db,
+    refresh_session_from_db,
     SKILL_OPTIONS, TECH_COLORS, download_data_as_csv, download_data_as_json,
     expiring_assets, validate_state_dict,
 )
-from persistence_pg import (
-    load_state, ensure_loaded_into_session, commit_from_session,
-    force_overwrite_from_session,
-)
+from persistence_pg import force_overwrite_from_session, DEFAULT_DATA
+from crypto import decrypt_state_systems
 from services_ai import get_available_model, suggest_address_with_gemini, get_api_key
 from services_email import daily_summary_recipients, send_ops_summary_email
 from services_push import get_or_create_notify_topic, send_push
@@ -34,12 +33,14 @@ def _admin_access():
         with st.form("add_admin_form"):
             new_admin_email = st.text_input("New Admin Email")
             if st.form_submit_button("Add Admin"):
-                if new_admin_email and "@" in new_admin_email:
-                    if new_admin_email not in st.session_state.adminEmails:
-                        st.session_state.adminEmails.append(new_admin_email)
-                        save_state(invalidate_briefing=False)
-                        st.toast(f"Added {new_admin_email}", icon="✅")
-                        st.rerun()
+                normalized = new_admin_email.strip().casefold()
+                existing = {str(e).strip().casefold() for e in st.session_state.adminEmails}
+                if normalized and "@" in normalized:
+                    if normalized not in existing:
+                        st.session_state.adminEmails.append(normalized)
+                        if save_state(invalidate_briefing=False):
+                            st.toast(f"Added {normalized}", icon="✅")
+                            st.rerun()
                     else:
                         st.warning("Email already exists.")
                 else:
@@ -47,13 +48,17 @@ def _admin_access():
 
         if st.session_state.adminEmails:
             st.write("###### Current Admins")
+            last_admin = len(st.session_state.adminEmails) <= 1
             for email in st.session_state.adminEmails:
                 c1, c2 = st.columns([4, 1])
                 c1.write(email)
-                if c2.button(":material/delete:", key=f"del_admin_{email}"):
+                if c2.button(":material/delete:", key=f"del_admin_{email}", disabled=last_admin,
+                             help="The final administrator cannot be removed" if last_admin else "Remove administrator"):
                     st.session_state.adminEmails.remove(email)
-                    save_state(invalidate_briefing=False)
-                    st.rerun()
+                    if save_state(invalidate_briefing=False):
+                        st.rerun()
+            if last_admin:
+                st.caption("The final administrator cannot be removed.")
 
 
 def _admin_email():
@@ -80,9 +85,9 @@ def _admin_email():
                     "SMTP_PORT": s_port,
                     "SMTP_EMAIL": s_email
                 }
-                save_state(invalidate_briefing=False)
-                st.toast("SMTP Settings Saved!", icon="✅")
-                st.rerun()
+                if save_state(invalidate_briefing=False):
+                    st.toast("SMTP Settings Saved!", icon="✅")
+                    st.rerun()
 
     st.subheader("📧 Daily Summary Email")
     with st.expander("Send a test of the daily ops summary"):
@@ -118,27 +123,34 @@ def _admin_techs():
             new_tech_skills = st.multiselect("Skills", options=SKILL_OPTIONS)
 
             if st.form_submit_button("Add Technician"):
-                if new_tech_name and new_tech_email and new_tech_initials:
+                name = new_tech_name.strip()
+                email = new_tech_email.strip().casefold()
+                initials = new_tech_initials.strip().upper()
+                duplicate = any((t.get('email') or '').strip().casefold() == email for t in st.session_state.techs)
+                if not name or not email or "@" not in email or len(initials) != 2:
+                    st.error("Enter a name, valid email, and two-character initials.")
+                elif duplicate:
+                    st.error("A technician with that email already exists.")
+                else:
                     existing_ids = [int(t['id'][1:]) for t in st.session_state.techs if t['id'].startswith('t') and t['id'][1:].isdigit()]
                     next_id = (max(existing_ids) if existing_ids else 0) + 1
                     new_id = f"t{next_id}"
                     import random
                     color = random.choice(TECH_COLORS)
 
-                    _slug = re.sub(r'[^a-z0-9]', '', new_tech_name.lower())[:10] or 'tech'
-                    st.session_state.techs.append({
+                    _slug = re.sub(r'[^a-z0-9]', '', name.lower())[:10] or 'tech'
+                    new_tech = {
                         "id": new_id,
-                        "name": new_tech_name,
-                        "email": new_tech_email,
-                        "initials": new_tech_initials.upper(),
+                        "name": name,
+                        "email": email,
+                        "initials": initials,
                         "color": color,
                         "skills": new_tech_skills,
-                        "notify_topic": f"5gsec-{_slug}-{os.urandom(4).hex()}"
-                    })
-                    save_state(invalidate_briefing=False)
-                    st.success(f"Added {new_tech_name}")
-                else:
-                    st.error("All fields required.")
+                        "notify_topic": f"5gsec-{_slug}-{os.urandom(16).hex()}"
+                    }
+                    st.session_state.techs.append(new_tech)
+                    if save_state(invalidate_briefing=False):
+                        st.success(f"Added {name}")
 
         if st.session_state.techs:
             st.write("###### Current Technicians")
@@ -158,9 +170,12 @@ def _admin_techs():
                     st.session_state[edit_key] = not st.session_state.get(edit_key, False)
                     st.rerun()
                 if c5.button(":material/delete:", key=f"del_tech_{t['id']}", help="Delete technician"):
-                    st.session_state.techs.remove(t)
-                    save_state(invalidate_briefing=False)
-                    st.rerun()
+                    if any(j.get('techId') == t['id'] for j in st.session_state.jobs):
+                        st.error(f"{t['name']} is still assigned to jobs. Reassign those jobs before deleting this technician.")
+                    else:
+                        st.session_state.techs.remove(t)
+                        if save_state(invalidate_briefing=False):
+                            st.rerun()
 
                 if st.session_state.get(edit_key):
                     with st.form(key=f"edit_tech_form_{t['id']}"):
@@ -173,14 +188,21 @@ def _admin_techs():
                                                      default=t.get('skills') or [],
                                                      key=f"edit_skills_{t['id']}")
                         if st.form_submit_button("Save Changes"):
-                            t['name'] = edit_name.strip()
-                            t['email'] = edit_email.strip()
-                            t['initials'] = edit_initials.strip().upper()
-                            t['skills'] = edit_skills
-                            save_state(invalidate_briefing=False)
-                            st.session_state[edit_key] = False
-                            st.toast(f"Updated {t['name']}", icon="✅")
-                            st.rerun()
+                            name = edit_name.strip()
+                            email = edit_email.strip().casefold()
+                            initials = edit_initials.strip().upper()
+                            duplicate = any(x['id'] != t['id'] and (x.get('email') or '').strip().casefold() == email
+                                            for x in st.session_state.techs)
+                            if not name or not email or "@" not in email or len(initials) != 2:
+                                st.error("Enter a name, valid email, and two-character initials.")
+                            elif duplicate:
+                                st.error("Another technician already uses that email.")
+                            else:
+                                t.update({'name': name, 'email': email, 'initials': initials, 'skills': edit_skills})
+                                if save_state(invalidate_briefing=False):
+                                    st.session_state[edit_key] = False
+                                    st.toast(f"Updated {name}", icon="✅")
+                                    st.rerun()
 
     st.subheader("📳 Push Notifications (ntfy)")
     with st.expander("Phone Push Setup & Testing", expanded=False):
@@ -216,22 +238,22 @@ def _admin_locations():
             l_contact_phone = c_l2.text_input("Site Contact Phone")
 
             if st.form_submit_button("Add Location"):
-                if l_name and l_addr:
-                    final_addr = suggest_address_with_gemini(l_addr)
+                if l_name.strip() and l_addr.strip():
+                    final_addr = suggest_address_with_gemini(l_addr.strip())
                     existing_ids = [int(l['id'][1:]) for l in st.session_state.locations if l['id'].startswith('l') and l['id'][1:].isdigit()]
                     next_id = (max(existing_ids) if existing_ids else 0) + 1
                     new_loc = {
                         "id": f"l{next_id}",
-                        "name": l_name,
+                        "name": l_name.strip(),
                         "address": final_addr,
                         "mapsUrl": l_maps,
                         "contact_name": l_contact_name,
                         "contact_phone": l_contact_phone
                     }
                     st.session_state.locations.append(new_loc)
-                    save_state(invalidate_briefing=False)
-                    st.toast(f"Added {l_name}", icon="✅")
-                    st.rerun()
+                    if save_state(invalidate_briefing=False):
+                        st.toast(f"Added {new_loc['name']}", icon="✅")
+                        st.rerun()
                 else:
                     st.error("Name and Address required.")
 
@@ -247,9 +269,12 @@ def _admin_locations():
                 if c3.button(":material/edit:", key=f"edit_loc_{l['id']}"):
                     edit_location_dialog(l['id'])
                 if c4.button(":material/delete:", key=f"del_loc_{l['id']}"):
-                    st.session_state.locations.remove(l)
-                    save_state(invalidate_briefing=False)
-                    st.rerun()
+                    if any(j.get('locationId') == l['id'] for j in st.session_state.jobs):
+                        st.error(f"{l['name']} is still linked to jobs. Reassign those jobs before deleting this location.")
+                    else:
+                        st.session_state.locations.remove(l)
+                        if save_state(invalidate_briefing=False):
+                            st.rerun()
 
 
 def _admin_warranty():
@@ -316,25 +341,16 @@ def _admin_data():
     c_db1, c_db2 = form_row([1, 1])
     with c_db1:
         if st.button("🔄 Reload Data from DB"):
-            state, ver = load_state()
-            st.session_state.db = state
-            st.session_state._db_version = ver
-            st.session_state.jobs = state["jobs"]
-            st.session_state.techs = state["techs"]
-            st.session_state.locations = state["locations"]
-            st.session_state.briefing = state["briefing"]
-            st.session_state.adminEmails = state["adminEmails"]
-            st.session_state.agreements = state.get("agreements", [])
-            st.session_state.sops = state.get("sops", [])
-            st.session_state.settings = state.get("settings", {})
-            st.session_state.last_reminder_date = state.get("last_reminder_date")
-            st.toast("Reloaded from DB.", icon="🔄")
-            st.rerun()
+            try:
+                refresh_session_from_db()
+                st.toast("Reloaded from DB.", icon="🔄")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Reload failed: {e}")
     with c_db2:
         if st.button("💾 Save to DB"):
-            _sync_session_to_db()
-            commit_from_session(invalidate_briefing=False)
-            st.toast("Saved to DB.", icon="💾")
+            if save_state(invalidate_briefing=False):
+                st.toast("Saved to DB.", icon="💾")
 
     st.divider()
     st.subheader("Backup & Restore")
@@ -363,27 +379,25 @@ def _admin_data():
         if uploaded_file is not None:
             if st.button("⚠️ Restore from Backup", key="restore_btn"):
                 try:
-                    data = json.load(uploaded_file)
+                    data = decrypt_state_systems(json.load(uploaded_file))
                     ok, msg = validate_state_dict(data)
                     if not ok:
                         st.error(f"Invalid backup: {msg}")
                     else:
-                        st.session_state.jobs = data["jobs"]
-                        st.session_state.techs = data["techs"]
-                        st.session_state.locations = data["locations"]
-                        st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
-                        st.session_state.adminEmails = data.get("adminEmails", [])
-                        st.session_state.agreements = data.get("agreements", [])
-                        st.session_state.sops = data.get("sops", [])
-                        st.session_state.settings = data.get("settings", {})
-                        st.session_state.last_reminder_date = data.get("last_reminder_date")
-                        ensure_loaded_into_session()
+                        for key, default in DEFAULT_DATA.items():
+                            fallback = default.copy() if isinstance(default, (list, dict)) else default
+                            st.session_state[key] = data.get(key, fallback)
                         _sync_session_to_db()
                         force_overwrite_from_session(invalidate_briefing=False)
                         st.toast("Data restored successfully (DB overwritten).", icon="✅")
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error restoring file: {e}")
+                    try:
+                        refresh_session_from_db()
+                    except Exception as refresh_error:
+                        st.session_state._db_load_error = str(refresh_error)
+                        st.warning("Restore failed and the previous data could not be reloaded. Refresh before making changes.")
 
     st.divider()
     st.subheader("☁️ Cloud Backups (R2)")
@@ -393,7 +407,7 @@ def _admin_data():
     if st.button("💾 Back Up Now", key="backup_now_btn"):
         from services_backup import run_daily_backup
         with st.spinner("Writing backup to object storage..."):
-            ok, msg = run_daily_backup()
+            ok, msg = run_daily_backup(manual=True)
         if ok:
             st.success(f"✅ {msg}")
             st.toast(msg, icon="💾")

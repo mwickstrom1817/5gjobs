@@ -46,7 +46,7 @@ def get_or_create_notify_topic(tech):
         return None
     if not tech.get('notify_topic'):
         slug = re.sub(r'[^a-z0-9]', '', (tech.get('name') or 'tech').lower())[:10] or 'tech'
-        tech['notify_topic'] = f"5gsec-{slug}-{os.urandom(4).hex()}"
+        tech['notify_topic'] = f"5gsec-{slug}-{os.urandom(16).hex()}"
         save_state(invalidate_briefing=False)
     return tech['notify_topic']
 

@@ -182,6 +182,17 @@ def generate_job_pdf(job, tech, location, report):
             else:
                 story.append(Spacer(1, 6))
 
+    attachment_names = []
+    for attachment in (report.get("attachments") or report.get("documents") or []):
+        name = attachment.get("name", "Unnamed file") if isinstance(attachment, dict) else str(attachment)
+        extension = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if extension not in ("jpg", "jpeg", "png", "gif", "bmp", "webp", "pdf"):
+            attachment_names.append(name)
+    if attachment_names:
+        story.append(Paragraph("REPORT ATTACHMENTS", s_section))
+        for name in attachment_names:
+            story.append(Paragraph(f"• {esc(name)}", s_body))
+
     # Customer signature
     signature_key = report.get("signature_key")
     if signature_key:
@@ -365,8 +376,14 @@ def _sop_content_flowables(content, s_body, brand_red):
 def generate_sop_pdf(sop):
     """Generate a professional, printable PDF for a single SOP."""
     try:
+        return _generate_sop_pdf(sop)
+    except Exception:
+        return None
+
+
+def _generate_sop_pdf(sop):
+    try:
         from reportlab.lib.utils import ImageReader
-        from reportlab.pdfgen import canvas
         from reportlab.lib.pagesizes import letter
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -391,6 +408,10 @@ def generate_sop_pdf(sop):
     atts = sop.get('attachments') or []
     updated_at = sop.get('updated_at', '')
     updated_by = sop.get('updated_by', '')
+
+    def esc(value):
+        return str(value if value is not None else "").replace(
+            '&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
     def header_footer(canv, doc):
         w, h = letter
@@ -442,23 +463,20 @@ def generate_sop_pdf(sop):
     s_value = ParagraphStyle('SOPValue', parent=s_body, fontName="Helvetica-Bold")
     s_caption = ParagraphStyle('SOPCaption', parent=s_label, fontSize=8, spaceBefore=2)
 
-
-
     avail = letter[0] - 92
-
     story = []
 
     # Title block
-    story.append(Paragraph(title, s_title))
+    story.append(Paragraph(esc(title), s_title))
     if category:
-        story.append(Paragraph(f"Category: {category}", s_category))
+        story.append(Paragraph(f"Category: {esc(category)}", s_category))
 
     # Metadata table
     meta_rows = []
     if updated_at:
-        meta_rows.append([Paragraph("LAST UPDATED", s_label), Paragraph(str(updated_at)[:10], s_value)])
+        meta_rows.append([Paragraph("LAST UPDATED", s_label), Paragraph(esc(str(updated_at)[:10]), s_value)])
     if updated_by:
-        meta_rows.append([Paragraph("AUTHOR", s_label), Paragraph(str(updated_by), s_value)])
+        meta_rows.append([Paragraph("AUTHOR", s_label), Paragraph(esc(updated_by), s_value)])
     if atts:
         meta_rows.append([Paragraph("ATTACHMENTS", s_label), Paragraph(str(len(atts)), s_value)])
 
@@ -489,7 +507,7 @@ def generate_sop_pdf(sop):
         steps = sop.get('steps') or []
         if steps:
             for i, stp in enumerate(steps, 1):
-                story.append(Paragraph(f"{i}. {stp}", s_body))
+                story.append(Paragraph(f"{i}. {esc(stp)}", s_body))
         else:
             story.append(Paragraph("No procedure recorded.", s_body))
 
@@ -503,7 +521,7 @@ def generate_sop_pdf(sop):
         story.append(Paragraph("ATTACHMENTS", s_section))
         for a in atts:
             name = a.get('name', 'Unnamed file')
-            story.append(Paragraph(f"• {name}", s_body))
+            story.append(Paragraph(f"• {esc(name)}", s_body))
 
     # Optional footer caption
     story.append(Spacer(1, 24))
@@ -517,10 +535,6 @@ def generate_sop_pdf(sop):
         leftMargin=46, rightMargin=46, topMargin=104, bottomMargin=64,
         title=f"5G Security SOP - {title}",
     )
-    try:
-        doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
-    except Exception:
-        return None
-
+    doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
     buffer.seek(0)
     return buffer.getvalue()

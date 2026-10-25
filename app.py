@@ -217,6 +217,24 @@ def authenticate():
         except Exception:
             code = None
 
+    returned_state = None
+    try:
+        returned_state = st.query_params.get("state")
+    except Exception:
+        try:
+            returned_state = st.experimental_get_query_params().get("state", [None])[0]
+        except Exception:
+            returned_state = None
+
+    expected_state = st.session_state.get("_oauth_state") or ""
+    if code and (not returned_state or not hmac.compare_digest(str(returned_state), expected_state)):
+        st.error("Authentication failed: the login response did not match this browser session. Please try again.")
+        try:
+            st.query_params.clear()
+        except Exception:
+            pass
+        return None
+
     # Prevent infinite loops if the URL keeps the same code param
     if code and st.session_state.get("_oauth_last_code") == code:
         # Code already processed, clear it and continue without rerun
@@ -254,6 +272,7 @@ def authenticate():
             user_info = user_r.json()
 
             st.session_state.user_info = user_info
+            st.session_state.pop("_oauth_state", None)
 
             # Clear query params so refresh doesn't keep re-processing the code
             try:
@@ -284,6 +303,8 @@ def authenticate():
             code = None
 
     # 4) Show Login Button
+    if not st.session_state.get("_oauth_state"):
+        st.session_state._oauth_state = os.urandom(24).hex()
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = {
         "client_id": client_id,
@@ -292,6 +313,7 @@ def authenticate():
         "scope": "openid email profile",
         "access_type": "online",
         "prompt": "select_account",
+        "state": st.session_state._oauth_state,
     }
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
@@ -662,48 +684,26 @@ def main():
     except Exception:
         pass
 
-    # Deep-link: open a job dialog requested from elsewhere (e.g. Site History)
-    open_target = st.session_state.pop("_open_job_after_rerun", None)
-    if open_target:
-        job_details_dialog(open_target)
-
-    # Scanned asset label: the QR points at ?asset=TAG. Consume the param so the
-    # dialog doesn't reopen on every later rerun.
-    _scanned = st.session_state.pop("_open_asset_after_rerun", None)
-    if not _scanned:
-        try:
-            _scanned = st.query_params.get("asset")
-        except Exception:
-            _scanned = None
-        if _scanned:
-            try:
-                del st.query_params["asset"]
-            except Exception:
-                pass
-    if _scanned:
-        asset_dialog(_scanned)
-
     user_email = user.get("email")
     user_name = user.get("name")
+    user_email_norm = (user_email or "").strip().casefold()
 
-    # 2. Determine Role (Admin or Tech)
-    # Bootstrapping: If no admins exist in DB, first login becomes Admin.
-    # Only bootstrap when we successfully loaded from the DB (db is in session
-    # state). If the DB failed to load we must NOT save empty defaults, or
-    # we'd wipe the real data.
-    if not st.session_state.adminEmails and 'db' in st.session_state:
-        st.session_state.adminEmails.append(user_email)
-        save_state()
-        st.toast(f"First login detected. {user_email} is now Super Admin.", icon="🛡️")
+    # Explicit bootstrap only: an empty admin list must never turn the next
+    # arbitrary Google login into a Super Admin.
+    bootstrap_email = (_secret("BOOTSTRAP_ADMIN_EMAIL", "") or "").strip().casefold()
+    if not st.session_state.adminEmails and 'db' in st.session_state and user_email_norm == bootstrap_email and bootstrap_email:
+        st.session_state.adminEmails.append(user_email_norm)
+        if save_state():
+            st.toast(f"Bootstrap complete. {user_email_norm} is now Super Admin.", icon="🛡️")
 
-    is_admin = user_email in st.session_state.adminEmails
+    normalized_admins = {str(e).strip().casefold() for e in st.session_state.adminEmails}
+    is_admin = user_email_norm in normalized_admins
 
-    # 2.5 ACCESS CONTROL: only admins, registered techs, or allowed-domain emails
-    # get in. Anyone else with a Google account sees a denial screen.
-    is_known_tech = any((t.get('email') or '').lower() == (user_email or '').lower()
+    # Access approval must run before any deep-linked job or asset is rendered.
+    is_known_tech = any((t.get('email') or '').strip().casefold() == user_email_norm
                         for t in st.session_state.techs)
     allowed_domain = _secret("ALLOWED_EMAIL_DOMAIN", "")
-    domain_ok = bool(allowed_domain) and (user_email or '').lower().endswith("@" + allowed_domain.lower().lstrip("@"))
+    domain_ok = bool(allowed_domain) and user_email_norm.endswith("@" + allowed_domain.lower().lstrip("@"))
 
     if not (is_admin or is_known_tech or domain_ok):
         get_logger().log(f"ACCESS DENIED: {user_email} attempted to log in")
@@ -727,6 +727,26 @@ def main():
         if st.button("Sign in with a different account"):
             logout()
         return
+
+    # Deep-link: open a job dialog requested from elsewhere (e.g. Site History)
+    open_target = st.session_state.pop("_open_job_after_rerun", None)
+    if open_target:
+        job_details_dialog(open_target)
+
+    # Scanned asset label: consume the param so the dialog doesn't reopen on reruns.
+    _scanned = st.session_state.pop("_open_asset_after_rerun", None)
+    if not _scanned:
+        try:
+            _scanned = st.query_params.get("asset")
+        except Exception:
+            _scanned = None
+        if _scanned:
+            try:
+                del st.query_params["asset"]
+            except Exception:
+                pass
+    if _scanned:
+        asset_dialog(_scanned)
 
     # Display Mode (kiosk) entered via the sidebar button — render the TV board and stop
     if st.session_state.get('kiosk_mode'):
@@ -773,6 +793,8 @@ def main():
         if is_admin:
             if st.button("➕ New Job", use_container_width=True):
                 st.session_state._open_add_job = True
+                for key in ("assign_tech_add", "preselect_tech_add", "_add_job_suggestions", "_add_job_suggest", "_add_job_save"):
+                    st.session_state.pop(key, None)
                 st.rerun()
     st.markdown('<div style="border-bottom:3px solid #b91c1c;margin:2px 0 8px 0;"></div>', unsafe_allow_html=True)
 
@@ -814,7 +836,7 @@ def main():
     # 0. Today — your assignments first (if you're a tech), then the briefing
     with tab_map["🌅 Today"]:
         if current_tech:
-            _first = current_tech['name'].split()[0]
+            _first = (current_tech.get('name') or 'Technician').split()[0]
 
             my_jobs = [j for j in filtered_jobs if j['techId'] == current_tech['id'] and j['status'] != 'Completed']
             # Most urgent first: Critical > High > Medium > Low, then soonest date
@@ -902,6 +924,8 @@ def main():
             st.info("No technicians added. Go to Admin tab.")
         else:
             board_statuses = ["Not Started", "Parts not ordered", "Waiting on Parts", "Parts Staged", "Customer on Hold", "In Progress"]
+            tech_by_id = {t['id']: t for t in st.session_state.techs}
+            location_by_id = {l['id']: l for l in st.session_state.locations}
             cols = st.columns(len(board_statuses))
             for i, status in enumerate(board_statuses):
                 with cols[i]:
@@ -919,7 +943,8 @@ def main():
                     if not status_jobs:
                         st.caption("No jobs.")
                     for job in status_jobs:
-                        render_job_card(job, compact=True, key_suffix="board", allow_delete=is_admin)
+                        render_job_card(job, compact=True, key_suffix="board", allow_delete=is_admin,
+                                        tech_by_id=tech_by_id, location_by_id=location_by_id)
 
     # 3. Schedule — calendar and map are two views of the same "where/when" question
     with tab_map["📅 Schedule"]:
@@ -1071,16 +1096,22 @@ def main():
                 placeholder="🔍 Search archived jobs by title, site, or tech...",
                 key="archive_search",
             )
+            if st.session_state.get("_archive_previous_query") != _archive_q:
+                st.session_state._archive_previous_query = _archive_q
+                st.session_state._archive_limit = 100
+            _archive_limit = st.session_state.get("_archive_limit", 100)
+            tech_by_id = {t['id']: t for t in st.session_state.techs}
+            location_by_id = {l['id']: l for l in st.session_state.locations}
             if _archive_q:
                 _q = _archive_q.lower()
 
                 def _archive_matches(j):
                     if _q in j.get('title', '').lower() or _q in j.get('description', '').lower():
                         return True
-                    _loc = get_location(j.get('locationId'))
+                    _loc = location_by_id.get(j.get('locationId'))
                     if _loc and (_q in _loc.get('name', '').lower() or _q in _loc.get('address', '').lower()):
                         return True
-                    _tech = get_tech(j.get('techId'))
+                    _tech = tech_by_id.get(j.get('techId'))
                     if _tech and _q in _tech.get('name', '').lower():
                         return True
                     return False
@@ -1089,9 +1120,18 @@ def main():
                 if not _rows:
                     _empty_word = "matching archived jobs"
 
+            _archive_total = len(_rows)
+            _rows = _rows[:_archive_limit]
+            if _archive_total > _archive_limit:
+                st.caption(f"Showing {_archive_limit} of {_archive_total} archived jobs.")
+
         if not _rows:
             st.info(f"No {_empty_word} to show.")
         render_job_grid(_rows, key_suffix=f"jobs_{_slug}", allow_delete=is_admin)
+        if _slug == "archive" and _archive_total > _archive_limit:
+            if st.button(f"Load more archived jobs ({_archive_total - _archive_limit} remaining)", key="archive_load_more"):
+                st.session_state._archive_limit = _archive_limit + 100
+                st.rerun()
 
     # 6. Invoicing (admin / office manager)
     if is_admin:
@@ -1103,17 +1143,14 @@ def main():
         with tab_map["🛡️ Admin"]:
             render_admin_panel()
 
-    # Re-open dialogs that were triggered from a button that no longer exists
-    # after an internal rerun (e.g. Suggest Tech inside Edit Job).
+    # Keep these flags for the lifetime of the dialog so internal widget reruns
+    # do not close it. Save/Cancel clears them explicitly in the dialog.
     _edit_job_id = st.session_state.get("_open_edit_job_id")
     if _edit_job_id:
         edit_job_dialog(_edit_job_id)
-        # Reached here = dialog closed normally; clear the flag.
-        st.session_state.pop("_open_edit_job_id", None)
 
     if st.session_state.get("_open_add_job"):
         add_job_dialog()
-        st.session_state.pop("_open_add_job", None)
 
 if __name__ == "__main__":
     main()

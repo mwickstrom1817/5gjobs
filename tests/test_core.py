@@ -162,7 +162,7 @@ def test_suggest_technicians_scores_skills_and_workload():
         # Past job at target location for Alice
         {"id": "j4", "title": "Old access job", "status": "Completed", "locationId": "l1", "techId": "t1"},
     ]
-    job = {"id": "j5", "title": "HID access controller", "description": "Access control", "type": "Service", "locationId": "l1"}
+    job = {"id": "j-new", "title": "HID access controller", "description": "Access control", "type": "Service", "locationId": "l1"}
     results = suggest_technicians(job, n=3, techs=techs, jobs=jobs)
     assert len(results) == 3
     # Alice should win: skill match + past location + lighter load
@@ -170,6 +170,14 @@ def test_suggest_technicians_scores_skills_and_workload():
     # Bob has skill match but heavier load, so Carol (no load) beats him
     assert results[1][0]["id"] == "t3"
     assert results[2][0]["id"] == "t2"
+
+
+def test_suggest_technicians_excludes_current_job_from_history_and_workload():
+    techs = [{"id": "t1", "name": "Alice", "skills": []}]
+    current = {"id": "j1", "title": "Current", "status": "Not Started",
+               "locationId": "l1", "techId": "t1"}
+    results = suggest_technicians(current, techs=techs, jobs=[current])
+    assert results[0][2] == ["lighter load"]
 
 
 def test_apply_job_status_stamps_and_days_in_status():

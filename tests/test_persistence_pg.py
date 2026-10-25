@@ -51,8 +51,9 @@ def fake_conn():
         sql = sql.strip()
         params = params or ()
 
-        # CREATE / SELECT to_regclass: ignore in mock
-        if sql.startswith(("CREATE", "SELECT to_regclass")):
+        # DDL / transaction controls / advisory locks: ignore in mock
+        if sql.startswith(("CREATE", "SET TRANSACTION", "SELECT to_regclass",
+                           "SELECT pg_advisory_xact_lock")):
             return
 
         # SELECT 1 FROM app_settings WHERE key = _version LIMIT 1
@@ -119,10 +120,10 @@ def fake_conn():
                 state["versions"]["app_settings"] = int(params[2])
             if "RETURNING version" in sql:
                 state["versions"]["app_settings"] = int(state["versions"]["app_settings"]) + 1
-                _insert_settings(params[:2])
+                _insert_settings(params)
                 cur.fetchone.return_value = (state["versions"]["app_settings"],)
             else:
-                _insert_settings(params[:2])
+                _insert_settings(params)
             return
 
         # DELETE FROM <entity> (full or by id list)
@@ -345,3 +346,34 @@ def test_load_state_falls_back_to_legacy(fake_conn):
 
     assert data["jobs"][0]["title"] == "Legacy"
     assert version == 7
+
+
+def test_empty_entity_diff_does_not_rewrite_tables(fake_conn):
+    conn, state = fake_conn
+    state["versions"]["app_settings"] = 2
+    state["app_settings"][pg.VERSION_KEY] = None
+    state["jobs"]["keep"] = {"id": "keep", "title": "Keep"}
+
+    with patch.object(pg, "_db_conn", return_value=conn):
+        pg.save_state_to_db(pg.DEFAULT_DATA.copy(), expected_version=2, entity_changes={})
+
+    assert state["jobs"]["keep"]["title"] == "Keep"
+    cur = conn.cursor.return_value.__enter__.return_value
+    entity_writes = [
+        call for call in cur.execute.call_args_list
+        if any(f"FROM {table}" in str(call) or f"INTO {table}" in str(call)
+               for table in pg.ENTITY_TABLES)
+    ]
+    assert not entity_writes
+
+
+def test_force_write_locks_version_row(fake_conn):
+    conn, state = fake_conn
+    state["versions"]["app_settings"] = 2
+    state["app_settings"][pg.VERSION_KEY] = None
+
+    with patch.object(pg, "_db_conn", return_value=conn):
+        pg.save_state_to_db(pg.DEFAULT_DATA.copy(), entity_changes={})
+
+    cur = conn.cursor.return_value.__enter__.return_value
+    assert any("FOR UPDATE" in str(call) for call in cur.execute.call_args_list)

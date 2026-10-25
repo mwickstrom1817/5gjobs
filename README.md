@@ -80,6 +80,8 @@ environment variables (local). All are read with a secrets → env fallback.
 | `APP_URL` | Public app URL (email links, QR codes, keep-alive ping) |
 | `COOKIE_SECRET` | Signs persistent login cookies (falls back to `GOOGLE_CLIENT_SECRET`) |
 | `ALLOWED_EMAIL_DOMAIN` | Anyone at this domain may log in (e.g. `fivegsecurity.net`) |
+| `BOOTSTRAP_ADMIN_EMAIL` | The only account allowed to claim the first admin seat on a fresh database (required for initial setup) |
+| `ENCRYPTION_KEY` | Encrypts site credentials in Postgres and JSON/R2 backups (required for backup recovery) |
 | `KIOSK_TOKEN` | Enables the read-only TV display at `?kiosk=<token>` |
 | `APP_TIMEZONE` | IANA timezone for timestamps (default `America/Chicago`) |
 | `NTFY_SERVER` | Push server (default `https://ntfy.sh`) |
@@ -118,9 +120,11 @@ to `main`.
 
 ## Notes
 
-- All app state lives in one Postgres `app_state` JSONB row with a version
-  column — saves are optimistic-locking, so two users can't silently
-  overwrite each other (the app shows a refresh-and-retry warning instead).
+- App state lives in per-entity Postgres tables plus `app_settings`, with a
+  shared version row for optimistic locking and consistent snapshot loads.
+  Nightly and manual backups include every persisted field; site credentials
+  are encrypted when `ENCRYPTION_KEY` is configured. Keep that key backed up
+  separately—backups cannot be fully restored without it.
 - `debug_models.py` / `debug_weather.py` are standalone scripts for checking
   Gemini model availability and the geocoding/weather APIs.
 - `.github/workflows/keepalive.yml` pings the app every 2 hours so Streamlit

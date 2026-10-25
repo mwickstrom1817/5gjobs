@@ -30,6 +30,8 @@ def test_admin_data_backup_page_renders():
     at.session_state["briefing"] = "b"
     at.session_state["last_reminder_date"] = None
     at.session_state["chat_history"] = []
+    at.session_state["db"] = {}
+    at.session_state["_db_hashes"] = {}
     at.session_state["_db_version"] = 1
     at.run()
     assert not at.exception, f"App raised: {[str(e.value) for e in at.exception]}"

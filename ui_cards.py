@@ -25,9 +25,10 @@ def _load_map_libs():
         return None, None
 
 
-def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
-    tech = get_tech(job['techId'])
-    loc = get_location(job['locationId'])
+def render_job_card(job, compact=False, key_suffix="", allow_delete=False,
+                    tech_by_id=None, location_by_id=None):
+    tech = tech_by_id.get(job.get('techId')) if tech_by_id is not None else get_tech(job['techId'])
+    loc = location_by_id.get(job.get('locationId')) if location_by_id is not None else get_location(job['locationId'])
     loc_name = loc['name'] if loc else "Unknown"
     tech_name = tech['name'] if tech else "Unassigned"
     
@@ -115,10 +116,16 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
         widget_key = f"status_change_{job['id']}_{key_suffix}"
 
         def _delete_job():
+            confirm_key = f"confirm_delete_job_{job['id']}_{key_suffix}"
+            if not st.session_state.get(confirm_key):
+                st.session_state[confirm_key] = True
+                st.warning(f"Click delete again to permanently remove '{job['title']}'.")
+                return
             if job in st.session_state.jobs:
                 st.session_state.jobs.remove(job)
-                save_state()
-                st.rerun()
+                if save_state():
+                    st.session_state.pop(confirm_key, None)
+                    st.rerun()
 
         if compact:
             # Narrow columns (Tech Board / feeds): dropdown on its own row, then
@@ -168,15 +175,19 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False):
                         _delete_job()
 
 
-def render_job_grid(jobs, key_suffix="", allow_delete=False, cols=3):
+def render_job_grid(jobs, key_suffix="", allow_delete=False, cols=3,
+                    tech_by_id=None, location_by_id=None):
     """Full job cards in a 3-up grid (Streamlit stacks columns on phones, so
     mobile keeps the familiar single-column feed)."""
     if not jobs:
         return
+    tech_by_id = tech_by_id if tech_by_id is not None else {t['id']: t for t in st.session_state.techs}
+    location_by_id = location_by_id if location_by_id is not None else {l['id']: l for l in st.session_state.locations}
     columns = st.columns(cols)
     for i, job in enumerate(jobs):
         with columns[i % cols]:
-            render_job_card(job, key_suffix=key_suffix, allow_delete=allow_delete)
+            render_job_card(job, key_suffix=key_suffix, allow_delete=allow_delete,
+                            tech_by_id=tech_by_id, location_by_id=location_by_id)
 
 
 def render_map_view(jobs):

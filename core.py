@@ -26,11 +26,14 @@ from persistence_pg import (
     load_state,
     get_db_version,
     StaleStateError,
+    DEFAULT_DATA,
     ENTITY_TABLES,
     compute_entity_changes,
     store_db_hashes,
+    init_db,
 )
 from object_store import upload_streamlit_file, upload_bytes, get_view_url
+from crypto import encrypt_state_systems
 
 # ReportLab is imported lazily inside build_asset_labels_pdf - it costs real
 # startup time and most runs never print labels.
@@ -129,10 +132,13 @@ def _sync_session_to_db():
     smtp = dict(st.session_state.get("smtp_settings", {}))
     smtp.pop("SMTP_PASSWORD", None)
     st.session_state.db["smtp_settings"] = smtp
+    st.session_state.db["construction_emails"] = st.session_state.get("construction_emails", [])
     st.session_state.db["last_reminder_date"] = st.session_state.get("last_reminder_date")
+    st.session_state.db["last_hours_digest_date"] = st.session_state.get("last_hours_digest_date")
+    st.session_state.db["last_warranty_report_month"] = st.session_state.get("last_warranty_report_month")
 
 def refresh_session_from_db():
-    """Reloads the DB row and replaces this session's working data with fresh state."""
+    """Reload every persisted field and clear any previous load-failure latch."""
     data, version = load_state()
     st.session_state.db = data
     st.session_state._db_version = version
@@ -141,42 +147,61 @@ def refresh_session_from_db():
     st.session_state.locations = data.get("locations", [])
     st.session_state.briefing = data.get("briefing", "Data required to generate briefing.")
     st.session_state.adminEmails = data.get("adminEmails", [])
+    st.session_state.construction_emails = data.get("construction_emails", [])
     st.session_state.agreements = data.get("agreements", [])
     st.session_state.sops = data.get("sops", [])
     st.session_state.settings = data.get("settings", {})
     st.session_state.smtp_settings = data.get("smtp_settings", {})
     st.session_state.last_reminder_date = data.get("last_reminder_date")
+    st.session_state.last_hours_digest_date = data.get("last_hours_digest_date")
+    st.session_state.last_warranty_report_month = data.get("last_warranty_report_month")
+    st.session_state.pop("_db_load_error", None)
     store_db_hashes(data)
     from persistence_pg import clear_db_version_cache
     clear_db_version_cache()
 
 def save_state(invalidate_briefing=False):
+    """Persist the session and return True only after a confirmed commit."""
     if st.session_state.get('_db_load_error'):
         st.error(
             "⚠️ Cannot save: the app failed to load data from the database when it started. "
             "Please refresh the page. If the problem persists, check your DATABASE_URL/NEON_DB_URL secret."
         )
-        return
-    if invalidate_briefing:
-        st.session_state.briefing = "Data required to generate briefing."
+        return False
     timer = StepTimer("save_state")
-    _sync_session_to_db()
-    timer.mark("sync")
-    entity_changes = compute_entity_changes(st.session_state.db)
-    changed_rows = sum(len(c.get("upsert", [])) + len(c.get("delete", [])) for c in entity_changes.values())
-    timer.mark("diff")
     try:
+        if invalidate_briefing:
+            st.session_state.briefing = "Data required to generate briefing."
+        _sync_session_to_db()
+        timer.mark("sync")
+        entity_changes = compute_entity_changes(st.session_state.db)
+        changed_rows = sum(len(c.get("upsert", [])) + len(c.get("delete", [])) for c in entity_changes.values())
+        timer.mark("diff")
         commit_from_session(invalidate_briefing=invalidate_briefing, entity_changes=entity_changes)
         timer.mark("db")
         timer.finish(changed_rows=changed_rows)
+        return True
     except StaleStateError:
-        # Someone else saved while this session held old data. Don't clobber their
-        # changes - reload fresh state and ask the user to re-apply theirs.
-        refresh_session_from_db()
-        st.warning(
-            "⚠️ Someone else saved changes at the same time. The app has refreshed "
-            "with the latest data — please re-apply your last change."
-        )
+        try:
+            refresh_session_from_db()
+            st.warning(
+                "⚠️ Someone else saved changes at the same time. The app has refreshed "
+                "with the latest data — please re-apply your last change."
+            )
+        except Exception as refresh_error:
+            st.session_state._db_load_error = str(refresh_error)
+            st.error("The save conflicted and the latest data could not be loaded. Refresh before retrying.")
+        return False
+    except Exception as e:
+        st.error(f"Failed to save to DB: {e}")
+        # Discard the unpersisted mutation when possible. If the DB is also
+        # unreadable, latch the error so a later unrelated click cannot commit it.
+        try:
+            refresh_session_from_db()
+        except Exception as refresh_error:
+            st.session_state._db_load_error = str(refresh_error)
+            st.warning("Your change was not saved. Refresh the page before making another change.")
+        return False
 
 def update_job_status_callback(job_id, widget_key):
     """Callback to update job status and save state."""
@@ -209,8 +234,9 @@ def update_part_status_callback(job_id, part_id, widget_key):
 # --- DB SESSION INITIALIZER (safe) ---
 def init_db_session():
     try:
+        init_db()
         ensure_loaded_into_session()
-    except Exception as e:
+    except Exception:
         pass
 
 
@@ -633,8 +659,7 @@ def set_job_invoice(job_id, **fields):
     inv['updated_by'] = user_email
     inv['updated_at'] = now_local().isoformat()
     j['invoice'] = inv
-    save_state(invalidate_briefing=False)
-    return True
+    return save_state(invalidate_briefing=False)
 
 # --- HELPER FUNCTIONS ---
 
@@ -804,7 +829,11 @@ def suggest_technicians(job, n=3, techs=None, jobs=None):
     ]).lower()
 
     location_id = job.get('locationId')
-    active_jobs = [j for j in jobs if j.get('status') != 'Completed']
+    job_id = job.get('id')
+    active_jobs = [
+        j for j in jobs
+        if j.get('id') != job_id and j.get('status') != 'Completed'
+    ]
     workload_by_tech = {}
     for j in active_jobs:
         tid = j.get('techId')
@@ -813,7 +842,8 @@ def suggest_technicians(job, n=3, techs=None, jobs=None):
 
     past_at_location = {}
     for j in jobs:
-        if j.get('locationId') == location_id:
+        if (j.get('id') != job_id and j.get('locationId') == location_id
+                and j.get('status') == 'Completed'):
             tid = j.get('techId')
             if tid:
                 past_at_location[tid] = past_at_location.get(tid, 0) + 1
@@ -1036,7 +1066,7 @@ def save_image_locally(uploaded_file):
 
         timestamp = now_local().strftime("%Y%m%d_%H%M%S")
         base_name = file_name.rsplit('.', 1)[0] or 'photo'
-        key = f"photos/{timestamp}_{base_name}.jpg"
+        key = f"photos/{timestamp}_{os.urandom(16).hex()}_{base_name}.jpg"
         data = buf.getvalue()
         stored = upload_bytes(data, key, content_type="image/jpeg")
         # We already hold the exact bytes — hand them to the PDF builder for free
@@ -1109,19 +1139,13 @@ def download_data_as_csv():
     return None
 
 def download_data_as_json():
-    # Dump current state to JSON
+    """Export every persisted field using the canonical backup schema."""
+    _sync_session_to_db()
     data = {
-        "jobs": st.session_state.jobs,
-        "techs": st.session_state.techs,
-        "locations": st.session_state.locations,
-        "briefing": st.session_state.briefing,
-        "adminEmails": st.session_state.adminEmails,
-        "agreements": st.session_state.get("agreements", []),
-        "sops": st.session_state.get("sops", []),
-        "settings": st.session_state.get("settings", {}),
-        "last_reminder_date": st.session_state.get("last_reminder_date")
+        key: st.session_state.db.get(key, default)
+        for key, default in DEFAULT_DATA.items()
     }
-    return json.dumps(data, indent=2)
+    return json.dumps(encrypt_state_systems(data), indent=2)
 
 # --- PDF GENERATION ---
 def remember_photo_bytes(key, data):
@@ -1163,34 +1187,59 @@ def get_image_bytes(url):
     return None
 
 
+def _calculate_shift_hours(arrival, departure):
+    if arrival == departure:
+        return None
+    day = datetime.date(2000, 1, 1)
+    arr_dt = datetime.datetime.combine(day, arrival)
+    dep_dt = datetime.datetime.combine(day, departure)
+    if dep_dt < arr_dt:
+        dep_dt += datetime.timedelta(days=1)
+    return round((dep_dt - arr_dt).total_seconds() / 3600 * 4) / 4
+
+
+def _has_signature_strokes(image_data):
+    try:
+        import numpy as np
+        pixels = np.asarray(image_data)
+        if pixels.ndim != 3 or pixels.shape[2] not in (3, 4) or not pixels.size:
+            return False
+        rgb = pixels[..., :3]
+        non_background = np.any(rgb != 255, axis=2)
+        if pixels.shape[2] == 4:
+            non_background &= pixels[..., 3] > 0
+        return bool(np.any(non_background))
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
 def validate_state_dict(data: dict) -> tuple:
-    """Validate a backup/state dict before it replaces production data.
+    """Validate every entity in a backup before it replaces production data."""
+    if not isinstance(data, dict):
+        return False, "Backup root must be an object"
 
-    Returns (ok: bool, message: str). Checks required keys, basic structure,
-    duplicate IDs, and referential integrity between jobs, techs, and locations.
-    """
     required = ["jobs", "techs", "locations"]
-    for k in required:
-        if k not in data:
-            return False, f"Missing required key: {k}"
-        if not isinstance(data[k], list):
-            return False, f"'{k}' must be a list"
+    for key in required:
+        if key not in data:
+            return False, f"Missing required key: {key}"
 
-    tech_ids = {t.get("id") for t in data["techs"] if t.get("id")}
-    loc_ids = {l.get("id") for l in data["locations"] if l.get("id")}
-
-    seen = {"jobs": set(), "techs": set(), "locations": set()}
-    for entity_type in ("jobs", "techs", "locations"):
-        for item in data[entity_type]:
+    for entity_type in ENTITY_TABLES:
+        items = data.get(entity_type, [])
+        if not isinstance(items, list):
+            return False, f"'{entity_type}' must be a list"
+        seen = set()
+        for item in items:
             if not isinstance(item, dict):
                 return False, f"Invalid item in {entity_type}: {item!r}"
             eid = item.get("id")
             if not eid:
                 return False, f"Missing 'id' in {entity_type} item"
-            if eid in seen[entity_type]:
+            if eid in seen:
                 return False, f"Duplicate {entity_type} id: {eid}"
-            seen[entity_type].add(eid)
+            seen.add(eid)
 
+    tech_ids = {t["id"] for t in data["techs"]}
+    loc_ids = {l["id"] for l in data["locations"]}
     for job in data["jobs"]:
         tech_id = job.get("techId")
         loc_id = job.get("locationId")

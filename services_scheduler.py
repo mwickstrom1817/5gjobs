@@ -99,10 +99,10 @@ def start_background_scheduler():
                             from email.mime.multipart import MIMEMultipart
                             
                             if int(smtp_port) == 465:
-                                server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+                                server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=20)
                                 server.ehlo()
                             else:
-                                server = smtplib.SMTP(smtp_server, int(smtp_port))
+                                server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=20)
                                 server.ehlo()
                                 server.starttls()
                                 server.ehlo()
@@ -214,10 +214,10 @@ def start_background_scheduler():
                             from email.mime.multipart import MIMEMultipart
                             try:
                                 if int(smtp_port) == 465:
-                                    server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+                                    server = smtplib.SMTP_SSL(smtp_server, int(smtp_port), timeout=20)
                                     server.ehlo()
                                 else:
-                                    server = smtplib.SMTP(smtp_server, int(smtp_port))
+                                    server = smtplib.SMTP(smtp_server, int(smtp_port), timeout=20)
                                     server.ehlo()
                                     server.starttls()
                                     server.ehlo()
@@ -244,18 +244,19 @@ def start_background_scheduler():
                         state["last_warranty_report_month"] = month_key
                         save_state_to_db(state, expected_version=version)
 
-                # 1 AM daily: snapshot the whole DB state to object storage.
-                # The snapshot file is date-keyed, so re-running the same day
-                # just overwrites it - an in-memory flag is enough to skip
-                # duplicate work without another DB write. Pin to first 10 min.
-                if now.hour == 1 and now.minute < 10:
-                    from services_backup import run_daily_backup
-                    today_str = now.strftime("%Y-%m-%d")
-                    if backup_done_for != today_str:
-                        ok, msg = run_daily_backup()
-                        if ok:
-                            backup_done_for = today_str
-                        get_logger().log(f"Scheduled backup: {msg}")
+                # Run during the normal 1 AM window, and catch up once after a
+                # restart if today's recovery point is missing entirely.
+                from services_backup import run_daily_backup, backup_exists
+                today_str = now.strftime("%Y-%m-%d")
+                in_backup_window = now.hour == 1 and now.minute < 10
+                if backup_done_for is None and not in_backup_window and backup_exists(now.date()):
+                    backup_done_for = today_str
+                needs_catchup = backup_done_for is None and not backup_exists(now.date())
+                if (in_backup_window or needs_catchup) and backup_done_for != today_str:
+                    ok, msg = run_daily_backup()
+                    if ok:
+                        backup_done_for = today_str
+                    get_logger().log(f"Scheduled backup: {msg}")
 
                 # Keep the serverless DB warm. Without periodic traffic Neon
                 # dozes off, and the first real query of the morning pays a
