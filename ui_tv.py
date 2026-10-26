@@ -1,62 +1,259 @@
-import time
 import datetime
 
 import streamlit as st
 
 from core import (
-    now_local, get_status_color, PRIORITY_COLORS, get_tech, get_location,
-    get_logo_data_uri, refresh_session_from_db, get_db_version,
+    now_local, get_status_color, PRIORITY_COLORS, get_logo_data_uri,
+    refresh_session_from_db, get_db_version,
 )
 
 
-def _load_map_libs():
-    """Lazy-load folium (heavy); returns (folium, st_folium) or (None, None)."""
+TV_CSS = """
+<style>
+[data-testid="stToolbar"], #MainMenu, header, footer,
+[data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+[data-testid="stAppViewContainer"] .block-container { padding: 0 !important; max-width: 100% !important; }
+.stApp { background: #0b0c10; }
+.tv-shell { --bg:#0b0c10; --panel:#15161b; --panel2:#1b1c22; --border:#2a2c34;
+  --text:#f4f4f5; --muted:#a1a1aa; --red:#c81e1e; --green:#10b981; --blue:#3b82f6;
+  background:var(--bg); color:var(--text); min-height:100vh; padding:24px 30px 18px;
+  font-family:Inter,'Source Sans Pro',sans-serif; box-sizing:border-box; font-size:clamp(14px,.85vw,20px); }
+.tv-shell * { box-sizing:border-box; }
+.tv-header { display:flex; align-items:center; justify-content:space-between; gap:24px;
+  border-bottom:2px solid var(--red); padding-bottom:16px; margin-bottom:18px; }
+.tv-brand { display:flex; align-items:center; gap:18px; min-width:0; }
+.tv-brand img { height:58px; max-width:240px; object-fit:contain; }
+.tv-brand-name { font-size:clamp(24px,1.55vw,38px); font-weight:800; letter-spacing:1.5px; }
+.tv-title { color:var(--muted); font-size:clamp(12px,.75vw,17px); letter-spacing:2px; margin-top:4px; }
+.tv-clock { text-align:right; flex-shrink:0; }
+.tv-clock-date { color:var(--muted); font-size:clamp(13px,.8vw,18px); }
+.tv-clock-time { font-size:clamp(25px,1.65vw,40px); font-weight:700; line-height:1.15; }
+.tv-kpis { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:18px; }
+.tv-kpi { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+.tv-kpi-value { font-size:clamp(30px,2vw,48px); font-weight:750; line-height:1.05; }
+.tv-kpi-label { color:var(--muted); font-size:clamp(10px,.58vw,13px); letter-spacing:1.1px; margin-top:5px; }
+.tv-main { display:grid; grid-template-columns:1.2fr 1fr .82fr; gap:16px; align-items:start; }
+.tv-panel { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:16px; min-width:0; }
+.tv-panel-title { display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+  border-bottom:1px solid var(--border); padding-bottom:10px; margin-bottom:12px; }
+.tv-panel-title h2 { margin:0; font-size:clamp(17px,1.05vw,25px); font-weight:700; letter-spacing:.5px; }
+.tv-count { color:var(--muted); font-size:clamp(11px,.65vw,14px); white-space:nowrap; }
+.tv-subhead { color:var(--muted); font-size:clamp(10px,.62vw,14px); font-weight:700;
+  letter-spacing:1.4px; margin:12px 0 8px; }
+.tv-subhead.alert { color:#f87171; }
+.tv-job { background:var(--panel2); border:1px solid var(--border); border-left:3px solid var(--status,#52525b);
+  border-radius:8px; padding:11px 12px; margin-bottom:9px; }
+.tv-job-top { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.tv-job-title { font-size:clamp(14px,.88vw,21px); font-weight:650; line-height:1.25; }
+.tv-job-date { color:var(--muted); font-size:clamp(10px,.62vw,14px); white-space:nowrap; }
+.tv-job-meta { color:var(--muted); font-size:clamp(11px,.68vw,16px); margin-top:6px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tv-badges { display:flex; gap:5px; flex-wrap:wrap; margin-top:7px; }
+.tv-badge { display:inline-block; border-radius:5px; padding:2px 7px; color:#fff;
+  font-size:clamp(9px,.55vw,12px); font-weight:650; }
+.tv-priority { background:#30323b; color:#e4e4e7 !important; border:1px solid #454854; }
+.tv-reason { background:#7f1d1d; color:#fecaca !important; }
+.tv-empty { color:var(--muted); text-align:center; padding:24px 10px; font-size:clamp(12px,.75vw,17px); }
+.tv-more { color:var(--muted); text-align:right; font-size:clamp(10px,.62vw,14px); margin-top:5px; }
+.tv-day { display:grid; grid-template-columns:76px 1fr; gap:10px; border-bottom:1px solid var(--border); padding:9px 0; }
+.tv-day:last-child { border-bottom:none; }
+.tv-day-name { font-weight:700; font-size:clamp(11px,.68vw,16px); }
+.tv-day-date { color:var(--muted); font-size:clamp(10px,.58vw,13px); }
+.tv-day-jobs { color:#d4d4d8; font-size:clamp(11px,.68vw,16px); line-height:1.35; }
+.tv-day-empty { color:#52525b; }
+.tv-attention .tv-job { border-left-color:#c81e1e; }
+.tv-team-row { margin-bottom:13px; }
+.tv-team-head { display:flex; justify-content:space-between; gap:10px; font-size:clamp(12px,.75vw,17px); }
+.tv-team-count { color:var(--muted); }
+.tv-team-next { color:var(--muted); font-size:clamp(10px,.6vw,14px); margin-top:3px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tv-bar { height:5px; background:#2a2c34; border-radius:4px; margin-top:6px; overflow:hidden; }
+.tv-bar-fill { height:100%; background:#3b82f6; border-radius:4px; }
+.tv-future { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+.tv-future .tv-job { margin-bottom:0; }
+.tv-footer { display:flex; justify-content:space-between; gap:16px; color:var(--muted);
+  font-size:clamp(10px,.6vw,13px); margin-top:14px; }
+@media (max-width:1200px) {
+  .tv-kpis { grid-template-columns:repeat(3,1fr); }
+  .tv-main { grid-template-columns:1fr; }
+  .tv-future { grid-template-columns:1fr 1fr; }
+}
+</style>
+"""
+
+
+def _tv_esc(value):
+    return str(value if value is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def _tv_date(job):
+    raw = str(job.get('date', '') or '')
+    if not raw:
+        return None
     try:
-        import folium
-        from streamlit_folium import st_folium
-        return folium, st_folium
-    except ImportError:
-        return None, None
+        return datetime.datetime.fromisoformat(raw[:19]).date()
+    except (ValueError, TypeError):
+        return None
 
 
-# TV rotation: the wall display cycles through these screens
-TV_VIEWS = [("board", "Operations Board"), ("schedule", "Schedule"), ("map", "Job Map")]
+def _tv_sort_key(job):
+    day = _tv_date(job) or datetime.date.max
+    priority = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}.get(job.get('priority'), 4)
+    return day, priority, str(job.get('date', '')), str(job.get('title', '')).lower()
 
-def _tv_esc(s):
-    return str(s if s is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-def _tv_tile(j, badge=None):
-    jtech = get_tech(j.get('techId'))
-    jloc = get_location(j.get('locationId'))
-    p_color = PRIORITY_COLORS.get(j.get('priority'), "#52525b")
-    badge_html = (f'<div style="font-size:13px;color:#f87171;font-weight:bold;margin-top:3px;">{badge}</div>'
-                  if badge else '')
-    return (f'<div style="background:#0f0f11;border-left:5px solid {p_color};border-radius:6px;padding:9px 11px;margin-bottom:8px;">'
-            f'<div style="font-size:17px;font-weight:bold;color:#fff;">{_tv_esc(j.get("title", "")[:34])}</div>'
-            f'<div style="font-size:14px;color:#a1a1aa;margin-top:3px;">📍 {_tv_esc((jloc["name"] if jloc else "—")[:26])}</div>'
-            f'<div style="font-size:14px;color:#71717a;">👤 {_tv_esc(jtech["name"] if jtech else "Unassigned")}</div>{badge_html}</div>')
+def _tv_job_card(job, techs, locations, reason=None, future=False):
+    tech = techs.get(job.get('techId'))
+    loc = locations.get(job.get('locationId'))
+    status = job.get('status', 'Unknown')
+    status_color = get_status_color(status)
+    priority = job.get('priority', 'Medium')
+    priority_color = PRIORITY_COLORS.get(priority, '#52525b')
+    day = _tv_date(job)
+    date_label = day.strftime('%b %d') if day else 'Unscheduled'
+    reason_html = f'<span class="tv-badge tv-reason">{_tv_esc(reason)}</span>' if reason else ''
+    return f'''<div class="tv-job" style="--status:{status_color}">
+      <div class="tv-job-top">
+        <div class="tv-job-title">{_tv_esc(job.get('title', 'Untitled Job'))}</div>
+        <div class="tv-job-date">{date_label}</div>
+      </div>
+      <div class="tv-job-meta">📍 {_tv_esc(loc.get('name') if loc else 'Unknown site')} &nbsp;·&nbsp; 👤 {_tv_esc(tech.get('name') if tech else 'Unassigned')}</div>
+      <div class="tv-badges">
+        <span class="tv-badge" style="background:{status_color}">{_tv_esc(status)}</span>
+        <span class="tv-badge tv-priority" style="border-color:{priority_color}">{_tv_esc(priority)}</span>
+        {reason_html}
+      </div>
+    </div>'''
 
-def _tv_columns(columns_data, cap=8):
-    """columns_data: list of (label, header_color, jobs, optional badge_fn)."""
-    col_html = ""
-    for entry in columns_data:
-        label, color, s_jobs = entry[0], entry[1], entry[2]
-        badge_fn = entry[3] if len(entry) > 3 else None
-        tiles = "".join(_tv_tile(j, badge_fn(j) if badge_fn else None) for j in s_jobs[:cap])
-        if len(s_jobs) > cap:
-            tiles += f'<div style="color:#71717a;font-size:14px;">+{len(s_jobs) - cap} more</div>'
-        if not s_jobs:
-            tiles = '<div style="color:#52525b;font-size:14px;">—</div>'
-        col_html += (f'<div style="flex:1;min-width:0;">'
-                     f'<div style="background:{color};color:#fff;font-size:15px;font-weight:bold;padding:8px 10px;border-radius:8px 8px 0 0;text-align:center;letter-spacing:0.5px;">'
-                     f'{label} ({len(s_jobs)})</div>'
-                     f'<div style="background:#18181b;border:1px solid #27272a;border-top:none;border-radius:0 0 8px 8px;padding:10px;min-height:120px;">{tiles}</div></div>')
-    return f'<div style="display:flex;gap:12px;align-items:flex-start;">{col_html}</div>'
 
-@st.fragment(run_every="20s")
-def _tv_board():
-    """Auto-refreshing, rotating wall display. Each ~20s refresh re-reads the DB
-    and advances to the next screen (board -> schedule -> attention)."""
+def _tv_dashboard_html(jobs, tech_records, location_records, generated=None):
+    generated = generated or now_local()
+    today = generated.date()
+    week_end = today + datetime.timedelta(days=6)
+    techs = {t.get('id'): t for t in tech_records}
+    locations = {loc.get('id'): loc for loc in location_records}
+
+    active = [j for j in jobs if j.get('status') != 'Completed']
+    overdue = sorted([j for j in active if (_tv_date(j) and _tv_date(j) < today)], key=_tv_sort_key)
+    today_jobs = sorted([j for j in active if _tv_date(j) == today], key=_tv_sort_key)
+    week_jobs = [j for j in active if _tv_date(j) and today <= _tv_date(j) <= week_end]
+    future_jobs = sorted([j for j in active if _tv_date(j) and _tv_date(j) > week_end], key=_tv_sort_key)
+    critical = [j for j in active if j.get('priority') in ('Critical', 'High')]
+    unassigned = [j for j in active if not j.get('techId')]
+    today_str = today.isoformat()
+    completed_today = [j for j in jobs if j.get('status') == 'Completed' and any(
+        str(r.get('timestamp', '')).startswith(today_str) and 'completion_checklist' in r
+        for r in j.get('reports', []))]
+
+    attention_map = {}
+    for job in overdue:
+        attention_map[job['id']] = (job, 'Overdue')
+    for job in critical:
+        attention_map.setdefault(job['id'], (job, f"{job.get('priority')} priority"))
+    for job in unassigned:
+        attention_map.setdefault(job['id'], (job, 'Unassigned'))
+    for job in active:
+        if _tv_date(job) is None:
+            attention_map.setdefault(job['id'], (job, 'Unscheduled'))
+    attention = sorted(attention_map.values(), key=lambda pair: _tv_sort_key(pair[0]))
+
+    kpis = [
+        ('TODAY', len(today_jobs), '#f4f4f5'),
+        ('OVERDUE', len(overdue), '#f87171' if overdue else '#f4f4f5'),
+        ('THIS WEEK', len(week_jobs), '#60a5fa'),
+        ('ACTIVE JOBS', len(active), '#f4f4f5'),
+        ('NEEDS ATTENTION', len(attention), '#f87171' if attention else '#f4f4f5'),
+        ('DONE TODAY', len(completed_today), '#10b981'),
+    ]
+    kpi_html = ''.join(
+        f'<div class="tv-kpi"><div class="tv-kpi-value" style="color:{color}">{value}</div>'
+        f'<div class="tv-kpi-label">{label}</div></div>'
+        for label, value, color in kpis)
+
+    today_html = ''
+    if overdue:
+        today_html += '<div class="tv-subhead alert">OVERDUE</div>'
+        today_html += ''.join(_tv_job_card(j, techs, locations, 'Overdue') for j in overdue[:3])
+        if len(overdue) > 3:
+            today_html += f'<div class="tv-more">+{len(overdue) - 3} more overdue</div>'
+    today_html += '<div class="tv-subhead">TODAY’S WORK</div>'
+    if today_jobs:
+        today_html += ''.join(_tv_job_card(j, techs, locations) for j in today_jobs[:6])
+        if len(today_jobs) > 6:
+            today_html += f'<div class="tv-more">+{len(today_jobs) - 6} more today</div>'
+    elif not overdue:
+        today_html += '<div class="tv-empty">Nothing scheduled today. Clear runway.</div>'
+
+    week_html = ''
+    for offset in range(7):
+        day = today + datetime.timedelta(days=offset)
+        day_jobs = sorted([j for j in week_jobs if _tv_date(j) == day], key=_tv_sort_key)
+        day_label = 'TODAY' if offset == 0 else day.strftime('%a').upper()
+        if day_jobs:
+            shown = ' · '.join(_tv_esc(j.get('title', 'Untitled Job')) for j in day_jobs[:2])
+            if len(day_jobs) > 2:
+                shown += f' <span class="tv-day-empty">+{len(day_jobs) - 2}</span>'
+            count = len(day_jobs)
+        else:
+            shown = '<span class="tv-day-empty">—</span>'
+            count = 0
+        week_html += (f'<div class="tv-day"><div><div class="tv-day-name">{day_label}</div>'
+                      f'<div class="tv-day-date">{day.strftime("%b %d")}</div></div>'
+                      f'<div class="tv-day-jobs">{shown}<div class="tv-day-date">{count} job{"s" if count != 1 else ""}</div></div></div>')
+
+    attention_html = ''.join(
+        _tv_job_card(job, techs, locations, reason) for job, reason in attention[:4]
+    ) or '<div class="tv-empty">Nothing needs immediate attention.</div>'
+    if len(attention) > 4:
+        attention_html += f'<div class="tv-more">+{len(attention) - 4} more to review</div>'
+
+    team_html = ''
+    for tech in tech_records:
+        assigned = sorted([j for j in active if j.get('techId') == tech.get('id')], key=_tv_sort_key)
+        next_title = assigned[0].get('title', '') if assigned else 'No active assignments'
+        width = min(100, len(assigned) * 20)
+        team_html += (f'<div class="tv-team-row"><div class="tv-team-head"><strong>{_tv_esc(tech.get("name"))}</strong>'
+                      f'<span class="tv-team-count">{len(assigned)} active</span></div>'
+                      f'<div class="tv-team-next">{_tv_esc(next_title)}</div>'
+                      f'<div class="tv-bar"><div class="tv-bar-fill" style="width:{width}%"></div></div></div>')
+    if not tech_records:
+        team_html = '<div class="tv-empty">No technicians configured.</div>'
+
+    future_html = ''.join(_tv_job_card(j, techs, locations, future=True) for j in future_jobs[:6])
+    if not future_html:
+        future_html = '<div class="tv-empty">No work scheduled beyond this week.</div>'
+    elif len(future_jobs) > 6:
+        future_html += f'<div class="tv-more">+{len(future_jobs) - 6} more in the future</div>'
+
+    logo_uri = get_logo_data_uri()
+    brand = (f'<img src="{logo_uri}" alt="5G Security">' if logo_uri
+             else '<div class="tv-brand-name">5G SECURITY</div>')
+    updated = generated.strftime('%I:%M %p').lstrip('0')
+
+    return f'''{TV_CSS}
+    <div class="tv-shell">
+      <div class="tv-header">
+        <div class="tv-brand">{brand}<div><div class="tv-title">OPERATIONS COMMAND CENTER</div></div></div>
+        <div class="tv-clock"><div class="tv-clock-date">{generated.strftime('%A, %B %d, %Y')}</div><div class="tv-clock-time">{generated.strftime('%I:%M %p')}</div></div>
+      </div>
+      <div class="tv-kpis">{kpi_html}</div>
+      <div class="tv-main">
+        <section class="tv-panel"><div class="tv-panel-title"><h2>TODAY</h2><span class="tv-count">{len(today_jobs)} scheduled · {len(overdue)} overdue</span></div>{today_html}</section>
+        <section class="tv-panel"><div class="tv-panel-title"><h2>THIS WEEK</h2><span class="tv-count">{len(week_jobs)} jobs · 7 days</span></div>{week_html}</section>
+        <section class="tv-panel">
+          <div class="tv-panel-title"><h2>NEEDS ATTENTION</h2><span class="tv-count">{len(attention)}</span></div>
+          <div class="tv-attention">{attention_html}</div>
+          <div class="tv-panel-title" style="margin-top:16px"><h2>TEAM LOAD</h2><span class="tv-count">{len(tech_records)} techs</span></div>
+          {team_html}
+        </section>
+      </div>
+      <section class="tv-panel" style="margin-top:16px"><div class="tv-panel-title"><h2>LOOKING AHEAD</h2><span class="tv-count">{len(future_jobs)} jobs beyond this week</span></div><div class="tv-future">{future_html}</div></section>
+      <div class="tv-footer"><span>LIVE OPERATIONS · READ ONLY</span><span>Updated {updated}</span></div>
+    </div>'''
+
+
+@st.fragment(run_every="30s")
+def _tv_dashboard():
     try:
         db_ver = get_db_version()
         if db_ver is not None and db_ver != st.session_state.get('_db_version'):
@@ -64,149 +261,20 @@ def _tv_board():
     except Exception:
         pass
 
-    # Advance rotation on a TIME basis (not per-run) so the interactive map
-    # component's postbacks can't skip a screen. ~20s dwell per screen.
-    if time.time() - st.session_state.get('tv_last_rotate', 0) >= 18:
-        st.session_state.tv_view_idx = (st.session_state.get('tv_view_idx', -1) + 1) % len(TV_VIEWS)
-        st.session_state.tv_last_rotate = time.time()
-    idx = st.session_state.get('tv_view_idx', 0)
-    view_key, view_label = TV_VIEWS[idx]
-
-    jobs = list(st.session_state.jobs)
-    active = [j for j in jobs if j.get('status') != 'Completed']
-    today_str = now_local().strftime('%Y-%m-%d')
-    completed_today = [j for j in jobs if j.get('status') == 'Completed' and any(
-        r.get('timestamp', '').startswith(today_str) and 'completion_checklist' in r for r in j.get('reports', []))]
-    in_progress = [j for j in active if j.get('status') == 'In Progress']
-    crit = [j for j in active if j.get('priority') in ('Critical', 'High')]
-
-    # Header: logo/title + live clock (persistent across all screens)
-    logo_uri = get_logo_data_uri()
-    brand = (f'<img src="{logo_uri}" style="height:54px;">' if logo_uri
-             else '<span style="font-size:38px;font-weight:bold;color:#fff;letter-spacing:2px;">5G SECURITY</span>')
-    clock = now_local().strftime('%A, %b %d  ·  %I:%M %p').replace(' 0', ' ')
     st.markdown(
-        f'<div style="display:flex;justify-content:space-between;align-items:center;border-bottom:4px solid #b91c1c;padding-bottom:14px;margin-bottom:18px;">'
-        f'<div>{brand}<div style="color:#a1a1aa;font-size:18px;margin-top:4px;">{view_label}</div></div>'
-        f'<div style="text-align:right;color:#e4e4e7;font-size:26px;font-weight:bold;">{clock}</div>'
-        f'</div>', unsafe_allow_html=True)
-
-    # Big stat tiles (persistent across all screens)
-    stats = [("ACTIVE JOBS", len(active), "#e4e4e7"), ("CRITICAL / HIGH", len(crit), "#ef4444"),
-             ("IN PROGRESS", len(in_progress), "#3b82f6"), ("COMPLETED TODAY", len(completed_today), "#10b981")]
-    cards = "".join(
-        f'<div style="flex:1;background:#18181b;border:1px solid #27272a;border-radius:12px;padding:18px;text-align:center;">'
-        f'<div style="font-size:52px;font-weight:bold;color:{c};line-height:1;">{v}</div>'
-        f'<div style="font-size:15px;color:#a1a1aa;margin-top:8px;letter-spacing:1px;">{lbl}</div></div>'
-        for lbl, v, c in stats)
-    st.markdown(f'<div style="display:flex;gap:14px;margin-bottom:22px;">{cards}</div>', unsafe_allow_html=True)
-
-    # --- Rotating content ---
-    if view_key == "board":
-        # Every active status needs a column — anything missing here is invisible
-        # on the wall display rather than merely out of place.
-        board_statuses = ["Not Started", "In Progress", "Parts not ordered",
-                          "Waiting on Parts", "Parts Staged", "Customer on Hold"]
-        cols = []
-        for status in board_statuses:
-            if status == "Not Started":
-                s_jobs = [j for j in active if j.get('status') in ("Not Started", "Pending")]
-            else:
-                s_jobs = [j for j in active if j.get('status') == status]
-            cols.append((status.upper(), get_status_color(status), s_jobs))
-        st.markdown(_tv_columns(cols), unsafe_allow_html=True)
-
-    elif view_key == "schedule":
-        today_d = now_local().date()
-        def _bucket(j):
-            try:
-                d = datetime.datetime.fromisoformat(j['date'][:19]).date()
-            except (ValueError, TypeError, KeyError):
-                return "later"
-            if d <= today_d:
-                return "today"
-            if d == today_d + datetime.timedelta(days=1):
-                return "tomorrow"
-            if d <= today_d + datetime.timedelta(days=7):
-                return "week"
-            return "later"
-        buckets = {"today": [], "tomorrow": [], "week": [], "later": []}
-        for j in active:
-            buckets[_bucket(j)].append(j)
-        for k in buckets:
-            buckets[k].sort(key=lambda j: str(j.get('date', '')))
-        st.markdown(_tv_columns([
-            ("TODAY / OVERDUE", "#b91c1c", buckets["today"]),
-            ("TOMORROW", "#3b82f6", buckets["tomorrow"]),
-            ("THIS WEEK", "#52525b", buckets["week"]),
-            ("LATER", "#3f3f46", buckets["later"]),
-        ]), unsafe_allow_html=True)
-
-    else:  # map — job dots across the TX/NM area
-        # Only plot jobs whose location is already geocoded; never geocode or write
-        # to the DB from the kiosk (it bypasses auth and runs unattended).
-        map_points = []
-        for j in active:
-            jloc = get_location(j.get('locationId'))
-            if not jloc:
-                continue
-            lat, lon = jloc.get('lat'), jloc.get('lon')
-            try:
-                lat = float(lat) if lat is not None else None
-                lon = float(lon) if lon is not None else None
-            except (ValueError, TypeError):
-                lat = lon = None
-            if lat and lon:
-                map_points.append((j, lat, lon))
-
-        folium, st_folium = _load_map_libs()
-        if folium and map_points:
-            avg_lat = sum(p[1] for p in map_points) / len(map_points)
-            avg_lon = sum(p[2] for p in map_points) / len(map_points)
-            fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=6, tiles="CartoDB dark_matter")
-            coord_seen = {}
-            for j, lat, lon in map_points:
-                ckey = (round(lat, 5), round(lon, 5))
-                n = coord_seen.get(ckey, 0)
-                coord_seen[ckey] = n + 1
-                if n:
-                    lat += 0.0005 * n
-                    lon += 0.0005 * n
-                folium.CircleMarker(
-                    location=[lat, lon], radius=10, color="#000000", weight=1,
-                    fill=True, fill_color=get_status_color(j['status']), fill_opacity=0.95,
-                    tooltip=j['title'],
-                ).add_to(fmap)
-            st_folium(fmap, use_container_width=True, height=470, returned_objects=[], key="tv_map")
-        elif not folium:
-            st.markdown('<div style="text-align:center;color:#71717a;font-size:22px;margin-top:40px;">Map unavailable (folium not installed).</div>', unsafe_allow_html=True)
-        else:
-            st.markdown('<div style="text-align:center;color:#52525b;font-size:22px;margin-top:40px;">No mapped jobs yet.</div>', unsafe_allow_html=True)
-
-    # Footer: rotation indicator + last-updated
-    dots = "".join(
-        f'<span style="color:{"#b91c1c" if i == idx else "#3f3f46"};font-size:16px;margin:0 3px;">●</span>'
-        for i in range(len(TV_VIEWS)))
-    st.markdown(
-        f'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px;color:#52525b;font-size:13px;">'
-        f'<div>{dots}</div>'
-        f'<div>Rotating every 20s · Updated {now_local().strftime("%I:%M %p").lstrip("0")}</div>'
-        f'</div>', unsafe_allow_html=True)
+        _tv_dashboard_html(
+            list(st.session_state.get('jobs', [])),
+            list(st.session_state.get('techs', [])),
+            list(st.session_state.get('locations', [])),
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 def render_tv_display(exitable=False):
-    """Full-screen, read-only wall/TV board. No sensitive data (no credentials,
-    no contract values) — safe for an always-on display."""
-    st.markdown("""
-        <style>
-        [data-testid="stToolbar"], #MainMenu, header, footer,
-        [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] { display: none !important; }
-        [data-testid="stAppViewContainer"] .block-container { padding: 1.5rem 2rem !important; max-width: 100% !important; }
-        .stApp { background-color: #09090b; }
-        </style>
-    """, unsafe_allow_html=True)
+    """Single-screen, read-only 4K operations dashboard for an always-on TV."""
     if exitable:
-        if st.button("✕ Exit Display Mode"):
+        if st.button("✕ Exit Display Mode", key="tv_exit"):
             st.session_state.kiosk_mode = False
             st.rerun()
-    _tv_board()
+    _tv_dashboard()
