@@ -87,7 +87,7 @@ def test_display_mode_renders_single_dashboard():
     at.run()
 
     assert not at.exception, f"Display Mode raised: {[str(e.value) for e in at.exception]}"
-    rendered = "\n".join(str(m.value) for m in at.markdown)
+    rendered = "\n".join(str(m.value) for m in at.get("html"))
     assert "OPERATIONS COMMAND CENTER" in rendered
     assert "Camera install" in rendered
     assert "LOOKING AHEAD" in rendered

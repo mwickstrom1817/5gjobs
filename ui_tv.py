@@ -261,13 +261,12 @@ def _tv_dashboard():
     except Exception:
         pass
 
-    st.markdown(
+    st.html(
         _tv_dashboard_html(
             list(st.session_state.get('jobs', [])),
             list(st.session_state.get('techs', [])),
             list(st.session_state.get('locations', [])),
-        ),
-        unsafe_allow_html=True,
+        )
     )
 
 
