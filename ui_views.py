@@ -15,7 +15,6 @@ from core import (
 )
 from services_ai import get_api_key, get_available_model
 from services_pdf import generate_sop_pdf
-from ui_dialogs import job_details_dialog
 from ui_widgets import sub_nav
 from ui_styles import form_row
 
@@ -542,7 +541,8 @@ def render_data_browser():
     )
 
     if selected_row and selected_row.get('_job_id'):
-        job_details_dialog(selected_row['_job_id'])
+        st.session_state._open_job_details_id = selected_row['_job_id']
+        st.rerun()
 
 
 def render_invoicing_view(user_email, key_suffix=""):
@@ -646,7 +646,8 @@ def render_invoicing_view(user_email, key_suffix=""):
                         st.toast(f"Marked {nxt}", icon="💵")
                         st.rerun()
             if st.button("Open", key=f"inv_open_{j['id']}", use_container_width=True):
-                job_details_dialog(j['id'])
+                st.session_state._open_job_details_id = j['id']
+                st.rerun()
         st.divider()
 
 

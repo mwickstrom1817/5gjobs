@@ -783,7 +783,7 @@ def main():
     # Deep-link: open a job dialog requested from elsewhere (e.g. Site History)
     open_target = st.session_state.pop("_open_job_after_rerun", None)
     if open_target:
-        job_details_dialog(open_target)
+        st.session_state._open_job_details_id = open_target
 
     # Scanned asset label: consume the param so the dialog doesn't reopen on reruns.
     _scanned = st.session_state.pop("_open_asset_after_rerun", None)
@@ -1197,6 +1197,10 @@ def main():
 
     # Keep these flags for the lifetime of the dialog so internal widget reruns
     # do not close it. Save/Cancel clears them explicitly in the dialog.
+    _job_details_id = st.session_state.get("_open_job_details_id")
+    if _job_details_id:
+        job_details_dialog(_job_details_id)
+
     _edit_job_id = st.session_state.get("_open_edit_job_id")
     if _edit_job_id:
         edit_job_dialog(_edit_job_id)

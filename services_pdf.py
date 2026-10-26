@@ -538,3 +538,237 @@ def _generate_sop_pdf(sop):
     doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+@st.cache_data(show_spinner="Generating job brief...")
+def generate_job_brief_pdf(job, tech, location, site_jobs):
+    """Create a complete job and site reference, including site credentials."""
+    try:
+        return _generate_job_brief_pdf(job, tech, location, site_jobs)
+    except Exception:
+        return None
+
+
+def _generate_job_brief_pdf(job, tech, location, site_jobs):
+    from reportlab.lib.utils import ImageReader
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+    brand_red = colors.HexColor("#c81e1e")
+    brand_dark = colors.HexColor("#15161b")
+    ink = colors.HexColor("#27272a")
+    muted = colors.HexColor("#71717a")
+    light = colors.HexColor("#f4f4f5")
+    border = colors.HexColor("#e4e4e7")
+    generated = now_local().strftime('%B %d, %Y at %I:%M %p')
+
+    def esc(value):
+        return str(value if value is not None else "").replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+    def header_footer(canv, doc):
+        width, height = letter
+        canv.saveState()
+        canv.setFillColor(brand_dark)
+        canv.rect(0, height - 80, width, 80, fill=1, stroke=0)
+        canv.setFillColor(brand_red)
+        canv.rect(0, height - 84, width, 4, fill=1, stroke=0)
+        logo_drawn = False
+        try:
+            if os.path.exists(LOGO_PATH):
+                canv.drawImage(ImageReader(LOGO_PATH), 46, height - 64, width=150, height=34,
+                               preserveAspectRatio=True, anchor='sw', mask='auto')
+                logo_drawn = True
+        except Exception:
+            pass
+        if not logo_drawn:
+            canv.setFillColor(colors.white)
+            canv.setFont("Helvetica-Bold", 20)
+            canv.drawString(46, height - 48, "5G SECURITY")
+        canv.setFillColor(colors.HexColor("#d4d4d8"))
+        canv.setFont("Helvetica", 10)
+        canv.drawString(46, height - 76, "Job Brief & Site Reference")
+        canv.setFont("Helvetica", 8)
+        canv.drawRightString(width - 46, height - 48, f"Generated {generated}")
+        canv.drawRightString(width - 46, height - 64, f"Job ID: {job.get('id', '')}")
+        canv.setStrokeColor(border)
+        canv.setLineWidth(0.5)
+        canv.line(46, 46, width - 46, 46)
+        canv.setFont("Helvetica", 8)
+        canv.setFillColor(muted)
+        canv.drawString(46, 34, "CONFIDENTIAL - includes site credentials - authorized personnel only")
+        canv.drawRightString(width - 46, 34, f"Page {canv.getPageNumber()}")
+        canv.restoreState()
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle('BriefTitle', parent=styles['Heading1'], fontName='Helvetica-Bold',
+                                 fontSize=18, textColor=ink, spaceAfter=3)
+    subtitle_style = ParagraphStyle('BriefSubtitle', parent=styles['Normal'], fontSize=10,
+                                    textColor=muted, spaceAfter=6)
+    section_style = ParagraphStyle('BriefSection', parent=styles['Heading2'], fontName='Helvetica-Bold',
+                                   fontSize=11, textColor=brand_red, spaceBefore=14, spaceAfter=6)
+    body_style = ParagraphStyle('BriefBody', parent=styles['Normal'], fontName='Helvetica',
+                                fontSize=9.2, leading=13, textColor=ink)
+    label_style = ParagraphStyle('BriefLabel', parent=body_style, fontSize=7.8, textColor=muted)
+    value_style = ParagraphStyle('BriefValue', parent=body_style, fontName='Helvetica-Bold')
+    note_style = ParagraphStyle('BriefNote', parent=body_style, fontSize=8.5, leading=12)
+    caption_style = ParagraphStyle('BriefCaption', parent=label_style, fontSize=7.5, spaceBefore=2)
+
+    available = letter[0] - 92
+    story = []
+
+    def section(title):
+        story.append(Paragraph(esc(title).upper(), section_style))
+
+    def text_block(text, style=body_style):
+        for line in str(text or '').split('\n'):
+            if line.strip():
+                story.append(Paragraph(esc(line), style))
+            else:
+                story.append(Spacer(1, 4))
+
+    def info_table(rows):
+        data = []
+        for row in rows:
+            cells = []
+            for index, value in enumerate(row):
+                cells.append(Paragraph(esc(value).upper() if index % 2 == 0 else esc(value),
+                                       label_style if index % 2 == 0 else value_style))
+            data.append(cells)
+        table = Table(data, colWidths=[available * 0.16, available * 0.40, available * 0.16, available * 0.28])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), light), ('BACKGROUND', (2, 0), (2, -1), light),
+            ('GRID', (0, 0), (-1, -1), 0.5, border), ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 7), ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+        ]))
+        story.append(table)
+
+    def data_table(headers, rows, widths):
+        data = [[Paragraph(esc(h).upper(), label_style) for h in headers]]
+        for row in rows:
+            data.append([Paragraph(esc(cell), body_style) for cell in row])
+        table = Table(data, colWidths=widths, repeatRows=1)
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), light), ('GRID', (0, 0), (-1, -1), 0.5, border),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+            ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
+        ]))
+        story.append(table)
+
+    loc = location or {}
+    assigned_tech = tech.get('name') if tech else 'Unassigned'
+    story.append(Paragraph(esc(job.get('title', 'Untitled Job')), title_style))
+    story.append(Paragraph(esc(f"{loc.get('name', 'Unknown site')} — {loc.get('address', '')}"), subtitle_style))
+
+    section('Job details')
+    story.append(info_table([
+        ('Status', job.get('status', 'N/A'), 'Priority', job.get('priority', 'N/A')),
+        ('Technician', assigned_tech, 'Job Type', job.get('type', 'N/A')),
+        ('Scheduled', str(job.get('date', ''))[:16].replace('T', ' '), 'Quote', job.get('quoteValue') or 'N/A'),
+    ]))
+
+    if job.get('description'):
+        section('Scope / description')
+        text_block(job['description'])
+
+    job_contacts = job.get('contacts') or []
+    if job_contacts:
+        contact_rows = [(c.get('label') or c.get('name', 'Contact'), c.get('name', ''),
+                         c.get('phone', ''), c.get('email', '')) for c in job_contacts]
+    elif any([job.get('contact_name'), job.get('contact_phone'), job.get('contact_email'),
+              loc.get('contact_name'), loc.get('contact_phone'), loc.get('contact_email')]):
+        contact_rows = [('Site Contact', job.get('contact_name') or loc.get('contact_name', ''),
+                         job.get('contact_phone') or loc.get('contact_phone', ''),
+                         job.get('contact_email') or loc.get('contact_email', ''))]
+    else:
+        contact_rows = []
+    if contact_rows:
+        section('Site contacts')
+        data_table(['Role', 'Name', 'Phone', 'Email'], contact_rows,
+                   [available * 0.18, available * 0.25, available * 0.22, available * 0.35])
+
+    parts = job.get('parts') or []
+    if parts:
+        section('Parts & materials')
+        part_rows = [(p.get('name', ''), p.get('qty', ''), p.get('status', ''),
+                      p.get('vendor', ''), p.get('cost', ''), p.get('notes', '')) for p in parts]
+        data_table(['Item', 'Qty', 'Status', 'Vendor', 'Cost', 'Notes'], part_rows,
+                   [available * 0.27, available * 0.07, available * 0.13,
+                    available * 0.16, available * 0.11, available * 0.26])
+
+    systems = loc.get('systems') or []
+    if systems:
+        section('Systems, logins & network information')
+        system_rows = [(s.get('name', 'System'), s.get('username', ''), s.get('password', ''),
+                        s.get('ip', ''), s.get('notes', '')) for s in systems]
+        data_table(['System', 'Username', 'Password', 'IP Address(es)', 'Notes'], system_rows,
+                   [available * 0.20, available * 0.17, available * 0.17,
+                    available * 0.20, available * 0.26])
+
+    job_docs = job.get('documents') or []
+    site_docs = loc.get('documents') or []
+    if job_docs or site_docs:
+        section('Documents')
+        if job_docs:
+            story.append(Paragraph('This job', value_style))
+            for doc in job_docs:
+                story.append(Paragraph(f"• {esc(doc.get('name', 'Unnamed file'))}", body_style))
+        if site_docs:
+            story.append(Paragraph('Site documents', value_style))
+            for doc in site_docs:
+                story.append(Paragraph(f"• {esc(doc.get('name', 'Unnamed file'))}", body_style))
+
+    assets = loc.get('assets') or []
+    if assets:
+        section('Registered equipment')
+        asset_rows = [(a.get('tag', ''), a.get('type', ''), a.get('make_model', ''),
+                       a.get('position', ''), a.get('serial', '')) for a in assets]
+        data_table(['Tag', 'Type', 'Make / Model', 'Location', 'Serial'], asset_rows,
+                   [available * 0.16, available * 0.15, available * 0.29,
+                    available * 0.22, available * 0.18])
+
+    def note_text(report):
+        return report.get('content') or report.get('ai_summary') or 'No notes recorded.'
+
+    tech_names = {t.get('id'): t.get('name') for t in st.session_state.get('techs', [])}
+
+    def note_author(report):
+        if report.get('authorEmail'):
+            return report['authorEmail']
+        author_id = report.get('authorTechId') or report.get('techId')
+        return tech_names.get(author_id) or author_id or assigned_tech
+
+    reports = list(reversed(job.get('reports') or []))
+    if reports:
+        section('Current job work history')
+        for report in reports[:5]:
+            story.append(Paragraph(esc(f"{str(report.get('timestamp', ''))[:16].replace('T', ' ')} · {note_author(report)}"), value_style))
+            text_block(note_text(report), note_style)
+            story.append(Spacer(1, 5))
+
+    history_jobs = sorted(site_jobs or [], key=lambda item: str(item.get('date', '')), reverse=True)
+    if history_jobs:
+        section('Recent work at this location')
+        for previous in history_jobs[:5]:
+            story.append(Paragraph(esc(f"{previous.get('title', 'Untitled Job')} · {str(previous.get('date', ''))[:10]} · {previous.get('status', '')}"), value_style))
+            previous_reports = list(reversed(previous.get('reports') or []))
+            if not previous_reports:
+                story.append(Paragraph('No work notes recorded.', note_style))
+            for report in previous_reports[:2]:
+                story.append(Paragraph(esc(f"{str(report.get('timestamp', ''))[:16].replace('T', ' ')} · {note_author(report)}"), caption_style))
+                text_block(note_text(report), note_style)
+            story.append(Spacer(1, 6))
+
+    story.append(Spacer(1, 18))
+    story.append(Paragraph('This document contains confidential operational and login information. Store and share securely.', caption_style))
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, leftMargin=46, rightMargin=46,
+                            topMargin=104, bottomMargin=64,
+                            title=f"5G Security Job Brief - {job.get('title', 'Job')}")
+    doc.build(story, onFirstPage=header_footer, onLaterPages=header_footer)
+    buffer.seek(0)
+    return buffer.getvalue()

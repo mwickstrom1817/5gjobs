@@ -102,3 +102,21 @@ def test_final_admin_delete_is_disabled():
     assert not at.exception, f"Admin access page raised: {[str(e.value) for e in at.exception]}"
     delete = next(b for b in at.button if b.key == "del_admin_boss@x.com")
     assert delete.disabled
+
+
+def test_job_brief_action_generates_download():
+    at = make_app()
+    at.session_state["jobs"] = [{
+        "id": "j1", "title": "Access control repair", "description": "HID controller",
+        "type": "Service", "priority": "Medium", "status": "Not Started",
+        "locationId": "l1", "techId": "t1", "date": "2026-10-01T09:00:00",
+        "reports": [], "contacts": [], "documents": [],
+    }]
+    at.session_state["_open_job_after_rerun"] = "j1"
+    at.run()
+    assert not at.exception, f"Job Details raised: {[str(e.value) for e in at.exception]}"
+    brief = next(b for b in at.button if b.label == "📋 Job Brief")
+    brief.click()
+    at.run()
+    assert not at.exception, f"Job Brief generation raised: {[str(e.value) for e in at.exception]}"
+    assert any(b.key == "download_job_brief_j1" for b in at.download_button)

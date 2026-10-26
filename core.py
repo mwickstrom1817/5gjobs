@@ -236,6 +236,10 @@ def dismiss_edit_job_dialog():
     st.session_state.pop("_open_edit_job_id", None)
 
 
+def dismiss_job_details_dialog():
+    st.session_state.pop("_open_job_details_id", None)
+
+
 def update_job_status_callback(job_id, widget_key):
     """Callback to update job status and save state."""
     new_status = st.session_state.get(widget_key)

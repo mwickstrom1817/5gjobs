@@ -19,7 +19,7 @@ from services_ai import get_available_model, suggest_address_with_gemini, get_ap
 from services_email import daily_summary_recipients, send_ops_summary_email
 from services_push import get_or_create_notify_topic, send_push
 from ui_styles import form_row
-from ui_dialogs import edit_location_dialog, job_details_dialog
+from ui_dialogs import edit_location_dialog
 from ui_views import (
     render_service_agreements, render_hours_report, render_data_browser,
     render_analytics_dashboard, render_invoicing_view,

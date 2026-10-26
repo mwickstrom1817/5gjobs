@@ -10,7 +10,6 @@ from core import (
 )
 from services_geo import get_lat_lon_from_address
 from ui_styles import form_row
-from ui_dialogs import job_details_dialog
 
 
 def _load_map_libs():
@@ -138,7 +137,8 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False,
                 b1, b2, b3 = form_row([3, 1, 1])
                 with b1:
                     if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-                        job_details_dialog(job['id'])
+                        st.session_state._open_job_details_id = job['id']
+                        st.rerun()
                 with b2:
                     if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):
                         st.session_state._open_edit_job_id = job['id']
@@ -148,7 +148,8 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False,
                         _delete_job()
             else:
                 if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-                    job_details_dialog(job['id'])
+                    st.session_state._open_job_details_id = job['id']
+                    st.rerun()
         else:
             # Wide cards (3-col grid pages): everything in one inline row
             if allow_delete:
@@ -164,7 +165,8 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False,
                     label_visibility="collapsed")
             with f2:
                 if st.button("Details", key=f"btn_{job['id']}_{key_suffix}", use_container_width=True):
-                    job_details_dialog(job['id'])
+                    st.session_state._open_job_details_id = job['id']
+                    st.rerun()
             if f3 is not None:
                 with f3:
                     if st.button(":material/edit:", key=f"edit_{job['id']}_{key_suffix}", help="Edit Job", use_container_width=True):

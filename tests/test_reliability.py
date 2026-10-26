@@ -121,6 +121,12 @@ def test_edit_job_dismiss_clears_open_state():
     assert "_edit_dialog_initialized_j1" not in st.session_state
 
 
+def test_job_details_dismiss_clears_open_state():
+    st.session_state._open_job_details_id = "j1"
+    core.dismiss_job_details_dialog()
+    assert "_open_job_details_id" not in st.session_state
+
+
 def test_backup_validation_rejects_duplicate_sop_ids_and_bad_items():
     state = {
         "jobs": [],

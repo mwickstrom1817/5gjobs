@@ -21,12 +21,12 @@ from core import (
     get_google_maps_url, create_ics_file, suggest_technicians,
     _calculate_shift_hours, _has_signature_strokes,
     reset_add_job_dialog_state, reset_edit_job_dialog_state,
-    dismiss_add_job_dialog, dismiss_edit_job_dialog,
+    dismiss_add_job_dialog, dismiss_edit_job_dialog, dismiss_job_details_dialog,
 )
 from object_store import upload_bytes, get_view_url, upload_streamlit_file
 from services_ai import generate_technician_summary, transcribe_audio
 from services_geo import get_lat_lon_from_address, get_weather
-from services_pdf import generate_job_pdf
+from services_pdf import generate_job_pdf, generate_job_brief_pdf
 from services_email import (
     create_mailto_link, send_assignment_email, send_completion_email,
     send_daily_report_email,
@@ -827,7 +827,7 @@ def asset_dialog(tag):
         st.caption(f"{len(site_jobs)} job(s) recorded at this site.")
 
 
-@st.dialog("Job Details & Report", width="large")
+@st.dialog("Job Details & Report", width="large", on_dismiss=dismiss_job_details_dialog)
 def job_details_dialog(job_id):
     # Find job directly from session state
     job_index = next((i for i, j in enumerate(st.session_state.jobs) if j['id'] == job_id), -1)
@@ -916,7 +916,8 @@ def job_details_dialog(job_id):
     if ics_data:
         actions.append(("📅 Calendar", "calendar", None))
     if relevant_report:
-        actions.append(("📄 PDF", "pdf", None))
+        actions.append(("📄 Report PDF", "pdf", None))
+    actions.append(("📋 Job Brief", "brief", None))
 
     if actions:
         cols = form_row([1] * len(actions))
@@ -945,6 +946,24 @@ def job_details_dialog(job_id):
                                 )
                             else:
                                 st.error("Failed to generate PDF.")
+                elif kind == "brief":
+                    if st.button(label, use_container_width=True,
+                                 help="Export job, site, credentials, and recent site history"):
+                        with st.spinner("Generating job brief..."):
+                            site_jobs = [sj for sj in st.session_state.jobs
+                                         if sj.get('locationId') == job.get('locationId') and sj.get('id') != job.get('id')]
+                            brief_data = generate_job_brief_pdf(job, tech, loc, site_jobs)
+                            if brief_data:
+                                st.download_button(
+                                    label="⬇️ Download Job Brief",
+                                    data=brief_data,
+                                    file_name=f"JobBrief_{job['id']}.pdf",
+                                    mime="application/pdf",
+                                    key=f"download_job_brief_{job['id']}",
+                                    use_container_width=True,
+                                )
+                            else:
+                                st.error("Failed to generate the job brief.")
 
     # Contact details (display only; action bar handles call/email)
     if job_contacts and len(job_contacts) > 1:
