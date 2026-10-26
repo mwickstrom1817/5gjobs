@@ -18,19 +18,21 @@ def _job(job_id, title, day, tech="t1", priority="Medium", status="In Progress")
         "locationId": "l1",
         "priority": priority,
         "status": status,
+        "type": "Service",
         "reports": [],
     }
 
 
-def test_dashboard_has_today_week_future_attention_and_no_credentials():
+def test_dashboard_has_today_service_future_attention_and_no_credentials():
     today = NOW.date()
     jobs = [
         _job("j1", "Camera install", today, priority="High"),
         _job("j2", "Overdue repair", today - datetime.timedelta(days=2), tech="t2", priority="Critical"),
-        _job("j3", "Tomorrow upgrade", today + datetime.timedelta(days=1)),
+        _job("j3", "Older service call", today - datetime.timedelta(days=10)),
         _job("j4", "Future project", today + datetime.timedelta(days=10), tech="t2"),
         _job("j5", "Unscheduled survey", None, tech=None, priority="Low"),
     ]
+    jobs[3]["type"] = "Project"
     completed = _job("j6", "Completed job", today, status="Completed")
     completed["reports"] = [{"timestamp": today.isoformat() + "T12:00:00", "completion_checklist": ["Done"]}]
     jobs.append(completed)
@@ -41,13 +43,14 @@ def test_dashboard_has_today_week_future_attention_and_no_credentials():
 
     assert "OPERATIONS COMMAND CENTER" in html
     assert "TODAY" in html
-    assert "THIS WEEK" in html
+    assert "SERVICE CALLS" in html
+    assert "THIS WEEK" not in html
     assert "LOOKING AHEAD" in html
     assert "NEEDS ATTENTION" in html
     assert "TEAM LOAD" in html
     assert "Camera install" in html
     assert "Overdue repair" in html
-    assert "Tomorrow upgrade" in html
+    assert "Older service call" in html
     assert "Future project" in html
     assert "Unscheduled" in html
     assert "DONE TODAY" in html

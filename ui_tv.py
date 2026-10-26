@@ -136,7 +136,7 @@ def _tv_dashboard_html(jobs, tech_records, location_records, generated=None):
     active = [j for j in jobs if j.get('status') != 'Completed']
     overdue = sorted([j for j in active if (_tv_date(j) and _tv_date(j) < today)], key=_tv_sort_key)
     today_jobs = sorted([j for j in active if _tv_date(j) == today], key=_tv_sort_key)
-    week_jobs = [j for j in active if _tv_date(j) and today <= _tv_date(j) <= week_end]
+    service_jobs = sorted([j for j in active if j.get('type') == 'Service'], key=_tv_sort_key)
     future_jobs = sorted([j for j in active if _tv_date(j) and _tv_date(j) > week_end], key=_tv_sort_key)
     critical = [j for j in active if j.get('priority') in ('Critical', 'High')]
     unassigned = [j for j in active if not j.get('techId')]
@@ -160,7 +160,7 @@ def _tv_dashboard_html(jobs, tech_records, location_records, generated=None):
     kpis = [
         ('TODAY', len(today_jobs), '#f4f4f5'),
         ('OVERDUE', len(overdue), '#f87171' if overdue else '#f4f4f5'),
-        ('THIS WEEK', len(week_jobs), '#60a5fa'),
+        ('SERVICE CALLS', len(service_jobs), '#60a5fa'),
         ('ACTIVE JOBS', len(active), '#f4f4f5'),
         ('NEEDS ATTENTION', len(attention), '#f87171' if attention else '#f4f4f5'),
         ('DONE TODAY', len(completed_today), '#10b981'),
@@ -184,22 +184,15 @@ def _tv_dashboard_html(jobs, tech_records, location_records, generated=None):
     elif not overdue:
         today_html += '<div class="tv-empty">Nothing scheduled today. Clear runway.</div>'
 
-    week_html = ''
-    for offset in range(7):
-        day = today + datetime.timedelta(days=offset)
-        day_jobs = sorted([j for j in week_jobs if _tv_date(j) == day], key=_tv_sort_key)
-        day_label = 'TODAY' if offset == 0 else day.strftime('%a').upper()
-        if day_jobs:
-            shown = ' · '.join(_tv_esc(j.get('title', 'Untitled Job')) for j in day_jobs[:2])
-            if len(day_jobs) > 2:
-                shown += f' <span class="tv-day-empty">+{len(day_jobs) - 2}</span>'
-            count = len(day_jobs)
-        else:
-            shown = '<span class="tv-day-empty">—</span>'
-            count = 0
-        week_html += (f'<div class="tv-day"><div><div class="tv-day-name">{day_label}</div>'
-                      f'<div class="tv-day-date">{day.strftime("%b %d")}</div></div>'
-                      f'<div class="tv-day-jobs">{shown}<div class="tv-day-date">{count} job{"s" if count != 1 else ""}</div></div></div>')
+    if service_jobs:
+        service_html = ''.join(
+            _tv_job_card(j, techs, locations, 'Overdue' if _tv_date(j) and _tv_date(j) < today else None)
+            for j in service_jobs[:7]
+        )
+        if len(service_jobs) > 7:
+            service_html += f'<div class="tv-more">+{len(service_jobs) - 7} more service calls</div>'
+    else:
+        service_html = '<div class="tv-empty">No active service calls.</div>'
 
     attention_html = ''.join(
         _tv_job_card(job, techs, locations, reason) for job, reason in attention[:4]
@@ -239,7 +232,7 @@ def _tv_dashboard_html(jobs, tech_records, location_records, generated=None):
       <div class="tv-kpis">{kpi_html}</div>
       <div class="tv-main">
         <section class="tv-panel"><div class="tv-panel-title"><h2>TODAY</h2><span class="tv-count">{len(today_jobs)} scheduled · {len(overdue)} overdue</span></div>{today_html}</section>
-        <section class="tv-panel"><div class="tv-panel-title"><h2>THIS WEEK</h2><span class="tv-count">{len(week_jobs)} jobs · 7 days</span></div>{week_html}</section>
+        <section class="tv-panel"><div class="tv-panel-title"><h2>SERVICE CALLS</h2><span class="tv-count">{len(service_jobs)} active</span></div>{service_html}</section>
         <section class="tv-panel">
           <div class="tv-panel-title"><h2>NEEDS ATTENTION</h2><span class="tv-count">{len(attention)}</span></div>
           <div class="tv-attention">{attention_html}</div>
