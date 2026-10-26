@@ -101,6 +101,26 @@ def test_failed_save_reloads_or_latches_to_prevent_later_commit(monkeypatch):
     assert core.save_state() is False
 
 
+def test_add_job_dismiss_clears_open_state():
+    st.session_state._open_add_job = True
+    st.session_state.assign_tech_add = "Alice"
+    st.session_state._add_job_suggestions = ["suggestion"]
+    core.dismiss_add_job_dialog()
+    assert "_open_add_job" not in st.session_state
+    assert "assign_tech_add" not in st.session_state
+    assert "_add_job_suggestions" not in st.session_state
+
+
+def test_edit_job_dismiss_clears_open_state():
+    st.session_state._open_edit_job_id = "j1"
+    st.session_state.assign_tech_edit_j1 = "Alice"
+    st.session_state._edit_dialog_initialized_j1 = True
+    core.dismiss_edit_job_dialog()
+    assert "_open_edit_job_id" not in st.session_state
+    assert "assign_tech_edit_j1" not in st.session_state
+    assert "_edit_dialog_initialized_j1" not in st.session_state
+
+
 def test_backup_validation_rejects_duplicate_sop_ids_and_bad_items():
     state = {
         "jobs": [],

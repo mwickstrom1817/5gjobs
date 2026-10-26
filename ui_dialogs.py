@@ -20,6 +20,8 @@ from core import (
     last_daily_report, _parse_report_time,
     get_google_maps_url, create_ics_file, suggest_technicians,
     _calculate_shift_hours, _has_signature_strokes,
+    reset_add_job_dialog_state, reset_edit_job_dialog_state,
+    dismiss_add_job_dialog, dismiss_edit_job_dialog,
 )
 from object_store import upload_bytes, get_view_url, upload_streamlit_file
 from services_ai import generate_technician_summary, transcribe_audio
@@ -108,22 +110,10 @@ def _transcribe_audio_cached(audio_file, cache_key):
     return text
 
 
-def _reset_edit_job_dialog_state(job_id):
-    for key in (
-        f"assign_tech_edit_{job_id}",
-        f"suggest_tech_{job_id}",
-        f"toggle_suggest_tech_{job_id}",
-        f"radio_suggest_tech_{job_id}",
-        f"preselect_tech_{job_id}",
-        f"_edit_dialog_initialized_{job_id}",
-    ):
-        st.session_state.pop(key, None)
-
-
 # --- DIALOGS (MODALS) ---
 
 
-@st.dialog("Create New Job")
+@st.dialog("Create New Job", on_dismiss=dismiss_add_job_dialog)
 def add_job_dialog():
     loc_map = {l['name']: l['id'] for l in st.session_state.locations}
     has_locations = bool(loc_map)
@@ -203,8 +193,7 @@ def add_job_dialog():
             st.form_submit_button("Save Job", on_click=_flag_save)
 
     if st.button("Cancel", key="cancel_add_job"):
-        st.session_state.pop("_open_add_job", None)
-        st.session_state.pop("_add_job_suggestions", None)
+        reset_add_job_dialog_state()
         st.rerun()
 
     # Handle suggestion request (form values are available here).
@@ -328,18 +317,17 @@ def add_job_dialog():
                         email_status_msg = "SMTP not configured. Use the 'Email' button in Job Details to notify manually."
                     push_assignment(new_job, tech)
 
-            st.session_state.pop("_open_add_job", None)
-            st.session_state.pop("_add_job_suggestions", None)
+            reset_add_job_dialog_state()
             st.toast("Job created successfully!", icon="✅")
             if email_status_msg:
                 st.toast(email_status_msg, icon="ℹ️")
             st.rerun()
 
-@st.dialog("Edit Job Details")
+@st.dialog("Edit Job Details", on_dismiss=dismiss_edit_job_dialog)
 def edit_job_dialog(job_id):
     init_key = f"_edit_dialog_initialized_{job_id}"
     if not st.session_state.get(init_key):
-        _reset_edit_job_dialog_state(job_id)
+        reset_edit_job_dialog_state(job_id)
         st.session_state[init_key] = True
 
     # Find job directly from session state
@@ -401,7 +389,7 @@ def edit_job_dialog(job_id):
                 st.caption(f"Selected {picked.split('.')[1].split('—')[0].strip()} — update the job to apply.")
 
     if st.button("Cancel", key=f"cancel_edit_job_{job_id}"):
-        _reset_edit_job_dialog_state(job_id)
+        reset_edit_job_dialog_state(job_id)
         st.session_state.pop("_open_edit_job_id", None)
         st.rerun()
 
@@ -530,7 +518,7 @@ def edit_job_dialog(job_id):
                     if _new_tech:
                         push_assignment(st.session_state.jobs[job_index], _new_tech)
 
-                _reset_edit_job_dialog_state(job_id)
+                reset_edit_job_dialog_state(job_id)
                 st.session_state.pop("_open_edit_job_id", None)
                 st.toast("Job updated successfully!", icon="✅")
                 st.rerun()

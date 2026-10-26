@@ -203,6 +203,39 @@ def save_state(invalidate_briefing=False):
             st.warning("Your change was not saved. Refresh the page before making another change.")
         return False
 
+
+def reset_add_job_dialog_state():
+    for key in (
+        "_open_add_job", "assign_tech_add", "preselect_tech_add",
+        "_add_job_suggestions", "_add_job_suggest", "_add_job_save",
+        "radio_add_suggest",
+    ):
+        st.session_state.pop(key, None)
+
+
+def reset_edit_job_dialog_state(job_id):
+    for key in (
+        f"assign_tech_edit_{job_id}",
+        f"suggest_tech_{job_id}",
+        f"toggle_suggest_tech_{job_id}",
+        f"radio_suggest_tech_{job_id}",
+        f"preselect_tech_{job_id}",
+        f"_edit_dialog_initialized_{job_id}",
+    ):
+        st.session_state.pop(key, None)
+
+
+def dismiss_add_job_dialog():
+    reset_add_job_dialog_state()
+
+
+def dismiss_edit_job_dialog():
+    job_id = st.session_state.get("_open_edit_job_id")
+    if job_id:
+        reset_edit_job_dialog_state(job_id)
+    st.session_state.pop("_open_edit_job_id", None)
+
+
 def update_job_status_callback(job_id, widget_key):
     """Callback to update job status and save state."""
     new_status = st.session_state.get(widget_key)
