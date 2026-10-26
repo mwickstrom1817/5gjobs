@@ -397,25 +397,26 @@ st.markdown("""
    }
    h1, h2, h3 { letter-spacing: -0.01em; }
 
-   /* Main Background: near-black with a whisper of red glow */
+   /* Executive Ops: a flat, quiet canvas keeps attention on the work. */
    .stApp {
-       background: radial-gradient(1100px 600px at 88% -12%, rgba(220, 38, 38, 0.055), transparent 62%),
-                   radial-gradient(900px 500px at -8% 112%, rgba(220, 38, 38, 0.035), transparent 60%),
-                   #070708;
-       color: #ececee;
+       background: #0b0c10;
+       color: #f4f4f5;
    }
+   h1, h2, h3 { font-weight: 650; }
+   h4, h5, h6, strong { font-weight: 600; }
+   hr { border-color: #2a2c34 !important; }
 
    /* Inputs */
    .stTextInput > div > div > input, .stTextArea > div > div > textarea, .stSelectbox > div > div > div, .stNumberInput > div > div > input, .stMultiSelect > div > div > div {
-       background-color: #000000;
-       color: #ececee;
-       border-color: #2a2a30;
+       background-color: #111217;
+       color: #f4f4f5;
+       border-color: #30323b;
        border-radius: 10px;
    }
    .stTextInput > div > div > input:focus, .stTextArea > div > div > textarea:focus,
    .stNumberInput > div > div > input:focus {
-       border-color: #7f1d1d !important;
-       box-shadow: 0 0 0 1px rgba(185, 28, 28, 0.35);
+       border-color: #b91c1c !important;
+       box-shadow: 0 0 0 1px rgba(185, 28, 28, 0.22);
    }
 
    /* Sidebar */
@@ -430,30 +431,39 @@ st.markdown("""
        padding-top: 4.2rem !important;
    }
 
-   /* Buttons: red gradient with an under-glow */
+   /* Neutral secondary actions; one restrained red primary action per workflow. */
    .stButton > button {
-       background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
-       color: white;
-       border: none;
+       background: #1b1c22;
+       color: #ececee;
+       border: 1px solid #34363f;
        border-radius: 10px;
-       font-weight: 700;
+       font-weight: 600;
        min-height: 2rem;
        width: 100%;
        padding: 0.3rem 0.8rem !important;
        letter-spacing: 0.01em;
-       box-shadow: 0 6px 18px rgba(185, 28, 28, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.10);
-       transition: background 0.15s, box-shadow 0.15s;
+       box-shadow: none;
+       transition: background 0.15s, border-color 0.15s;
    }
    .stButton > button:hover {
-       background: linear-gradient(180deg, #991b1b 0%, #7f1d1d 100%);
-       color: white;
-       border-color: #7f1d1d;
-       box-shadow: 0 4px 12px rgba(127, 29, 29, 0.35);
+       background: #24252c;
+       color: #ffffff;
+       border-color: #4a4d58;
+       box-shadow: none;
    }
    .stButton > button:active {
        transform: translateY(1px);
    }
-   /* Fix for button text centering */
+   [data-testid="stBaseButton-primary"] {
+       background: #c81e1e !important;
+       color: #ffffff !important;
+       border: 1px solid #c81e1e !important;
+       box-shadow: none !important;
+   }
+   [data-testid="stBaseButton-primary"]:hover {
+       background: #a81818 !important;
+       border-color: #a81818 !important;
+   }
    .stButton > button div {
        display: flex;
        align-items: center;
@@ -465,21 +475,45 @@ st.markdown("""
        white-space: nowrap;
    }
 
-   /* Custom Job Card Style: layered panels that lift on hover */
+   .stDownloadButton > button, .stLinkButton > a {
+       background: #1b1c22;
+       color: #ececee;
+       border: 1px solid #34363f;
+       border-radius: 10px;
+       box-shadow: none;
+       font-weight: 600;
+   }
+   .stDownloadButton > button:hover, .stLinkButton > a:hover {
+       background: #24252c;
+       border-color: #4a4d58;
+       box-shadow: none;
+   }
+
+   /* Flat cards: hierarchy comes from content and borders, not visual effects. */
    .job-card {
-       background: linear-gradient(180deg, #17171b 0%, #121215 100%);
-       border: 1px solid #232329;
-       padding: 15px;
-       border-radius: 14px;
-       border-left: 5px solid #52525b;
+       background: #15161b;
+       border: 1px solid #2a2c34;
+       padding: 14px;
+       border-radius: 10px;
+       border-left: 4px solid #52525b;
        margin-bottom: 10px;
-       box-shadow: 0 3px 12px rgba(0, 0, 0, 0.35);
-       transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+       box-shadow: none;
+       transition: border-color 0.15s, background 0.15s;
    }
    .job-card:hover {
-       transform: translateY(-2px);
-       border-color: #3a3a42;
-       box-shadow: 0 12px 26px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(220, 38, 38, 0.05);
+       background: #181920;
+       border-color: #3a3d47;
+       box-shadow: none;
+   }
+   .job-card.compact {
+       padding: 11px 12px;
+       margin-bottom: 8px;
+   }
+   .job-card.compact .job-card-title {
+       font-size: 1em !important;
+   }
+   .job-card.compact .job-card-meta {
+       margin-top: 6px !important;
    }
    .priority-Critical { border-left-color: #ef4444 !important; }
    .priority-High { border-left-color: #dc2626 !important; }
@@ -533,10 +567,28 @@ st.markdown("""
        background-color: #101013;
        border: 1px solid #26262c;
        padding: 40px;
-       border-radius: 16px;
+       border-radius: 12px;
        max-width: 400px;
        width: 100%;
-       box-shadow: 0 0 0 1px #26262c, 0 24px 60px rgba(0, 0, 0, 0.6), 0 0 50px rgba(185, 28, 28, 0.10);
+       box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+   }
+
+   /* Shared surfaces and measurement tiles */
+   [data-testid="stMetric"] {
+       background: #15161b;
+       border: 1px solid #2a2c34;
+       border-radius: 10px;
+       padding: 12px 14px;
+   }
+   [data-testid="stMetricLabel"] { color: #a1a1aa; font-size: 12px; }
+   [data-testid="stMetricValue"] { font-size: 28px; font-weight: 650; }
+   [data-testid="stExpander"] { border-color: #2a2c34 !important; border-radius: 10px !important; }
+   [data-testid="stExpander"] summary { font-weight: 600; }
+   .stAlert { border-radius: 10px; }
+   .job-details-sections + div [role="radiogroup"] > * {
+       background: #15161b;
+       border: 1px solid #2a2c34;
+       border-radius: 8px;
    }
 
    /* Scrollbars: dark, red on hover */
@@ -791,12 +843,12 @@ def main():
     with c3:
         # Restricted Access: Only Admins can create jobs
         if is_admin:
-            if st.button("➕ New Job", use_container_width=True):
+            if st.button("➕ New Job", use_container_width=True, type="primary"):
                 st.session_state._open_add_job = True
                 for key in ("assign_tech_add", "preselect_tech_add", "_add_job_suggestions", "_add_job_suggest", "_add_job_save"):
                     st.session_state.pop(key, None)
                 st.rerun()
-    st.markdown('<div style="border-bottom:3px solid #b91c1c;margin:2px 0 8px 0;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="border-bottom:1px solid #2a2c34;margin:2px 0 12px 0;"></div>', unsafe_allow_html=True)
 
     # Filter Jobs based on search (matches title, description, location name/address, tech name)
     filtered_jobs = list(st.session_state.jobs)
@@ -850,8 +902,8 @@ def main():
                 _greet = (f'👋 <b>Hello, {_first}</b> — you have '
                           f'<b style="color:#6ee7b7;">{len(my_jobs)} active job{"s" if len(my_jobs) != 1 else ""}</b> today.')
             st.markdown(
-                f'<div style="background:#18181b;border:1px solid #27272a;border-left:4px solid #10b981;'
-                f'border-radius:8px;padding:9px 14px;margin-bottom:12px;color:#e4e4e7;font-size:0.95em;">{_greet}</div>',
+                f'<div style="background:#15161b;border:1px solid #2a2c34;border-left:3px solid #10b981;'
+                f'border-radius:10px;padding:10px 14px;margin-bottom:12px;color:#e4e4e7;font-size:0.95em;">{_greet}</div>',
                 unsafe_allow_html=True)
 
             render_job_grid(my_jobs, key_suffix="my_assign")
@@ -873,10 +925,10 @@ def main():
         _tiles = [("ACTIVE", active, "#e4e4e7"), ("CRITICAL", crit, "#ef4444"),
                   ("TECHS", len(st.session_state.techs), "#e4e4e7"), ("STALE", len(stale_list), "#f87171")]
         _tiles_html = "".join(
-            f'<div style="flex:1 1 calc(50% - 5px);min-width:120px;background:#18181b;border:1px solid #27272a;'
-            f'border-radius:10px;padding:14px;text-align:center;">'
-            f'<div style="font-size:32px;font-weight:bold;color:{c};line-height:1;">{v}</div>'
-            f'<div style="font-size:11px;color:#a1a1aa;margin-top:6px;letter-spacing:1px;">{lbl}</div></div>'
+            f'<div style="flex:1 1 calc(50% - 5px);min-width:120px;background:#15161b;border:1px solid #2a2c34;'
+            f'border-radius:10px;padding:12px 14px;text-align:left;">'
+            f'<div style="font-size:28px;font-weight:650;color:{c};line-height:1.1;">{v}</div>'
+            f'<div style="font-size:11px;color:#a1a1aa;margin-top:5px;letter-spacing:0.8px;">{lbl}</div></div>'
             for lbl, v, c in _tiles)
         st.markdown(f'<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">{_tiles_html}</div>', unsafe_allow_html=True)
 
@@ -936,7 +988,7 @@ def main():
 
                     _s_color = get_status_color(status)
                     st.markdown(
-                        f"<h4 style='color:{_s_color}; border-bottom: 3px solid {_s_color}; padding-bottom: 5px; margin-bottom: 15px; font-size:1.0em;'>"
+                        f"<h4 style='color:{_s_color}; border-bottom: 2px solid {_s_color}; padding-bottom: 6px; margin-bottom: 10px; font-size:0.95em; font-weight:600;'>"
                         f"{status} <span style='color:#52525b; font-weight:normal;'>({len(status_jobs)})</span></h4>",
                         unsafe_allow_html=True)
 

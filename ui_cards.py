@@ -88,13 +88,13 @@ def render_job_card(job, compact=False, key_suffix="", allow_delete=False,
     st.markdown('<div class="job-card-wrapper"></div>', unsafe_allow_html=True)
     with st.container():
         st.markdown(f"""
-        <div class="job-card {priority_class}" style="position:relative; overflow:hidden; border-top: 4px solid {status_bg};">
-            <div style="position:absolute; top:0; right:0; padding:3px 10px; background:{status_bg}; color:white; font-size:0.68em; font-weight:bold; border-bottom-left-radius:8px;">
+        <div class="job-card {priority_class}{' compact' if compact else ''}" style="position:relative; overflow:hidden; border-top: 3px solid {status_bg};">
+            <div style="position:absolute; top:0; right:0; padding:2px 8px; background:{status_bg}; color:white; font-size:0.68em; font-weight:600; border-bottom-left-radius:6px;">
                 {esc_html(job['status']).upper()}
             </div>
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-top:10px;">
-                <span class="job-card-title" title="{esc_html(job['title'])}" style="font-weight:bold; font-size:1.08em; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.3; height:2.6em;">{esc_html(job['title'])}</span>
-                <span style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;"><span style="font-size:0.82em; background:#3f3f46; padding:3px 7px; border-radius:4px;">{esc_html(job['priority'])}</span>{signal_stack}</span>
+                <span class="job-card-title" title="{esc_html(job['title'])}" style="font-weight:600; font-size:1.05em; min-width:0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; line-height:1.35; height:2.7em;">{esc_html(job['title'])}</span>
+                <span style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;"><span style="font-size:0.75em; background:#26272d; color:#d4d4d8; border:1px solid #3a3d47; padding:3px 7px; border-radius:5px;">{esc_html(job['priority'])}</span>{signal_stack}</span>
             </div>
             <div class="job-card-meta" style="display:flex; justify-content:space-between; align-items:baseline; gap:8px; margin-top:6px;"><span style="color:#a1a1aa; font-size:0.92em; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{loc_html}</span>{quote_html}</div>
             <div class="job-card-meta" style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:nowrap; margin-top:10px; font-size:0.85em; color:#71717a;">

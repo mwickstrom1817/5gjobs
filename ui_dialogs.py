@@ -190,7 +190,7 @@ def add_job_dialog():
         with c_s1:
             st.form_submit_button("🤖 Suggest Tech", on_click=_flag_suggest)
         with c_s2:
-            st.form_submit_button("Save Job", on_click=_flag_save)
+            st.form_submit_button("Save Job", on_click=_flag_save, type="primary")
 
     if st.button("Cancel", key="cancel_add_job"):
         reset_add_job_dialog_state()
@@ -483,7 +483,7 @@ def edit_job_dialog(job_id):
         st.write("---")
         uploaded_docs = st.file_uploader("Attach More Documents", accept_multiple_files=True, type=['pdf', 'jpg', 'png', 'jpeg'], key=f"edit_docs_{job_id}")
 
-        if st.form_submit_button("Update Job"):
+        if st.form_submit_button("Update Job", type="primary"):
             if title:
                 # Save New Documents
                 doc_keys = existing_docs.copy()

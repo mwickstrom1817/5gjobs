@@ -13,12 +13,12 @@ def inject_global_styles():
         """
         <style>
         :root {
-          --bg-page: #0e0e10;
-          --bg-card: #18181b;
-          --bg-input: #27272a;
-          --accent: #b91c1c;
-          --accent-hover: #ef4444;
-          --text: #fafafa;
+          --bg-page: #0b0c10;
+          --bg-card: #15161b;
+          --bg-input: #111217;
+          --accent: #c81e1e;
+          --accent-hover: #a81818;
+          --text: #f4f4f5;
           --text-muted: #a1a1aa;
           --radius: 10px;
           --tap-target: 46px;
@@ -39,13 +39,19 @@ def inject_global_styles():
         .job-card {
           background: var(--bg-card);
           border-radius: var(--radius);
-          padding: 16px;
-          margin-bottom: 12px;
-          border: 1px solid #27272a;
-          transition: transform 0.08s ease, box-shadow 0.08s ease;
+          padding: 14px;
+          margin-bottom: 10px;
+          border: 1px solid #2a2c34;
+          transition: border-color 0.15s ease, background 0.15s ease;
         }
         .job-card:hover {
-          box-shadow: 0 4px 14px rgba(0,0,0,0.28);
+          background: #181920;
+          border-color: #3a3d47;
+          box-shadow: none;
+        }
+        .job-card.compact {
+          padding: 11px 12px;
+          margin-bottom: 8px;
         }
 
         /* ------------------------------------------------------------------
@@ -82,10 +88,10 @@ def inject_global_styles():
         .job-status-badge {
           display: inline-block;
           color: white;
-          padding: 6px 16px;
-          border-radius: 999px;
+          padding: 5px 12px;
+          border-radius: 6px;
           font-weight: 600;
-          font-size: 0.95em;
+          font-size: 0.9em;
           text-align: center;
         }
         .job-details-sections + div [role="radiogroup"] {
