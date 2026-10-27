@@ -4,6 +4,8 @@ import json
 import base64
 import io
 import datetime
+import hashlib
+import hmac
 import threading
 import time
 import urllib.parse
@@ -69,6 +71,34 @@ def now_local():
     if APP_TZ:
         return datetime.datetime.now(APP_TZ).replace(tzinfo=None)
     return datetime.datetime.now()
+
+
+def sign_oauth_state(secret):
+    """Create a short-lived, self-contained OAuth state token."""
+    if not secret:
+        return None
+    payload = {
+        "nonce": os.urandom(16).hex(),
+        "exp": (now_local() + datetime.timedelta(minutes=15)).timestamp(),
+    }
+    raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode()
+    signature = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
+    return f"{raw}.{signature}"
+
+
+def verify_oauth_state(token, secret):
+    """Validate a signed OAuth state token without relying on session memory."""
+    if not (secret and token and isinstance(token, str) and "." in token):
+        return False
+    try:
+        raw, signature = token.rsplit(".", 1)
+        expected = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return False
+        payload = json.loads(base64.urlsafe_b64decode(raw.encode()).decode())
+        return bool(payload.get("nonce") and payload.get("exp", 0) >= now_local().timestamp())
+    except Exception:
+        return False
 
 
 LOGO_PATH = "assets/logo.png"

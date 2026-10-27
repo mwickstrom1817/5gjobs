@@ -101,6 +101,14 @@ def test_failed_save_reloads_or_latches_to_prevent_later_commit(monkeypatch):
     assert core.save_state() is False
 
 
+def test_oauth_state_token_is_self_contained_and_tamper_evident():
+    token = core.sign_oauth_state("test-secret")
+    assert core.verify_oauth_state(token, "test-secret")
+    assert not core.verify_oauth_state(token, "wrong-secret")
+    assert not core.verify_oauth_state(token + "tampered", "test-secret")
+    assert not core.verify_oauth_state(None, "test-secret")
+
+
 def test_add_job_dismiss_clears_open_state():
     st.session_state._open_add_job = True
     st.session_state.assign_tech_add = "Alice"

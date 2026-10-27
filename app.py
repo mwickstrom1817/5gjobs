@@ -40,6 +40,7 @@ from core import (
     get_job_stale_days, STALE_JOB_DAYS,
     get_tech, get_location, agreement_days_left, AGREEMENT_RENEWAL_DAYS,
     PRIORITY_COLORS, get_status_color,
+    sign_oauth_state, verify_oauth_state,
 )
 
 from services_scheduler import keep_awake, start_background_scheduler
@@ -226,8 +227,7 @@ def authenticate():
         except Exception:
             returned_state = None
 
-    expected_state = st.session_state.get("_oauth_state") or ""
-    if code and (not returned_state or not hmac.compare_digest(str(returned_state), expected_state)):
+    if code and not verify_oauth_state(returned_state, _get_cookie_secret()):
         st.error("Authentication failed: the login response did not match this browser session. Please try again.")
         try:
             st.query_params.clear()
@@ -272,7 +272,6 @@ def authenticate():
             user_info = user_r.json()
 
             st.session_state.user_info = user_info
-            st.session_state.pop("_oauth_state", None)
 
             # Clear query params so refresh doesn't keep re-processing the code
             try:
@@ -303,8 +302,6 @@ def authenticate():
             code = None
 
     # 4) Show Login Button
-    if not st.session_state.get("_oauth_state"):
-        st.session_state._oauth_state = os.urandom(24).hex()
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth"
     params = {
         "client_id": client_id,
@@ -313,7 +310,7 @@ def authenticate():
         "scope": "openid email profile",
         "access_type": "online",
         "prompt": "select_account",
-        "state": st.session_state._oauth_state,
+        "state": sign_oauth_state(_get_cookie_secret()),
     }
     login_url = f"{auth_url}?{urllib.parse.urlencode(params)}"
 
